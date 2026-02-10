@@ -1,0 +1,12 @@
+CREATE DATABASE zdt_realty;
+
+\c zdt_realty;
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  phone VARCHAR(32),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
