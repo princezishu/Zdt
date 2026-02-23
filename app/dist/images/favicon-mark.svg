@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="favGoldStroke" x1="184" y1="144" x2="836" y2="868" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#D5C37B" />
+      <stop offset="0.5" stop-color="#AC934B" />
+      <stop offset="1" stop-color="#7E6730" />
+    </linearGradient>
+  </defs>
+  <path d="M512 132L616 224L730 236L726 339L828 343L830 441L906 512L830 583L828 681L726 685L730 788L616 800L512 892L408 800L294 788L298 685L196 681L194 583L118 512L194 441L196 343L298 339L294 236L408 224L512 132Z" stroke="url(#favGoldStroke)" stroke-width="36" stroke-linejoin="round" />
+  <path d="M512 260L644 392L512 524L380 392L512 260Z" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linejoin="round" />
+  <path d="M380 302L644 566" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" />
+  <path d="M644 302L380 566" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" />
+  <path d="M296 390C334 456 366 488 426 512C366 536 334 568 296 634" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M728 390C690 456 658 488 598 512C658 536 690 568 728 634" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M333 259H432V160" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M691 259H592V160" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M333 765H432V864" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M691 765H592V864" stroke="url(#favGoldStroke)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

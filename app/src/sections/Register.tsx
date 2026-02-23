@@ -7,14 +7,16 @@ import {
   Eye,
   EyeOff,
   ArrowRight,
-  ArrowLeft,
   Building2,
   Sparkles,
   ShieldCheck,
 } from 'lucide-react';
+import { apiRequest } from '@/lib/http';
+import { readOrCreateDeviceId } from '@/lib/session';
+import { toast } from 'sonner';
+import { addNotification } from '@/lib/notificationsStore';
 
 interface RegisterProps {
-  onBack: () => void;
   onSwitchToLogin: () => void;
 }
 
@@ -36,7 +38,7 @@ const steps = [
   },
 ];
 
-export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
+export default function Register({ onSwitchToLogin }: RegisterProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -45,7 +47,6 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
   return (
     <div className="relative min-h-screen w-full bg-white text-brand-black overflow-hidden">
@@ -59,13 +60,6 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
         <div className="grid w-full items-center gap-10 lg:grid-cols-2">
           {/* Left Panel */}
           <div className="hidden lg:flex flex-col gap-8 animate-in fade-in slide-in-from-left-8 duration-700">
-            <button
-              onClick={onBack}
-              className="inline-flex w-fit items-center gap-2 rounded-lg border border-brand-gray2 bg-white/70 px-4 py-2 text-sm font-medium text-brand-gray3 hover:text-brand-primary transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" /> Back to Website
-            </button>
-
             <div className="space-y-4">
               <span className="inline-flex items-center gap-2 rounded-full bg-brand-primary/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.3em] text-brand-primary">
                 Join ZDT Realty
@@ -113,13 +107,6 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
           {/* Right Panel */}
           <div className="flex w-full justify-center lg:justify-end">
             <div className="w-full max-w-[420px] rounded-2xl border border-brand-gray2 bg-white/90 p-8 shadow-card-hover backdrop-blur-lg neon-card animate-in fade-in slide-in-from-bottom-8 duration-500">
-              <button
-                onClick={onBack}
-                className="lg:hidden mb-6 inline-flex items-center gap-2 text-sm text-brand-gray3 hover:text-brand-primary"
-              >
-                <ArrowLeft className="h-4 w-4" /> Back
-              </button>
-
               <div className="flex items-center justify-between">
                 <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-brand-primary text-white font-bold">
                   ZDT
@@ -145,22 +132,34 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
                   setIsSubmitting(true);
 
                   try {
-                    const response = await fetch(`${apiUrl}/auth/register`, {
+                    const normalizedName = name.trim();
+                    const normalizedEmail = email.trim().toLowerCase();
+                    const normalizedPhone = phone.trim();
+
+                    await apiRequest('/auth/register', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ name, email, phone, password }),
+                      body: JSON.stringify({
+                        name: normalizedName,
+                        email: normalizedEmail,
+                        phone: normalizedPhone,
+                        password,
+                        deviceId: readOrCreateDeviceId(),
+                      }),
                     });
 
-                    const data = await response.json();
-
-                    if (!response.ok) {
-                      throw new Error(data?.error || 'Unable to create account');
-                    }
-
                     setSuccess('Account created. Please log in.');
+                    toast.success('Account created. Please log in.');
+                    addNotification({
+                      title: 'Account created',
+                      message: normalizedEmail,
+                      kind: 'success',
+                      source: 'auth',
+                    });
                     setTimeout(() => onSwitchToLogin(), 800);
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : 'Unable to create account');
+                    const message = err instanceof Error ? err.message : 'Unable to create account';
+                    toast.error(message);
+                    setError(message);
                   } finally {
                     setIsSubmitting(false);
                   }
@@ -176,6 +175,7 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
                     </div>
                     <input
                       type="text"
+                      required
                       placeholder="Your name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
@@ -194,6 +194,7 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
                     </div>
                     <input
                       type="email"
+                      required
                       placeholder="name@example.com"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
@@ -230,6 +231,8 @@ export default function Register({ onBack, onSwitchToLogin }: RegisterProps) {
                     </div>
                     <input
                       type={showPassword ? 'text' : 'password'}
+                      required
+                      minLength={8}
                       placeholder="********"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}

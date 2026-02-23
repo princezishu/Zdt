@@ -7,10 +7,16 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 gsap.registerPlugin(ScrollTrigger);
 
+interface FooterProps {
+  onOpenAdminLogin: () => void;
+  onOpenAdminRegister: () => void;
+  onOpenTeamLogin: () => void;
+  onOpenTeamRegister: () => void;
+}
+
 const footerLinks = {
   company: [
     { label: 'About', href: '#' },
-    { label: 'Careers', href: '#' },
     { label: 'Blog', href: '#' },
     { label: 'Press', href: '#' },
   ],
@@ -41,7 +47,12 @@ const socialLinks = [
   { icon: Linkedin, href: '#', label: 'LinkedIn' },
 ];
 
-export default function Footer() {
+export default function Footer({
+  onOpenAdminLogin,
+  onOpenAdminRegister,
+  onOpenTeamLogin,
+  onOpenTeamRegister,
+}: FooterProps) {
   const footerRef = useRef<HTMLDivElement>(null);
   const [email, setEmail] = useState('');
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -144,7 +155,60 @@ export default function Footer() {
           <div className="footer-animate">
             <h4 className="font-semibold mb-4 text-[18px]">Company</h4>
             <ul className="space-y-3">
-              {footerLinks.company.map((link) => (
+              {footerLinks.company.slice(0, 1).map((link) => (
+                <li key={link.label}>
+                  <a
+                    href={link.href}
+                    className="text-white/60 hover:text-brand-primary transition-colors duration-300 hover:translate-x-1 inline-block text-sm"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+
+              <li>
+                <p className="mt-4 font-semibold text-[14px] text-white">Careers</p>
+                <ul className="mt-3 space-y-2">
+                  <li>
+                    <button
+                      type="button"
+                      onClick={onOpenAdminRegister}
+                      className="text-left text-white/60 hover:text-brand-primary transition-colors duration-300 hover:translate-x-1 inline-block text-sm"
+                    >
+                      Admin Registration
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={onOpenAdminLogin}
+                      className="text-left text-white/60 hover:text-brand-primary transition-colors duration-300 hover:translate-x-1 inline-block text-sm"
+                    >
+                      Admin Login
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={onOpenTeamRegister}
+                      className="text-left text-white/60 hover:text-brand-primary transition-colors duration-300 hover:translate-x-1 inline-block text-sm"
+                    >
+                      Team Registration
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={onOpenTeamLogin}
+                      className="text-left text-white/60 hover:text-brand-primary transition-colors duration-300 hover:translate-x-1 inline-block text-sm"
+                    >
+                      Team Login
+                    </button>
+                  </li>
+                </ul>
+              </li>
+
+              {footerLinks.company.slice(1).map((link) => (
                 <li key={link.label}>
                   <a
                     href={link.href}

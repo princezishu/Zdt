@@ -1,0 +1,26 @@
+export const DEFAULT_AMENITIES = [
+  'Parking',
+  'Lift',
+  'Power Backup',
+  'Security',
+  'CCTV',
+  'Gym',
+  'Swimming Pool',
+  'Garden',
+  'Children Play Area',
+  'Clubhouse',
+  'Community Hall',
+  'Water Supply',
+  'Gas Pipeline',
+  'Internet/WiFi',
+  'Rainwater Harvesting',
+  'Waste Management',
+  'Near School',
+  'Near Hospital',
+  'Near Market',
+  'Near Metro/Bus',
+  'Pet Friendly',
+  'Wheelchair Friendly',
+] as const;
+
+export type DefaultAmenity = (typeof DEFAULT_AMENITIES)[number];

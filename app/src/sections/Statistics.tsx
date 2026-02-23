@@ -6,7 +6,14 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 gsap.registerPlugin(ScrollTrigger)
 
 // ------------------ STATS DATA ------------------
-const stats = [
+type StatItem = {
+  icon: typeof Building2
+  value: number
+  suffix: string
+  label: string
+}
+
+const stats: StatItem[] = [
   {
     icon: Building2,
     value: 50000,
@@ -34,7 +41,13 @@ const stats = [
 ]
 
 // ------------------ COUNTER COMPONENT ------------------
-function AnimatedCounter({ value, suffix, isVisible }) {
+type AnimatedCounterProps = {
+  value: number
+  suffix: string
+  isVisible: boolean
+}
+
+function AnimatedCounter({ value, suffix, isVisible }: AnimatedCounterProps) {
   const [count, setCount] = useState(0)
 
   useEffect(() => {
@@ -59,7 +72,7 @@ function AnimatedCounter({ value, suffix, isVisible }) {
     return () => clearInterval(timer)
   }, [value, isVisible])
 
-  const formatNumber = (num) => {
+  const formatNumber = (num: number): string => {
     return num >= 1000 ? num.toLocaleString() : num.toString()
   }
 
@@ -73,7 +86,7 @@ function AnimatedCounter({ value, suffix, isVisible }) {
 
 // ------------------ MAIN COMPONENT ------------------
 export default function Statistics() {
-  const sectionRef = useRef(null)
+  const sectionRef = useRef<HTMLElement | null>(null)
   const [isVisible, setIsVisible] = useState(false)
 
   // Stable floating particles
@@ -94,7 +107,7 @@ export default function Statistics() {
         onEnter: () => setIsVisible(true),
       })
 
-      const cards = sectionRef.current?.querySelectorAll('.stat-card')
+      const cards = sectionRef.current?.querySelectorAll<HTMLElement>('.stat-card')
 
       if (cards) {
         gsap.fromTo(

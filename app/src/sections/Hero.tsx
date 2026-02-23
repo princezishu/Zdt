@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, MapPin, Sparkles, Box, TrendingUp } from 'lucide-react';
+import { Search, MapPin, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import gsap from 'gsap';
 
 export default function Hero() {
@@ -13,6 +23,7 @@ export default function Hero() {
   const [query, setQuery] = useState('');
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [locationConsentOpen, setLocationConsentOpen] = useState(false);
 
   const normalizeAdminPart = (value: string) =>
     value
@@ -25,15 +36,7 @@ export default function Hero() {
     setQuery(value);
   };
 
-  const handleUseCurrentLocation = () => {
-    const consent = window.confirm(
-      'Allow this site to access your location to find your village?'
-    );
-    if (!consent) {
-      setLocationStatus('Location permission not granted.');
-      return;
-    }
-
+  const requestCurrentLocation = () => {
     if (!navigator.geolocation) {
       setLocationStatus('Location is not supported in this browser.');
       return;
@@ -102,6 +105,10 @@ export default function Hero() {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+  };
+
+  const handleUseCurrentLocation = () => {
+    setLocationConsentOpen(true);
   };
 
   useEffect(() => {
@@ -262,6 +269,34 @@ export default function Hero() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={locationConsentOpen} onOpenChange={setLocationConsentOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Allow Location Access?</AlertDialogTitle>
+            <AlertDialogDescription>
+              We use your location only to fill nearby place suggestions.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => setLocationStatus('Location permission not granted.')}
+              disabled={isLocating}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setLocationConsentOpen(false);
+                requestCurrentLocation();
+              }}
+              disabled={isLocating}
+            >
+              Allow Location
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

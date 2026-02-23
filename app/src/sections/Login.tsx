@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { API_BASE_URL } from '../lib/api';
 
 interface LoginProps {
   onBack: () => void;
@@ -41,7 +42,7 @@ export default function Login({ onBack, onSwitchToRegister, onLoginSuccess }: Lo
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const apiUrl = API_BASE_URL;
 
   return (
     <div className="relative min-h-screen w-full bg-white text-brand-black overflow-hidden">

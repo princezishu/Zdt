@@ -5,7 +5,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Public Sans', 'sans-serif'],
+        sans: ['Manrope', 'sans-serif'],
+        serif: ['Cormorant Garamond', 'serif'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -42,14 +43,40 @@ module.exports = {
           foreground: "hsl(var(--card-foreground))",
         },
         brand: {
-          primary: "#0F172A",
-          "primary-dark": "#0a0f1a",
-          secondary: "#22D3EE",
-          black: "#0B132B",
+          primary: "#8A7435",
+          "primary-dark": "#6F5C2A",
+          secondary: "#D7C08A",
+          black: "#111318",
           white: "#ffffff",
-          gray1: "#F8FAFC",
-          gray2: "#E2E8F0",
-          gray3: "#64748B",
+          gray1: "#F7F3E9",
+          gray2: "#E7DDC5",
+          gray3: "#6D6554",
+        },
+        blue: {
+          50: "#f7f3e7",
+          100: "#efe6cf",
+          200: "#dfcfa3",
+          300: "#d0b87a",
+          400: "#c1a255",
+          500: "#ac8c42",
+          600: "#987b39",
+          700: "#86692f",
+          800: "#70572a",
+          900: "#5d4724",
+          950: "#352914",
+        },
+        indigo: {
+          50: "#f7f3ea",
+          100: "#ece3d0",
+          200: "#d9c7a4",
+          300: "#c4a978",
+          400: "#b08f54",
+          500: "#9d7842",
+          600: "#896438",
+          700: "#70512f",
+          800: "#5b4228",
+          900: "#493622",
+          950: "#2b1f14",
         },
       },
       borderRadius: {
@@ -63,8 +90,8 @@ module.exports = {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
         card: "0 4px 20px rgba(0, 0, 0, 0.08)",
         "card-hover": "0 20px 60px rgba(0, 0, 0, 0.15)",
-        glow: "0 0 30px rgba(0, 85, 255, 0.3)",
-        "glow-lg": "0 0 50px rgba(0, 85, 255, 0.4)",
+        glow: "0 0 30px rgba(138, 116, 53, 0.35)",
+        "glow-lg": "0 0 50px rgba(138, 116, 53, 0.45)",
       },
       keyframes: {
         "accordion-down": {
@@ -88,8 +115,8 @@ module.exports = {
           "50%": { transform: "translateY(-20px)" },
         },
         "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 20px rgba(0, 85, 255, 0.3)" },
-          "50%": { boxShadow: "0 0 40px rgba(0, 85, 255, 0.5)" },
+          "0%, 100%": { boxShadow: "0 0 20px rgba(138, 116, 53, 0.28)" },
+          "50%": { boxShadow: "0 0 40px rgba(138, 116, 53, 0.48)" },
         },
         shimmer: {
           "0%": { backgroundPosition: "-200% 0" },

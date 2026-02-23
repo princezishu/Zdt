@@ -8,7 +8,7 @@ html {
 
 /* Custom selection color */
 ::selection {
-  background-color: rgba(0, 85, 255, 0.2);
+  background-color: rgba(138, 116, 53, 0.22);
   color: inherit;
 }
 
@@ -34,7 +34,7 @@ html {
 
 /* Custom focus styles */
 *:focus-visible {
-  outline: 2px solid #0055ff;
+  outline: 2px solid #8a7435;
   outline-offset: 2px;
 }
 
@@ -60,7 +60,7 @@ img[src] {
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, #0055ff 0%, #003399 100%);
+  background: linear-gradient(135deg, #8a7435 0%, #111318 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -85,7 +85,7 @@ img[src] {
   left: 50%;
   width: 0;
   height: 2px;
-  background-color: #0055ff;
+  background-color: #8a7435;
   transition: all 0.3s ease;
   transform: translateX(-50%);
 }
