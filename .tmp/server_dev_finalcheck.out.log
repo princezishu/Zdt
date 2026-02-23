@@ -13,3 +13,37 @@ Ingest jobs enabled (PIB -> inbox, tender sources optional)
 [QUEUE] Redis + BullMQ initialized
 API + realtime listening on 0.0.0.0:5000
 [QUEUE] Analytics job completed (id=83)
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/index.js`[39m
+Connected to PostgreSQL database
+[Insights] Scheduler started (news every 2h, market 03:00 IST, projects 04:00 IST).
+Ingest jobs enabled (PIB -> inbox, tender sources optional)
+[QUEUE] Redis + BullMQ initialized
+API + realtime listening on 0.0.0.0:5000
+[QUEUE] Analytics job completed (id=84)
+[QUEUE] Analytics job completed (id=85)
+[QUEUE] Analytics job completed (id=86)
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/index.js`[39m
+Connected to PostgreSQL database
+[Insights] Scheduler started (news every 2h, market 03:00 IST, projects 04:00 IST).
+Ingest jobs enabled (PIB -> inbox, tender sources optional)
+[QUEUE] Redis + BullMQ initialized
+API + realtime listening on 0.0.0.0:5000
+[QUEUE] Analytics job completed (id=87)
