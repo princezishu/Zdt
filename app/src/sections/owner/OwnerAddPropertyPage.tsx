@@ -8,6 +8,13 @@ function toOptionalNumber(value: string) {
   return Number.isFinite(normalized) ? normalized : undefined;
 }
 
+function toOptionalCoordinate(value: string, min: number, max: number): number | undefined {
+  const normalized = Number(String(value || '').trim());
+  if (!Number.isFinite(normalized)) return undefined;
+  if (normalized < min || normalized > max) return undefined;
+  return Number(normalized.toFixed(7));
+}
+
 interface OwnerAddPropertyPageProps {
   onBack: () => void;
   onOpenListings: () => void;
@@ -37,8 +44,8 @@ export default function OwnerAddPropertyPage({
           city: payload.city,
           locality: payload.locality,
           address: payload.address,
-          latitude: payload.latitude ? Number(payload.latitude) : undefined,
-          longitude: payload.longitude ? Number(payload.longitude) : undefined,
+          latitude: toOptionalCoordinate(payload.latitude, -90, 90),
+          longitude: toOptionalCoordinate(payload.longitude, -180, 180),
           price: payload.price ? Number(payload.price.replace(/,/g, '')) : undefined,
           pricePerSqft: payload.pricePerSqft ? Number(payload.pricePerSqft) : undefined,
           groupInventoryCount: toOptionalNumber(payload.groupInventoryCount),
@@ -82,8 +89,8 @@ export default function OwnerAddPropertyPage({
         city: payload.city,
         locality: payload.locality,
         address: payload.address,
-        latitude: payload.latitude ? Number(payload.latitude) : null,
-        longitude: payload.longitude ? Number(payload.longitude) : null,
+        latitude: toOptionalCoordinate(payload.latitude, -90, 90) ?? null,
+        longitude: toOptionalCoordinate(payload.longitude, -180, 180) ?? null,
         propertyType: payload.propertyType,
         bhk: payload.bhk ? Number(payload.bhk) : null,
         carpetArea: payload.carpetArea ? Number(payload.carpetArea) : null,

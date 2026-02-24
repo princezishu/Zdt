@@ -18,6 +18,8 @@ import { addNotification } from '@/lib/notificationsStore';
 
 interface RegisterProps {
   onSwitchToLogin: () => void;
+  onOpenCompanyLogin: () => void;
+  onOpenCompanyRegister: () => void;
 }
 
 const steps = [
@@ -38,7 +40,11 @@ const steps = [
   },
 ];
 
-export default function Register({ onSwitchToLogin }: RegisterProps) {
+export default function Register({
+  onSwitchToLogin,
+  onOpenCompanyLogin,
+  onOpenCompanyRegister,
+}: RegisterProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -313,6 +319,22 @@ export default function Register({ onSwitchToLogin }: RegisterProps) {
                   className="text-brand-primary font-semibold hover:text-brand-secondary transition"
                 >
                   Log in
+                </button>
+              </p>
+              <p className="mt-2 text-center text-xs text-brand-gray3">
+                Dealer/Builder?{' '}
+                <button
+                  onClick={onOpenCompanyRegister}
+                  className="font-semibold text-brand-primary transition hover:text-brand-secondary"
+                >
+                  Company register
+                </button>
+                {' '}or{' '}
+                <button
+                  onClick={onOpenCompanyLogin}
+                  className="font-semibold text-brand-primary transition hover:text-brand-secondary"
+                >
+                  company login
                 </button>
               </p>
             </div>

@@ -1,27 +1,35 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
-  Building2,
   CalendarDays,
   CheckCircle2,
-  Download,
   Flag,
+  Landmark,
   LineChart,
   MapPin,
-  PhoneCall,
-  PlayCircle,
-  Sparkles,
+  MessageCircle,
+  ShieldCheck,
   Users,
-  Video,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiRequest } from '@/lib/http';
-import { getPropertyGroupDeal } from '@/lib/groupDealsApi';
+import {
+  createGroupDealRequest,
+  getPropertyGroupDeal,
+  type GroupDealItem,
+} from '@/lib/groupDealsApi';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
 import { PropertyCardsSkeleton } from '@/components/loading/PageSkeletons';
 
 interface BuyPropertyDetailsPageProps {
@@ -37,13 +45,17 @@ interface BuyPropertyDetailsPageProps {
 interface PropertyDetails {
   id: number;
   title: string;
+  state: string;
   city: string;
   area: string;
   locality: string;
   address: string;
+  fullAddress?: string;
   price: number | null;
   pricePerSqft: number | null;
+  propertyType: string;
   bhk: number | null;
+  bedrooms: number | null;
   areaSqft: number | null;
   carpetArea: number | null;
   builtupArea: number | null;
@@ -51,15 +63,17 @@ interface PropertyDetails {
   floorNumber: number | null;
   totalFloors: number | null;
   facing: string;
+  furnishing: string;
   possessionStatus: string;
+  availabilityDate: string | null;
   reraNumber: string;
   isVerified: boolean;
-  isFeatured: boolean;
-  viewCount: number;
   amenities: string[];
   description: string;
   imageUrls: string[];
   primaryImage: string;
+  companyName: string;
+  companyPropertyCount: number;
   company?: {
     id: number;
     name: string;
@@ -80,7 +94,14 @@ interface DetailsResponse {
 }
 
 interface SimilarResponse {
-  properties: Array<{ id: number; title: string; city: string; area: string; primaryImage: string; price: number | null }>;
+  properties: Array<{
+    id: number;
+    title: string;
+    city: string;
+    area: string;
+    primaryImage: string;
+    price: number | null;
+  }>;
 }
 
 function formatPrice(price: number | null): string {
@@ -102,11 +123,32 @@ function estimateEmi(price: number | null, rate: number, years: number): string 
   return `INR ${Math.round(emi).toLocaleString('en-IN')}/mo`;
 }
 
+function formatPossessionStatus(value: string): string {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, ' ');
+  if (!normalized) return 'Ready to Move';
+  if (normalized === 'pre launch') return 'New Launch';
+  if (normalized === 'under construction') return 'Under Construction';
+  if (normalized === 'ready') return 'Ready to Move';
+  if (normalized === 'resale') return 'Resale';
+  return normalized
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function resolveGroupStatusLabel(groupDeal: GroupDealItem | null): 'Open' | 'Filling Fast' | 'Closed' {
+  if (!groupDeal) return 'Open';
+  if (['FULL', 'EXPIRED', 'PAUSED', 'CANCELLED'].includes(groupDeal.status)) return 'Closed';
+  if (groupDeal.progressPercent >= 70 || groupDeal.status === 'MIN_REACHED') return 'Filling Fast';
+  return 'Open';
+}
+
 export default function BuyPropertyDetailsPage({
   propertyId,
   onBackToBuy,
   onOpenSimilar,
-  onOpenCompare: _onOpenCompare,
+  onOpenCompare,
   onOpenSaved,
   onOpenMessages,
   onOpenGroupDeal,
@@ -114,24 +156,26 @@ export default function BuyPropertyDetailsPage({
   const [property, setProperty] = useState<PropertyDetails | null>(null);
   const [priceHistory, setPriceHistory] = useState<PriceHistoryPoint[]>([]);
   const [similar, setSimilar] = useState<SimilarResponse['properties']>([]);
+  const [groupDeal, setGroupDeal] = useState<GroupDealItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [groupDealCode, setGroupDealCode] = useState('');
-  const [groupDealUnitType, setGroupDealUnitType] = useState('');
   const [activeImage, setActiveImage] = useState('');
   const [emiRate, setEmiRate] = useState(0.09);
   const [emiYears, setEmiYears] = useState(20);
-
-  const [visitName, setVisitName] = useState('');
-  const [visitPhone, setVisitPhone] = useState('');
+  const [groupFormName, setGroupFormName] = useState('');
+  const [groupFormPhone, setGroupFormPhone] = useState('');
+  const [groupFormCity, setGroupFormCity] = useState('');
+  const [groupFormIntent, setGroupFormIntent] = useState<'Buy now' | 'Interested'>('Interested');
+  const [groupFormSubmitting, setGroupFormSubmitting] = useState(false);
+  const [buyerName, setBuyerName] = useState('');
+  const [buyerPhone, setBuyerPhone] = useState('');
+  const [buyerCity, setBuyerCity] = useState('');
   const [visitDate, setVisitDate] = useState('');
   const [visitTime, setVisitTime] = useState('');
-  const [visitNote, setVisitNote] = useState('');
-
-  const [offerName, setOfferName] = useState('');
-  const [offerPhone, setOfferPhone] = useState('');
-  const [offerAmount, setOfferAmount] = useState('');
-  const [offerNote, setOfferNote] = useState('');
+  const [buyerNote, setBuyerNote] = useState('');
+  const [reportReason, setReportReason] = useState('fake_listing');
+  const [reportDetails, setReportDetails] = useState('');
+  const [leadSubmitting, setLeadSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -143,22 +187,12 @@ export default function BuyPropertyDetailsPage({
         if (!active) return;
         setProperty(response.property);
         setPriceHistory(response.priceHistory || []);
-        setActiveImage(response.property.primaryImage || response.property.imageUrls?.[0] || '/images/property-1.jpg');
-        if (response.property.city) {
-          apiRequest<SimilarResponse>(`/api/properties?listingType=sale&city=${encodeURIComponent(response.property.city)}&limit=3`)
-            .then((similarResponse) => {
-              if (!active) return;
-              setSimilar(similarResponse.properties || []);
-            })
-            .catch(() => {
-              if (!active) return;
-              setSimilar([]);
-            });
-        }
+        const image = response.property.primaryImage || response.property.imageUrls?.[0] || '/images/property-1.jpg';
+        setActiveImage(image);
       })
       .catch((loadError) => {
         if (!active) return;
-        setError(loadError instanceof Error ? loadError.message : 'Unable to load property');
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load property details');
         setProperty(null);
       })
       .finally(() => {
@@ -173,28 +207,19 @@ export default function BuyPropertyDetailsPage({
 
   useEffect(() => {
     let active = true;
-    const propertyNumericId = Number(property?.id || 0);
-    if (!propertyNumericId) {
-      setGroupDealCode('');
-      setGroupDealUnitType('');
+    if (!property?.id) {
+      setGroupDeal(null);
       return undefined;
     }
 
-    getPropertyGroupDeal(propertyNumericId)
+    getPropertyGroupDeal(property.id)
       .then((response) => {
         if (!active) return;
-        if (response.item?.dealCode) {
-          setGroupDealCode(response.item.dealCode);
-          setGroupDealUnitType(response.item.unitType || '');
-        } else {
-          setGroupDealCode('');
-          setGroupDealUnitType('');
-        }
+        setGroupDeal(response.item || null);
       })
       .catch(() => {
         if (!active) return;
-        setGroupDealCode('');
-        setGroupDealUnitType('');
+        setGroupDeal(null);
       });
 
     return () => {
@@ -202,57 +227,156 @@ export default function BuyPropertyDetailsPage({
     };
   }, [property?.id]);
 
+  useEffect(() => {
+    let active = true;
+    if (!property?.city) {
+      setSimilar([]);
+      return undefined;
+    }
+
+    apiRequest<SimilarResponse>(`/api/properties?listingType=sale&city=${encodeURIComponent(property.city)}&limit=3`)
+      .then((response) => {
+        if (!active) return;
+        setSimilar(response.properties || []);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSimilar([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [property?.city]);
+
   const gallery = useMemo(() => {
     if (!property) return [];
-    const images = property.imageUrls && property.imageUrls.length > 0 ? property.imageUrls : [property.primaryImage];
+    const images = property.imageUrls?.length ? property.imageUrls : [property.primaryImage];
     return images.filter(Boolean);
   }, [property]);
 
-  const emiLabel = useMemo(() => {
-    if (!property) return 'EMI on request';
-    return estimateEmi(property.price, emiRate, emiYears);
-  }, [property, emiRate, emiYears]);
+  const emiLabel = useMemo(() => estimateEmi(property?.price || null, emiRate, emiYears), [property?.price, emiRate, emiYears]);
 
-  const handleLead = async (type: 'schedule_visit' | 'make_offer' | 'contact_seller' | 'fraud_report') => {
+  const groupStatusLabel = useMemo(() => resolveGroupStatusLabel(groupDeal), [groupDeal]);
+
+  const groupProgress = useMemo(() => {
+    if (!groupDeal) return 30;
+    const derived = Math.round((Number(groupDeal.joinedBuyers || 0) / Math.max(1, Number(groupDeal.minBuyers || 1))) * 100);
+    return Math.max(0, Math.min(100, Number(groupDeal.progressPercent || derived)));
+  }, [groupDeal]);
+
+  const averageAreaPrice = useMemo(() => {
+    if (!property?.pricePerSqft || property.pricePerSqft <= 0) return 'Not available';
+    return `INR ${Math.round(property.pricePerSqft).toLocaleString('en-IN')} / sq.ft`;
+  }, [property?.pricePerSqft]);
+
+  const nearbyPriceRange = useMemo(() => {
+    const prices = similar.map((item) => Number(item.price || 0)).filter((value) => value > 0);
+    if (prices.length === 0) return 'Not enough nearby data';
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    return `${formatPrice(min)} - ${formatPrice(max)}`;
+  }, [similar]);
+
+  const trendLabel = useMemo(() => {
+    if (priceHistory.length < 2) return 'Stable';
+    const latest = Number(priceHistory[0].nextPrice || 0);
+    const oldest = Number(priceHistory[priceHistory.length - 1].nextPrice || 0);
+    if (latest <= 0 || oldest <= 0) return 'Stable';
+    const change = ((latest - oldest) / oldest) * 100;
+    if (change > 1) return `Upward (${change.toFixed(1)}%)`;
+    if (change < -1) return `Softening (${Math.abs(change).toFixed(1)}%)`;
+    return 'Stable';
+  }, [priceHistory]);
+
+  const handleBuyerLead = async (mode: 'callback' | 'visit' | 'enquiry' | 'report') => {
     if (!property) return;
-    const payload =
-      type === 'schedule_visit'
-        ? {
-            propertyId: property.id,
-            leadType: type,
-            name: visitName,
-            phone: visitPhone,
-            message: `Visit request on ${visitDate} at ${visitTime}. ${visitNote}`,
-          }
-        : type === 'make_offer'
-          ? {
-              propertyId: property.id,
-              leadType: type,
-              name: offerName,
-              phone: offerPhone,
-              message: `Offer INR ${offerAmount}. ${offerNote}`,
-            }
-          : {
-              propertyId: property.id,
-              leadType: type,
-              name: offerName || visitName || 'Buyer',
-              phone: offerPhone || visitPhone || 'NA',
-              message: offerNote || visitNote || 'Request initiated.',
-            };
+    if (!buyerName.trim() || !buyerPhone.trim()) {
+      toast.error('Please enter your name and phone number first.');
+      return;
+    }
 
-    if (!payload.name.trim() || !payload.phone.trim()) {
-      toast.error('Please enter your name and phone.');
+    let leadType: 'general' | 'schedule_visit' | 'contact_seller' | 'fraud_report' = 'general';
+    let message = buyerNote.trim();
+
+    if (mode === 'callback') {
+      leadType = 'contact_seller';
+      message = `Call back requested. City: ${buyerCity || 'NA'}.`;
+    } else if (mode === 'visit') {
+      leadType = 'schedule_visit';
+      message = `Site visit requested on ${visitDate || 'TBD'} at ${visitTime || 'TBD'}. City: ${buyerCity || 'NA'}.`;
+    } else if (mode === 'report') {
+      leadType = 'fraud_report';
+      message = `Reason: ${reportReason}. Details: ${reportDetails || 'NA'}.`;
+    } else {
+      leadType = 'general';
+      message = message || 'Buyer enquiry submitted for more project details.';
+    }
+
+    if (message.trim().length < 4) {
+      toast.error('Please provide a little more detail in your message.');
       return;
     }
 
     try {
+      setLeadSubmitting(true);
       await apiRequest('/api/leads', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          propertyId: property.id,
+          leadType,
+          name: buyerName.trim(),
+          phone: buyerPhone.trim(),
+          message: message.trim(),
+        }),
       });
-      toast.success('Request submitted. Our team will connect shortly.');
+      toast.success('Request submitted successfully.');
+      if (mode === 'report') {
+        setReportDetails('');
+      }
     } catch (submitError) {
       toast.error(submitError instanceof Error ? submitError.message : 'Unable to submit request');
+    } finally {
+      setLeadSubmitting(false);
+    }
+  };
+
+  const handleGroupDealSubmit = async () => {
+    if (!property) return;
+    if (!groupFormName.trim() || !groupFormPhone.trim() || !groupFormCity.trim()) {
+      toast.error('Please fill Name, Phone number, and City.');
+      return;
+    }
+
+    try {
+      setGroupFormSubmitting(true);
+      await createGroupDealRequest({
+        propertyId: property.id,
+        fullName: groupFormName.trim(),
+        phone: groupFormPhone.trim(),
+        note: `City: ${groupFormCity.trim()} | Intent: ${groupFormIntent}`,
+        consent: true,
+      });
+      toast.success('Group deal interest sent. Builder confirmation is required.');
+      setGroupFormName('');
+      setGroupFormPhone('');
+      setGroupFormCity('');
+      setGroupFormIntent('Interested');
+    } catch (submitError) {
+      toast.error(submitError instanceof Error ? submitError.message : 'Unable to submit group deal request');
+    } finally {
+      setGroupFormSubmitting(false);
+    }
+  };
+
+  const handleInviteBuyers = async () => {
+    if (!property) return;
+    const text = `Group deal option available for ${property.title}. Join with me on ZDT Realty.`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Invite message copied');
+    } catch {
+      toast.message(text);
     }
   };
 
@@ -281,6 +405,21 @@ export default function BuyPropertyDetailsPage({
     );
   }
 
+  const minBuyers = Number(groupDeal?.minBuyers || 5);
+  const joinedBuyers = Number(groupDeal?.joinedBuyers || 3);
+  const areaSqft = Number(property.areaSqft || property.builtupArea || property.carpetArea || 0);
+  const builderVerified = property.company?.isVerified ?? property.isVerified;
+  const govRefStatus = property.reraNumber ? 'Available' : 'In Progress';
+  const possessionLabel = formatPossessionStatus(property.possessionStatus);
+  const constructionProgress =
+    possessionLabel === 'Ready to Move'
+      ? 100
+      : possessionLabel === 'Under Construction'
+        ? 62
+        : possessionLabel === 'New Launch'
+          ? 24
+          : 45;
+
   return (
     <section className="pb-16 pt-28 text-slate-900">
       <div className="page-container space-y-6">
@@ -289,18 +428,11 @@ export default function BuyPropertyDetailsPage({
             Back to Buy
           </Button>
           <div className="flex flex-wrap gap-2">
-            {groupDealCode && onOpenGroupDeal ? (
-              <Button
-                variant="outline"
-                className="h-9 border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                onClick={() => onOpenGroupDeal(groupDealCode)}
-              >
-                <Users className="mr-2 h-4 w-4" />
-                View Group Deal
-              </Button>
-            ) : null}
             <Button variant="outline" className="h-9" onClick={onOpenSaved}>
-              Saved
+              Save & Shortlist
+            </Button>
+            <Button variant="outline" className="h-9" onClick={onOpenCompare}>
+              Compare Properties
             </Button>
           </div>
         </div>
@@ -308,294 +440,373 @@ export default function BuyPropertyDetailsPage({
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-              <img src={activeImage} alt={property.title} className="h-[360px] w-full object-cover sm:h-[440px]" />
-              <div className="grid grid-cols-3 gap-2 p-3 sm:grid-cols-4">
-                {gallery.map((item) => (
+              <img src={activeImage} alt={property.title} className="h-[340px] w-full object-cover sm:h-[420px]" />
+              <div className="grid grid-cols-4 gap-2 p-3">
+                {gallery.map((image) => (
                   <button
-                    key={item}
+                    key={image}
                     type="button"
-                    onClick={() => setActiveImage(item)}
-                    className={`overflow-hidden rounded-xl border ${activeImage === item ? 'border-blue-500' : 'border-slate-200'}`}
+                    onClick={() => setActiveImage(image)}
+                    className={`overflow-hidden rounded-xl border ${activeImage === image ? 'border-slate-900' : 'border-slate-200'}`}
                   >
-                    <img src={item} alt="Property view" className="h-20 w-full object-cover" />
+                    <img src={image} alt="Property view" className="h-20 w-full object-cover" />
                   </button>
                 ))}
               </div>
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-wrap items-center gap-3">
-                {property.isVerified && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className="bg-slate-900 text-white hover:bg-slate-900">Buy Property</Badge>
+                {builderVerified && (
                   <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
                     <BadgeCheck className="mr-1 h-3.5 w-3.5" />
-                    Verified listing
+                    Verified Builder
                   </Badge>
                 )}
-                {property.reraNumber && (
-                  <Badge className="bg-slate-900 text-white hover:bg-slate-900">RERA</Badge>
-                )}
-                {property.isFeatured && (
-                  <Badge className="bg-amber-500 text-white hover:bg-amber-500">Hot deal</Badge>
-                )}
-                {groupDealCode && (
-                  <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                    Group Deal Available{groupDealUnitType ? ` (${groupDealUnitType})` : ''}
+                {Boolean(property.reraNumber) && (
+                  <Badge className="bg-amber-600 text-white hover:bg-amber-600">
+                    <Landmark className="mr-1 h-3.5 w-3.5" />
+                    Government Reference
                   </Badge>
+                )}
+                {Boolean(groupDeal?.dealCode) && (
+                  <Badge className="bg-indigo-700 text-white hover:bg-indigo-700">Group Deal Available</Badge>
                 )}
               </div>
 
-              <h1 className="mt-4 text-3xl font-bold text-slate-900">{property.title}</h1>
+              <h1 className="mt-4 text-3xl font-semibold text-slate-900">{property.title}</h1>
               <p className="mt-2 inline-flex items-center gap-2 text-sm text-slate-600">
-                <MapPin className="h-4 w-4 text-slate-400" />
-                {property.locality || property.area}, {property.city}
+                <MapPin className="h-4 w-4 text-slate-500" />
+                {property.locality || property.area}, {property.city}, {property.state}
               </p>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Area</p>
-                  <p className="mt-1 font-semibold text-slate-900">
-                    {property.areaSqft || property.carpetArea || property.builtupArea || 'On request'} sq.ft
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Configuration</p>
-                  <p className="mt-1 font-semibold text-slate-900">{property.bhk ? `${property.bhk} BHK` : 'Studio'}</p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Facing</p>
-                  <p className="mt-1 font-semibold text-slate-900">{property.facing}</p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Floor</p>
-                  <p className="mt-1 font-semibold text-slate-900">
-                    {property.floorNumber ?? '-'} / {property.totalFloors ?? '-'}
-                  </p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <InfoCard label="Price" value={formatPrice(property.price)} />
+                  <InfoCard label="Area" value={areaSqft > 0 ? `${areaSqft} sq.ft` : 'On request'} />
+                <InfoCard
+                  label="Configuration"
+                  value={property.bhk || property.bedrooms ? `${property.bhk || property.bedrooms} BHK` : property.propertyType}
+                />
+                <InfoCard label="Floor Details" value={`${property.floorNumber ?? '-'} / ${property.totalFloors ?? '-'}`} />
+                <InfoCard label="Possession Status" value={formatPossessionStatus(property.possessionStatus)} />
+                <InfoCard
+                  label="Possession Date"
+                  value={property.availabilityDate ? new Date(property.availabilityDate).toLocaleDateString('en-IN') : 'On request'}
+                />
+                  <InfoCard label="RERA Number" value={property.reraNumber || 'Not Provided'} />
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Amenities</h3>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {property.amenities.map((amenity) => (
-                      <span
-                        key={amenity}
-                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600"
-                      >
-                        {amenity}
-                      </span>
-                    ))}
-                  </div>
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Construction Progress</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Current stage: {possessionLabel}. Progress reflects builder updates and available listing records.
+                </p>
+                <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div className="h-full rounded-full bg-brand-secondary" style={{ width: `${constructionProgress}%` }} />
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">AI Insights (Preview)</h3>
-                  <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                    <p>AI Investment Score: 82/100</p>
-                    <p>Rental Yield: 3.4% (projected)</p>
-                    <p>Price Appreciation: +8.6% YoY (forecast)</p>
-                    <p>Demand Heatmap: High demand zone</p>
-                    <p>Match Score: 91% (based on your filters)</p>
-                  </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                  <span>Launch</span>
+                  <span>{constructionProgress}% complete</span>
+                  <span>Handover</span>
                 </div>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-semibold text-slate-900">Description</h3>
-                <p className="mt-2 text-sm text-slate-600">{property.description}</p>
-              </div>
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Property Description</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-700">
+                {property.description || 'Builder-provided factual description is currently being updated.'}
+              </p>
+            </div>
 
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Floor Plan</h3>
-                  <div className="mt-3 flex items-center justify-between rounded-xl border border-dashed border-slate-300 p-3 text-xs text-slate-500">
-                    Floor plan ready for download
-                    <Button size="sm" variant="outline">
-                      <Download className="mr-2 h-4 w-4" />
-                      Brochure
-                    </Button>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Price History</h3>
-                  <div className="mt-3 space-y-2">
-                    {priceHistory.length === 0 && (
-                      <p className="text-xs text-slate-500">No historical price changes available.</p>
-                    )}
-                    {priceHistory.slice(0, 4).map((point) => (
-                      <div key={point.createdAt} className="flex items-center justify-between text-xs text-slate-600">
-                        <span>{new Date(point.createdAt).toLocaleDateString('en-IN')}</span>
-                        <span>{formatPrice(point.nextPrice)}</span>
-                      </div>
-                    ))}
-                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                      <LineChart className="h-4 w-4" />
-                      Full graph in analytics module
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">EMI Calculator</h3>
-                  <p className="mt-2 text-xs text-slate-500">{emiLabel}</p>
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <p className="text-xs text-slate-500">Interest rate</p>
-                      <Slider value={[emiRate * 100]} onValueChange={([value]) => setEmiRate(value / 100)} min={6} max={14} step={0.1} />
-                      <p className="mt-1 text-xs text-slate-600">{(emiRate * 100).toFixed(1)}%</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Tenure (years)</p>
-                      <Slider value={[emiYears]} onValueChange={([value]) => setEmiYears(value)} min={5} max={30} step={1} />
-                      <p className="mt-1 text-xs text-slate-600">{emiYears} years</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Loan Eligibility</h3>
-                  <p className="mt-2 text-xs text-slate-500">Instant pre-qualification based on income.</p>
-                  <div className="mt-3 grid gap-2">
-                    <Input placeholder="Monthly income" />
-                    <Input placeholder="Existing EMIs" />
-                    <Button variant="outline" className="h-9">Check eligibility</Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Location Insights</h3>
-                  <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                    <p>Travel time to metro: 12 minutes</p>
-                    <p>Schools nearby: 5 premium options</p>
-                    <p>Hospitals nearby: 3 super-speciality centers</p>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Media Tour</h3>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <div className="flex flex-col items-center gap-1 rounded-xl border border-slate-200 p-2">
-                      <PlayCircle className="h-5 w-5" />
-                      360 Tour
-                    </div>
-                    <div className="flex flex-col items-center gap-1 rounded-xl border border-slate-200 p-2">
-                      <Video className="h-5 w-5" />
-                      Walkthrough
-                    </div>
-                    <div className="flex flex-col items-center gap-1 rounded-xl border border-slate-200 p-2">
-                      <Building2 className="h-5 w-5" />
-                      Builder Story
-                    </div>
-                  </div>
-                </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">Amenities</h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {property.amenities.length > 0 ? (
+                  property.amenities.map((amenity) => (
+                    <span key={amenity} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
+                      {amenity}
+                    </span>
+                  ))
+                ) : (
+                  <>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">Parking</span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">Lift</span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">Security</span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">Power Backup</span>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">Water Supply</span>
+                  </>
+                )}
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="flex items-end justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Similar Properties</h2>
-                  <p className="text-sm text-slate-600">Curated especially for you</p>
-                </div>
+            <div className="rounded-3xl border border-indigo-200 bg-indigo-50/40 p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">Group Deal Option</h2>
+              <p className="mt-2 text-sm text-slate-700">
+                This property supports group purchasing. Buyers can join together to request special pricing or benefits, subject to builder approval.
+              </p>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <InfoCard label="Minimum Buyers Required" value={String(minBuyers)} />
+                <InfoCard label="Current Interested Buyers" value={String(joinedBuyers)} />
+                <InfoCard label="Group Status" value={groupStatusLabel} />
               </div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {similar.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:border-blue-300"
-                    onClick={() => onOpenSimilar(String(item.id))}
+
+              <div className="mt-4">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-indigo-100">
+                  <div className="h-full rounded-full bg-indigo-600" style={{ width: `${groupProgress}%` }} />
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{groupProgress}% progress</p>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <InfoCard label="Regular Price" value={formatPrice(property.price)} />
+                <InfoCard label="Group Deal Pricing" value="Shared on confirmation" />
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                <Button
+                  className="bg-indigo-700 text-white hover:bg-indigo-800"
+                  onClick={() => {
+                    if (groupDeal?.dealCode && onOpenGroupDeal) {
+                      onOpenGroupDeal(groupDeal.dealCode);
+                    } else {
+                      void handleGroupDealSubmit();
+                    }
+                  }}
+                  disabled={groupFormSubmitting}
+                >
+                  Join Group Deal
+                </Button>
+                <Button variant="outline" className="border-indigo-300 text-indigo-800" onClick={() => void handleGroupDealSubmit()} disabled={groupFormSubmitting}>
+                  Start a Group Deal
+                </Button>
+                <Button variant="outline" className="border-indigo-300 text-indigo-800" onClick={() => void handleInviteBuyers()}>
+                  Invite Buyers
+                </Button>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-indigo-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-slate-900">Join Form</h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <Input value={groupFormName} onChange={(event) => setGroupFormName(event.target.value)} placeholder="Name" />
+                  <Input value={groupFormPhone} onChange={(event) => setGroupFormPhone(event.target.value)} placeholder="Phone number" />
+                  <Input value={groupFormCity} onChange={(event) => setGroupFormCity(event.target.value)} placeholder="City" />
+                  <Select
+                    value={groupFormIntent}
+                    onValueChange={(value: 'Buy now' | 'Interested') => setGroupFormIntent(value)}
                   >
-                    <img src={item.primaryImage || '/images/property-1.jpg'} alt={item.title} className="h-32 w-full object-cover" />
-                    <div className="p-3">
-                      <p className="text-sm font-semibold text-slate-900 truncate">{item.title}</p>
-                      <p className="text-xs text-slate-500">{item.area}, {item.city}</p>
-                      <p className="mt-1 text-sm font-semibold text-blue-900">{formatPrice(item.price)}</p>
-                    </div>
-                  </button>
-                ))}
+                    <SelectTrigger>
+                      <SelectValue placeholder="Intent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Buy now">Buy now</SelectItem>
+                      <SelectItem value="Interested">Interested</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="mt-2 text-xs text-slate-600">No payment is collected at this stage.</p>
               </div>
             </div>
-          </div>
 
-          <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Price</p>
-              <p className="mt-2 text-3xl font-bold text-blue-900">{formatPrice(property.price)}</p>
-              <p className="mt-2 text-sm text-slate-600">{property.viewCount} views</p>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">Individual Buy Option</h2>
+              <p className="mt-2 text-sm text-slate-600">Request call back, schedule site visit, or send direct enquiry.</p>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} placeholder="Your name" />
+                <Input value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} placeholder="Phone number" />
+                <Input value={buyerCity} onChange={(event) => setBuyerCity(event.target.value)} placeholder="City" />
+                <Input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} />
+                <Input type="time" value={visitTime} onChange={(event) => setVisitTime(event.target.value)} />
+                <Textarea value={buyerNote} onChange={(event) => setBuyerNote(event.target.value)} placeholder="Send enquiry" className="min-h-24" />
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <Button onClick={() => void handleBuyerLead('callback')} disabled={leadSubmitting}>
+                  Request Call Back
+                </Button>
+                <Button variant="outline" onClick={() => void handleBuyerLead('visit')} disabled={leadSubmitting}>
+                  <CalendarDays className="mr-2 h-4 w-4" />
+                  Schedule Site Visit
+                </Button>
+                <Button variant="outline" onClick={() => void handleBuyerLead('enquiry')} disabled={leadSubmitting}>
+                  Send Enquiry
+                </Button>
+              </div>
+            </div>
 
-              <Button
-                className="mt-4 h-11 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800"
-                onClick={() => onOpenMessages(String(property.id))}
-              >
-                <PhoneCall className="h-4 w-4" />
-                Contact Seller
-              </Button>
-              <p className="mt-2 text-xs text-slate-500">
-                Privacy Note: Your contact details are shared only after consent.
-              </p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Location & Connectivity</h2>
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  <p className="font-medium text-slate-900">Map View</p>
+                  <p className="mt-1">{property.locality || property.area}, {property.city}, {property.state}</p>
+                </div>
+                <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                  <li>Schools: Nearby community and private schools</li>
+                  <li>Hospitals: Multi-speciality hospitals within local drive range</li>
+                  <li>Main roads: Direct connector roads and arterial access</li>
+                  <li>Transport: City bus and shared mobility availability</li>
+                </ul>
+              </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <h3 className="text-sm font-semibold text-slate-900">Schedule Visit</h3>
-                <div className="mt-3 space-y-2">
-                  <Input value={visitName} onChange={(e) => setVisitName(e.target.value)} placeholder="Your Name" />
-                  <Input value={visitPhone} onChange={(e) => setVisitPhone(e.target.value)} placeholder="Phone" />
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} />
-                    <Input type="time" value={visitTime} onChange={(e) => setVisitTime(e.target.value)} />
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Price Insights</h2>
+                <div className="mt-3 grid gap-3 text-sm text-slate-700">
+                  <InfoCard label="Average Area Price" value={averageAreaPrice} />
+                  <InfoCard label="Nearby Property Prices" value={nearbyPriceRange} />
+                  <InfoCard label="Trend Indicator" value={trendLabel} />
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                    <LineChart className="mb-1 h-4 w-4 text-slate-500" />
+                    Trend is based on available listing history and nearby inventory samples.
                   </div>
-                  <Textarea value={visitNote} onChange={(e) => setVisitNote(e.target.value)} placeholder="Note" className="min-h-20" />
-                  <Button className="h-10 w-full" onClick={() => void handleLead('schedule_visit')}>
-                    <CalendarDays className="mr-2 h-4 w-4" />
-                    Schedule Visit
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Builder / Seller Profile</h2>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  <p><span className="font-medium text-slate-900">Builder:</span> {property.company?.name || property.companyName || 'Builder profile pending'}</p>
+                  <p><span className="font-medium text-slate-900">Verification:</span> {builderVerified ? 'Verified' : 'Pending verification'}</p>
+                  <p><span className="font-medium text-slate-900">Past Projects:</span> {property.companyPropertyCount || 0}</p>
+                </div>
+                <div className="mt-3">
+                  <Button variant="outline" onClick={() => onOpenMessages(String(property.id))}>
+                    <MessageCircle className="mr-2 h-4 w-4" />
+                    Contact Seller
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <h3 className="text-sm font-semibold text-slate-900">Make Offer</h3>
-                <div className="mt-3 space-y-2">
-                  <Input value={offerName} onChange={(e) => setOfferName(e.target.value)} placeholder="Your Name" />
-                  <Input value={offerPhone} onChange={(e) => setOfferPhone(e.target.value)} placeholder="Phone" />
-                  <Input value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Offer amount (INR)" />
-                  <Textarea value={offerNote} onChange={(e) => setOfferNote(e.target.value)} placeholder="Offer details" className="min-h-20" />
-                  <Button className="h-10 w-full" onClick={() => void handleLead('make_offer')}>
-                    Submit Offer
-                  </Button>
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Trust & Verification</h2>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  <p><span className="font-medium text-slate-900">Builder Verified:</span> {builderVerified ? 'YES' : 'NO'}</p>
+                  <p><span className="font-medium text-slate-900">Ownership Check:</span> In Progress</p>
+                  <p><span className="font-medium text-slate-900">Government Reference:</span> {govRefStatus}</p>
                 </div>
               </div>
+            </div>
 
+            <div className="rounded-3xl border border-rose-200 bg-rose-50/50 p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-slate-900">User Safety & Transparency</h2>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <Select value={reportReason} onValueChange={setReportReason}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fake_listing">Fake listing</SelectItem>
+                    <SelectItem value="incorrect_price">Incorrect price</SelectItem>
+                    <SelectItem value="already_sold">Already sold</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Textarea
+                  value={reportDetails}
+                  onChange={(event) => setReportDetails(event.target.value)}
+                  placeholder="Add details (optional)"
+                  className="min-h-24"
+                />
+              </div>
               <Button
                 variant="outline"
-                className="mt-4 h-10 w-full border-slate-300 text-rose-700 hover:bg-rose-50 hover:text-rose-700"
-                onClick={() => void handleLead('fraud_report')}
+                className="mt-3 border-rose-300 text-rose-700 hover:bg-rose-100 hover:text-rose-700"
+                onClick={() => void handleBuyerLead('report')}
+                disabled={leadSubmitting}
               >
                 <Flag className="mr-2 h-4 w-4" />
                 Report Listing
               </Button>
+              <p className="mt-3 text-xs text-slate-600">
+                ZDT Realty is an independent real estate platform. Listings are provided by builders and owners. Group deal pricing is subject to builder confirmation.
+              </p>
+            </div>
+
+            {similar.length > 0 && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-xl font-semibold text-slate-900">Similar Properties</h2>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  {similar.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onOpenSimilar(String(item.id))}
+                      className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition hover:border-slate-300"
+                    >
+                      <img src={item.primaryImage || '/images/property-1.jpg'} alt={item.title} className="h-28 w-full object-cover" />
+                      <div className="p-3">
+                        <p className="truncate text-sm font-medium text-slate-900">{item.title}</p>
+                        <p className="text-xs text-slate-600">{item.area}, {item.city}</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">{formatPrice(item.price)}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Pricing</p>
+              <p className="mt-2 text-3xl font-bold text-slate-900">{formatPrice(property.price)}</p>
+              <p className="mt-2 text-sm text-slate-600">{emiLabel}</p>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <p className="text-xs text-slate-500">Interest rate</p>
+                  <Slider value={[emiRate * 100]} onValueChange={([value]) => setEmiRate(value / 100)} min={6} max={14} step={0.1} />
+                  <p className="mt-1 text-xs text-slate-600">{(emiRate * 100).toFixed(1)}%</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Tenure</p>
+                  <Slider value={[emiYears]} onValueChange={([value]) => setEmiYears(value)} min={5} max={30} step={1} />
+                  <p className="mt-1 text-xs text-slate-600">{emiYears} years</p>
+                </div>
+              </div>
+              <Button
+                className="mt-4 w-full bg-slate-900 text-white hover:bg-slate-800"
+                onClick={() => onOpenMessages(String(property.id))}
+              >
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Contact Seller
+              </Button>
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-900">Trust & Safety</h3>
-              <ul className="mt-3 space-y-3 text-sm text-slate-700">
+              <h3 className="text-sm font-semibold text-slate-900">Trust Checklist</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-700">
                 <li className="inline-flex items-start gap-2">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
-                  Verified listing documents are checked by ZDT Realty moderation team.
+                  Verify identity, ownership chain, and legal records.
                 </li>
                 <li className="inline-flex items-start gap-2">
-                  <Sparkles className="mt-0.5 h-4 w-4 text-amber-600" />
-                  Price history and AI projections are transparent for every listing.
+                  <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
+                  Complete site visit before transfer or token.
                 </li>
                 <li className="inline-flex items-start gap-2">
-                  <Flag className="mt-0.5 h-4 w-4 text-rose-600" />
-                  Use Report Listing if pricing, images or owner details look suspicious.
+                  <Users className="mt-0.5 h-4 w-4 text-emerald-600" />
+                  Group deal terms require builder confirmation.
                 </li>
               </ul>
             </div>
           </aside>
         </div>
+
+        <p className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+          ZDT Realty is an independent real estate platform built with transparency and verified listings.
+        </p>
       </div>
     </section>
+  );
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-medium text-slate-900">{value}</p>
+    </div>
   );
 }

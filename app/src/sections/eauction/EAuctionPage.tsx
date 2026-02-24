@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Landmark, Search } from 'lucide-react';
 import { apiRequest } from '@/lib/http';
 import { Spinner } from '@/components/ui/spinner';
+import type { AuthUser } from '@/lib/session';
 import {
   Dialog,
   DialogContent,
@@ -65,7 +66,24 @@ function categoryChipLabel(category: EAuctionCategory): string {
   return 'All';
 }
 
-export default function EAuctionPage() {
+function parseBadgesInput(value: string): string[] {
+  return Array.from(
+    new Set(
+      String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 12);
+}
+
+interface EAuctionPageProps {
+  token?: string;
+  user?: AuthUser | null;
+}
+
+export default function EAuctionPage({ token = '', user = null }: EAuctionPageProps) {
+  const canManageSources = Boolean(token && user?.role === 'admin' && user?.isMainAdmin);
   const [category, setCategory] = useState<EAuctionCategory>('plots');
   const [sort, setSort] = useState<SortKey>('official');
   const [searchInput, setSearchInput] = useState('');
@@ -76,6 +94,17 @@ export default function EAuctionPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [adminName, setAdminName] = useState('');
+  const [adminUrl, setAdminUrl] = useState('');
+  const [adminCategory, setAdminCategory] = useState<EAuctionCategory>('all');
+  const [adminDescription, setAdminDescription] = useState('');
+  const [adminBadges, setAdminBadges] = useState('');
+  const [adminSortOrder, setAdminSortOrder] = useState('100');
+  const [adminIsActive, setAdminIsActive] = useState(true);
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [adminDeletingId, setAdminDeletingId] = useState<number | null>(null);
+  const [adminNotice, setAdminNotice] = useState('');
+  const [adminError, setAdminError] = useState('');
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -125,6 +154,76 @@ export default function EAuctionPage() {
     }
     return cards.filter((card) => card.isActive);
   }, [activeOnly, cards]);
+
+  const addSource = async () => {
+    if (!canManageSources || !token) return;
+    if (!adminName.trim()) {
+      setAdminError('Source name is required.');
+      return;
+    }
+    if (!adminUrl.trim()) {
+      setAdminError('Portal URL is required.');
+      return;
+    }
+
+    setAdminSaving(true);
+    setAdminError('');
+    setAdminNotice('');
+    try {
+      await apiRequest<{ card: EAuctionCard }>(
+        '/api/eauction/cards',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name: adminName.trim(),
+            portalUrl: adminUrl.trim(),
+            category: adminCategory,
+            description: adminDescription.trim(),
+            badges: parseBadgesInput(adminBadges),
+            isActive: adminIsActive,
+            sortOrder: Number.isFinite(Number(adminSortOrder)) ? Number(adminSortOrder) : 100,
+          }),
+        },
+        token
+      );
+      setAdminName('');
+      setAdminUrl('');
+      setAdminCategory('all');
+      setAdminDescription('');
+      setAdminBadges('');
+      setAdminSortOrder('100');
+      setAdminIsActive(true);
+      setAdminNotice('Source added successfully.');
+      setReloadKey((prev) => prev + 1);
+    } catch (createError) {
+      setAdminError(
+        createError instanceof Error ? createError.message : 'Unable to add source right now.'
+      );
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
+  const deleteSource = async (id: number) => {
+    if (!canManageSources || !token) return;
+    const confirmed = window.confirm('Delete this source?');
+    if (!confirmed) return;
+
+    setAdminDeletingId(id);
+    setAdminError('');
+    setAdminNotice('');
+    try {
+      await apiRequest<{ deletedId: number }>(`/api/eauction/cards/${id}`, { method: 'DELETE' }, token);
+      setCards((prev) => prev.filter((card) => card.id !== id));
+      setAdminNotice('Source deleted successfully.');
+    } catch (deleteError) {
+      setAdminError(
+        deleteError instanceof Error ? deleteError.message : 'Unable to delete source right now.'
+      );
+    } finally {
+      setAdminDeletingId((current) => (current === id ? null : current));
+    }
+  };
 
   return (
     <main className={styles.page}>
@@ -204,6 +303,82 @@ export default function EAuctionPage() {
           </div>
         </section>
 
+        {canManageSources ? (
+          <section className={styles.adminPanel}>
+            <div className={styles.adminHeader}>
+              <h2 className={styles.adminTitle}>Main Admin Source Manager</h2>
+              <p className={styles.adminSubtitle}>Add new e-auction source or delete existing source.</p>
+            </div>
+
+            <div className={styles.adminGrid}>
+              <input
+                value={adminName}
+                onChange={(event) => setAdminName(event.target.value)}
+                className={styles.adminInput}
+                placeholder="Source name"
+              />
+              <input
+                value={adminUrl}
+                onChange={(event) => setAdminUrl(event.target.value)}
+                className={styles.adminInput}
+                placeholder="Portal URL (https://...)"
+              />
+              <select
+                value={adminCategory}
+                onChange={(event) => setAdminCategory(event.target.value as EAuctionCategory)}
+                className={styles.adminInput}
+              >
+                {CATEGORY_TABS.map((tab) => (
+                  <option key={`admin-${tab.key}`} value={tab.key}>
+                    {tab.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={adminSortOrder}
+                onChange={(event) => setAdminSortOrder(event.target.value)}
+                className={styles.adminInput}
+                placeholder="Sort order"
+                inputMode="numeric"
+              />
+              <input
+                value={adminBadges}
+                onChange={(event) => setAdminBadges(event.target.value)}
+                className={styles.adminInput}
+                placeholder="Badges (comma separated)"
+              />
+              <label className={styles.adminToggle}>
+                <input
+                  type="checkbox"
+                  checked={adminIsActive}
+                  onChange={(event) => setAdminIsActive(event.target.checked)}
+                />
+                <span>Active source</span>
+              </label>
+              <textarea
+                value={adminDescription}
+                onChange={(event) => setAdminDescription(event.target.value)}
+                className={styles.adminTextarea}
+                placeholder="Description"
+                rows={2}
+              />
+            </div>
+
+            <div className={styles.adminActions}>
+              <button
+                type="button"
+                className={styles.adminAddButton}
+                onClick={() => void addSource()}
+                disabled={adminSaving}
+              >
+                {adminSaving ? 'Adding...' : 'Add Source'}
+              </button>
+              {adminNotice ? <p className={styles.adminNotice}>{adminNotice}</p> : null}
+              {adminError ? <p className={styles.adminError}>{adminError}</p> : null}
+            </div>
+          </section>
+        ) : null}
+
         <section className={styles.results}>
           <div className={styles.resultsHeader}>
             <h2 className={styles.resultsTitle}>Official Sources</h2>
@@ -281,6 +456,16 @@ export default function EAuctionPage() {
                     >
                       How it works
                     </button>
+                    {canManageSources ? (
+                      <button
+                        type="button"
+                        className={styles.deleteSourceButton}
+                        onClick={() => void deleteSource(card.id)}
+                        disabled={adminDeletingId === card.id}
+                      >
+                        {adminDeletingId === card.id ? 'Deleting...' : 'Delete Source'}
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               ))}

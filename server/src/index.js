@@ -11,7 +11,9 @@ import eauctionRoutes from './routes/eauction.js';
 import builderRoutes from './routes/builder.js';
 import realtyRoutes from './routes/realty.js';
 import layoutUnitsRoutes from './routes/layoutUnits.js';
-import apartmentComplexRoutes from './routes/apartmentComplex.js';
+import apartmentComplexRoutes, {
+  runApartmentRentAutoReminderJob,
+} from './routes/apartmentComplex.js';
 import insightsRoutes from './routes/insights.js';
 import materialsRoutes from './routes/materials.js';
 import promotionsRoutes from './routes/promotions.js';
@@ -289,6 +291,52 @@ async function startServer() {
     await ensureGroupDealsTables();
     await ensureInsightsSourceSeeds();
     startInsightsScheduler();
+    const apartmentAutoAlertEnabled =
+      String(process.env.APARTMENT_RENT_AUTO_ALERT_ENABLED || 'true').trim().toLowerCase() !==
+      'false';
+    if (apartmentAutoAlertEnabled) {
+      const apartmentAutoAlertCron =
+        String(process.env.APARTMENT_RENT_AUTO_ALERT_CRON || '15 9 * * *').trim() ||
+        '15 9 * * *';
+      const apartmentAutoAlertTimezone =
+        String(process.env.APARTMENT_RENT_AUTO_ALERT_TIMEZONE || 'Asia/Kolkata').trim() ||
+        'Asia/Kolkata';
+
+      try {
+        cron.schedule(
+          apartmentAutoAlertCron,
+          () => {
+            void runApartmentRentAutoReminderJob({ trigger: 'cron' })
+              .then((result) => {
+                if ((result?.deliveredCount || 0) > 0 || (result?.candidateCount || 0) > 0) {
+                  console.log(
+                    `[APARTMENT] Auto rent reminders: candidates=${result.candidateCount}, delivered=${result.deliveredCount}, failed=${result.failedCount}, skipped=${result.skippedCount}.`
+                  );
+                }
+              })
+              .catch((error) => {
+                console.error('[APARTMENT] Auto rent reminder job failed:', error);
+              });
+          },
+          { timezone: apartmentAutoAlertTimezone }
+        );
+        setTimeout(() => {
+          void runApartmentRentAutoReminderJob({ trigger: 'startup' }).catch((error) => {
+            console.error('[APARTMENT] Startup auto rent reminder run failed:', error);
+          });
+        }, 12000);
+        console.log(
+          `[APARTMENT] Auto rent reminder scheduler enabled (${apartmentAutoAlertCron}, ${apartmentAutoAlertTimezone}).`
+        );
+      } catch (scheduleError) {
+        console.error(
+          `[APARTMENT] Invalid APARTMENT_RENT_AUTO_ALERT_CRON value: ${apartmentAutoAlertCron}.`,
+          scheduleError
+        );
+      }
+    } else {
+      console.log('[APARTMENT] Auto rent reminder scheduler disabled.');
+    }
 
     if (String(process.env.ENABLE_INGEST_JOBS || '').trim().toLowerCase() === 'true') {
       void runInfraIngestJob(pool).catch((error) => {

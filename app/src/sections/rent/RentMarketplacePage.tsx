@@ -1,206 +1,201 @@
-﻿import { useEffect, useMemo, useState } from 'react';
-import {
-  BadgeCheck,
-  CalendarDays,
-  Heart,
-  MapPin,
-  MessageCircle,
-  PhoneCall,
-  ShieldCheck,
-  Sofa,
-  Sparkles,
-  Users,
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BadgeCheck, ChevronLeft, ChevronRight, GitCompareArrows, Heart, MapPin, MessageCircle, SearchCheck, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiRequest } from '@/lib/http';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
+import { Input } from '@/components/ui/input';
 import { PropertyCardsSkeleton } from '@/components/loading/PageSkeletons';
 import { LgdLocationAccuracyNote, LgdLocationInput } from '@/components/realty/LgdLocationInput';
-import {
-  SAVED_RENTALS_CHANGED_EVENT,
-  isSavedRental,
-  removeSavedRental,
-  upsertSavedRental,
-} from '@/lib/rentalsSavedStore';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { trackFeatureUsage } from '@/lib/featureUsageApi';
+import { SAVED_RENTALS_CHANGED_EVENT, isSavedRental, removeSavedRental, upsertSavedRental } from '@/lib/rentalsSavedStore';
 import { readIndiaLocationSelection } from '@/lib/indiaLocationSelection';
+import {
+  COMPARE_CHANGED_EVENT,
+  isCompared,
+  readComparedListings,
+  removeComparedListing,
+  upsertComparedListing,
+} from '@/lib/compareStore';
+import { addSavedSearch } from '@/lib/savedSearchStore';
 
 interface RentMarketplacePageProps {
   onOpenDetails: (propertyId: string) => void;
   onOpenSaved: () => void;
-  onOpenMap: () => void;
-  onOpenShortTerm: () => void;
-  onOpenCoLiving: () => void;
   onOpenMessages: (propertyReference?: string) => void;
+  onOpenListProperty: () => void;
+  onOpenCompare?: () => void;
+  onOpenSavedSearches?: () => void;
+  initialViewMode?: ViewMode;
 }
 
 interface RentalListing {
   id: number;
   title: string;
+  state?: string;
   city: string;
+  area?: string;
   locality: string;
+  address?: string;
   monthlyRent: number | null;
   securityDeposit: number | null;
   bhk: number | null;
+  propertyType?: string;
   carpetArea: number | null;
+  builtupArea?: number | null;
   furnishedStatus: string;
+  tenantPreference?: string;
   availableFrom: string;
-  amenities: string[];
+  ownerName?: string;
+  builderName?: string;
+  companyName?: string;
+  imageUrls?: string[];
   isVerified: boolean;
-  isFeatured: boolean;
-  viewCount: number;
   primaryImage: string;
 }
 
-interface RentalsResponse {
-  rentals: RentalListing[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
 type SortKey = 'recommended' | 'rent_low' | 'rent_high' | 'newest' | 'verified';
+type ViewMode = 'list' | 'map';
+type GeoPoint = { latitude: number; longitude: number };
 
 type FiltersState = {
+  state: string;
+  district: string;
   city: string;
   locality: string;
+  propertyType: string;
   minRent: number;
   maxRent: number;
   minDeposit: number;
   maxDeposit: number;
-  bhk: string;
-  type: string;
-  furnished: string;
-  tenants: string;
-  availability: string;
-  maintenanceIncluded: boolean;
-  amenities: string[];
+  availableFrom: string;
+  availability: 'Any' | 'Immediate' | 'Future';
+  tenantPreference: string;
+  furnishing: string;
+  verifiedOnly: boolean;
+  photosOnly: boolean;
   sort: SortKey;
 };
 
-const defaultFilters: FiltersState = {
-  city: '',
-  locality: '',
-  minRent: 5000,
-  maxRent: 150000,
-  minDeposit: 0,
-  maxDeposit: 400000,
-  bhk: 'Any',
-  type: 'Any',
-  furnished: 'Any',
-  tenants: 'Any',
-  availability: 'Any',
-  maintenanceIncluded: false,
-  amenities: [],
-  sort: 'recommended',
+const RENT_API_MAX_LIMIT = 60;
+
+const defaultFilters = (): FiltersState => {
+  const location = readIndiaLocationSelection();
+  return {
+    state: location?.state || '',
+    district: location?.district || '',
+    city: location?.place || '',
+    locality: location?.subdistrict || '',
+    propertyType: 'Any',
+    minRent: 4000,
+    maxRent: 120000,
+    minDeposit: 0,
+    maxDeposit: 400000,
+    availableFrom: '',
+    availability: 'Any',
+    tenantPreference: 'Any',
+    furnishing: 'Any',
+    verifiedOnly: false,
+    photosOnly: false,
+    sort: 'recommended',
+  };
 };
 
-function createInitialFilters(): FiltersState {
-  const locationDefaults = typeof window !== 'undefined' ? readIndiaLocationSelection() : null;
+const fmt = (value: number | null, suffix = '') => (!value || value <= 0 ? 'On request' : `INR ${Math.round(value).toLocaleString('en-IN')}${suffix}`);
+const normalize = (value: string) => String(value || '').toLowerCase().trim();
+const optionLabel = (value: string, anyLabel: string) => (value === 'Any' ? anyLabel : value);
+const buildLiveMapEmbedUrl = (locationLabel: string, focusPoint: GeoPoint | null = null) => {
+  const query = focusPoint
+    ? `${focusPoint.latitude},${focusPoint.longitude}`
+    : String(locationLabel || '').trim() || 'India';
+  const zoom = focusPoint ? '16' : '12';
+  return `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=${zoom}&output=embed`;
+};
+
+function isCoordinateInRange(value: number, min: number, max: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  return value >= min && value <= max;
+}
+
+function parseCoordinateQuery(value: string): GeoPoint | null {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  const parts = normalized.split(/[,\s]+/).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const latitude = Number(parts[0]);
+  const longitude = Number(parts[1]);
+  if (!isCoordinateInRange(latitude, -90, 90)) return null;
+  if (!isCoordinateInRange(longitude, -180, 180)) return null;
+
   return {
-    ...defaultFilters,
-    city: locationDefaults?.place || '',
-    locality: locationDefaults?.subdistrict || '',
+    latitude: Number(latitude.toFixed(7)),
+    longitude: Number(longitude.toFixed(7)),
   };
 }
 
-const amenityOptions = [
-  { key: 'lift', label: 'Lift' },
-  { key: 'parking', label: 'Parking' },
-  { key: 'power-backup', label: 'Power Backup' },
-  { key: 'swimming-pool', label: 'Swimming Pool' },
-  { key: 'gym', label: 'Gym' },
-  { key: 'wifi', label: 'WiFi' },
-  { key: 'ac', label: 'AC' },
-  { key: 'modular-kitchen', label: 'Modular Kitchen' },
-  { key: 'geyser', label: 'Geyser' },
-  { key: 'cctv', label: 'CCTV' },
-  { key: 'balcony', label: 'Balcony' },
-  { key: 'near-metro', label: 'Near Metro' },
-  { key: 'near-office-hubs', label: 'Near Office Hubs' },
-  { key: 'near-college', label: 'Near College' },
-];
-
-const bhkOptions = ['Any', 'Studio', '1', '2', '3', '4', 'Shared Room'];
-const typeOptions = ['Any', 'Apartment', 'Villa', 'Independent House', 'Studio', 'Duplex', 'Shared Room'];
-const furnishedOptions = ['Any', 'unfurnished', 'semi', 'full'];
-const tenantOptions = ['Any', 'family', 'bachelor', 'company', 'students'];
-const availabilityOptions = ['Any', 'immediate', '15', '30'];
-
-function formatCurrency(value: number | null, suffix = ''): string {
-  if (!value || value <= 0) return 'On request';
-  return `INR ${Math.round(value).toLocaleString('en-IN')}${suffix}`;
-}
-
-function toDialNumber(phone: string): string {
-  return phone.replace(/[^\d+]/g, '');
+function formatCoordinateValue(value: number): string {
+  return value.toFixed(6);
 }
 
 export default function RentMarketplacePage({
   onOpenDetails,
   onOpenSaved,
-  onOpenMap,
-  onOpenShortTerm,
-  onOpenCoLiving,
   onOpenMessages,
+  onOpenListProperty,
+  onOpenCompare,
+  onOpenSavedSearches,
+  initialViewMode = 'list',
 }: RentMarketplacePageProps) {
-  const [filters, setFilters] = useState<FiltersState>(() => createInitialFilters());
-  const [applied, setApplied] = useState<FiltersState>(() => createInitialFilters());
+  const [filters, setFilters] = useState<FiltersState>(defaultFilters);
+  const [applied, setApplied] = useState<FiltersState>(defaultFilters);
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [rentals, setRentals] = useState<RentalListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(24);
   const [total, setTotal] = useState(0);
+  const [compareCount, setCompareCount] = useState(() => readComparedListings().length);
+  const [page, setPage] = useState(1);
+  const [manualMapFocusPoint, setManualMapFocusPoint] = useState<GeoPoint | null>(null);
+  const [manualMapFocusLabel, setManualMapFocusLabel] = useState('');
+  const [mapSearchQuery, setMapSearchQuery] = useState('');
+  const [locatingCurrentPosition, setLocatingCurrentPosition] = useState(false);
+  const pageSize = 12;
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    setViewMode(initialViewMode);
+  }, [initialViewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'map') return;
+    void trackFeatureUsage({
+      featureKey: 'rent_map_view_opened',
+      context: 'rent_marketplace',
+      view: 'rent-map',
+    });
+  }, [viewMode]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
-
     const params = new URLSearchParams();
-    if (applied.city) params.set('city', applied.city);
-    if (applied.locality) params.set('locality', applied.locality);
-    if (applied.bhk !== 'Any') params.set('bhk', applied.bhk);
-    if (applied.type !== 'Any') params.set('type', applied.type);
-    if (applied.furnished !== 'Any') params.set('furnished', applied.furnished);
-    if (applied.tenants !== 'Any') params.set('tenants', applied.tenants);
-    if (applied.availability !== 'Any') params.set('availability', applied.availability);
-    if (applied.maintenanceIncluded) params.set('maintenanceIncluded', 'true');
-    if (applied.amenities.length > 0) params.set('amenities', applied.amenities.join(','));
+    params.set('limit', String(RENT_API_MAX_LIMIT));
+    params.set('sort', applied.sort);
+    if (applied.city.trim()) params.set('city', applied.city.trim());
+    if (applied.locality.trim()) params.set('locality', applied.locality.trim());
     params.set('minRent', String(applied.minRent));
     params.set('maxRent', String(applied.maxRent));
     params.set('minDeposit', String(applied.minDeposit));
     params.set('maxDeposit', String(applied.maxDeposit));
-    params.set('sort', applied.sort);
-    params.set('page', String(page));
-    params.set('limit', String(pageSize));
-
-    apiRequest<RentalsResponse>(`/api/rentals?${params.toString()}`)
+    apiRequest<{ rentals: RentalListing[]; total: number }>(`/api/rentals?${params.toString()}`)
       .then((response) => {
         if (!active) return;
         setRentals(response.rentals || []);
         setTotal(Number(response.total || 0));
-        setPageSize(Number(response.pageSize || pageSize));
       })
       .catch((loadError) => {
         if (!active) return;
@@ -209,457 +204,686 @@ export default function RentMarketplacePage({
         setTotal(0);
       })
       .finally(() => {
-        if (!active) return;
-        setLoading(false);
+        if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
-  }, [applied, page, pageSize]);
+  }, [applied]);
 
-  const summary = useMemo(() => `${total.toLocaleString('en-IN')} rentals available`, [total]);
+  const filtered = useMemo(() => {
+    const list = rentals.filter((rental) => {
+      const stateText = normalize(rental.state || '');
+      const districtText = normalize(rental.area || '');
+      const cityText = normalize(rental.city || '');
+      const localityText = normalize(rental.locality || rental.address || '');
+      const hasPhotos =
+        Boolean(String(rental.primaryImage || '').trim()) ||
+        (Array.isArray(rental.imageUrls) && rental.imageUrls.length > 0);
+      const availableDate = new Date(String(rental.availableFrom || ''));
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const isImmediate = Number.isNaN(availableDate.getTime()) || availableDate <= today;
 
-  const toggleAmenity = (key: string) => {
-    setFilters((prev) => {
-      const next = prev.amenities.includes(key)
-        ? prev.amenities.filter((item) => item !== key)
-        : [...prev.amenities, key];
-      return { ...prev, amenities: next };
+      const matchesAvailability =
+        filters.availability === 'Any' ? true : filters.availability === 'Immediate' ? isImmediate : !isImmediate;
+
+      const minRentOk = !rental.monthlyRent || rental.monthlyRent >= filters.minRent;
+      const maxRentOk = !rental.monthlyRent || rental.monthlyRent <= filters.maxRent;
+      const minDepOk = !rental.securityDeposit || rental.securityDeposit >= filters.minDeposit;
+      const maxDepOk = !rental.securityDeposit || rental.securityDeposit <= filters.maxDeposit;
+
+      return (
+        (!filters.state || stateText.includes(normalize(filters.state))) &&
+        (!filters.district || districtText.includes(normalize(filters.district))) &&
+        (!filters.city || cityText.includes(normalize(filters.city))) &&
+        (!filters.locality || localityText.includes(normalize(filters.locality))) &&
+        (filters.propertyType === 'Any' || normalize(rental.propertyType || '').includes(normalize(filters.propertyType.split(' ')[0]))) &&
+        (filters.tenantPreference === 'Any' || normalize(rental.tenantPreference || '').includes(normalize(filters.tenantPreference))) &&
+        (filters.furnishing === 'Any' || normalize(rental.furnishedStatus).includes(normalize(filters.furnishing.split(' ')[0]))) &&
+        (!filters.availableFrom || !rental.availableFrom || new Date(rental.availableFrom) <= new Date(filters.availableFrom)) &&
+        matchesAvailability &&
+        minRentOk &&
+        maxRentOk &&
+        minDepOk &&
+        maxDepOk &&
+        (!filters.verifiedOnly || rental.isVerified) &&
+        (!filters.photosOnly || hasPhotos)
+      );
+    });
+
+    if (filters.sort === 'rent_low') return [...list].sort((a, b) => Number(a.monthlyRent || 0) - Number(b.monthlyRent || 0));
+    if (filters.sort === 'rent_high') return [...list].sort((a, b) => Number(b.monthlyRent || 0) - Number(a.monthlyRent || 0));
+    if (filters.sort === 'verified') return [...list].sort((a, b) => Number(Boolean(b.isVerified)) - Number(Boolean(a.isVerified)));
+    if (filters.sort === 'newest') return [...list].sort((a, b) => Number(b.id) - Number(a.id));
+    return list;
+  }, [filters, rentals]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filtered.length / pageSize)),
+    [filtered.length, pageSize]
+  );
+
+  const pagedRentals = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
+
+  const showingFrom = filtered.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingTo = Math.min(filtered.length, page * pageSize);
+
+  const defaultMapFocusLabel = useMemo(() => {
+    const parts = [filters.locality, filters.city, filters.district, filters.state]
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    return parts.join(', ') || 'India';
+  }, [filters.locality, filters.city, filters.district, filters.state]);
+
+  const mapFocusLabel = useMemo(() => {
+    if (manualMapFocusPoint) {
+      if (manualMapFocusLabel.trim()) return manualMapFocusLabel.trim();
+      return `Current location (${formatCoordinateValue(manualMapFocusPoint.latitude)}, ${formatCoordinateValue(manualMapFocusPoint.longitude)})`;
+    }
+    if (manualMapFocusLabel.trim()) return manualMapFocusLabel.trim();
+    return defaultMapFocusLabel;
+  }, [defaultMapFocusLabel, manualMapFocusLabel, manualMapFocusPoint]);
+
+  const liveMapUrl = useMemo(
+    () => buildLiveMapEmbedUrl(mapFocusLabel, manualMapFocusPoint),
+    [manualMapFocusPoint, mapFocusLabel]
+  );
+
+  const nearbyRentals = useMemo(() => {
+    const focusTokens = [filters.locality, filters.city, filters.district, filters.state]
+      .map((entry) => normalize(entry))
+      .filter(Boolean);
+
+    if (focusTokens.length === 0) return filtered;
+
+    const scoreRental = (rental: RentalListing) => {
+      const haystack = normalize(
+        [rental.locality, rental.area, rental.city, rental.state].filter(Boolean).join(' ')
+      );
+      return focusTokens.reduce((score, token) => (haystack.includes(token) ? score + 1 : score), 0);
+    };
+
+    return [...filtered].sort((a, b) => {
+      const scoreDiff = scoreRental(b) - scoreRental(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return Number(b.id) - Number(a.id);
+    });
+  }, [filters.locality, filters.city, filters.district, filters.state, filtered]);
+
+  const applyFilters = () => {
+    if (filters.minRent > filters.maxRent) return toast.error('Minimum rent cannot be greater than maximum rent.');
+    if (filters.minDeposit > filters.maxDeposit) return toast.error('Minimum deposit cannot be greater than maximum deposit.');
+    setApplied(filters);
+    void trackFeatureUsage({
+      featureKey: 'rent_filters_applied',
+      context: 'rent_marketplace',
+      view: viewMode === 'map' ? 'rent-map' : 'rent',
+      detail: `city=${filters.city || '-'};locality=${filters.locality || '-'};type=${filters.propertyType};sort=${filters.sort}`,
     });
   };
 
+  const handleUseCurrentLocation = () => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+      toast.error('Current location is not supported in this browser.');
+      return;
+    }
+    setLocatingCurrentPosition(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const nextPoint = {
+          latitude: Number(position.coords.latitude),
+          longitude: Number(position.coords.longitude),
+        };
+        setManualMapFocusPoint(nextPoint);
+        setManualMapFocusLabel('Current location');
+        setMapSearchQuery(
+          `${formatCoordinateValue(nextPoint.latitude)}, ${formatCoordinateValue(nextPoint.longitude)}`
+        );
+        setLocatingCurrentPosition(false);
+        toast.success('Map centered to your current location.');
+      },
+      (geoError) => {
+        setLocatingCurrentPosition(false);
+        if (geoError.code === 1) {
+          toast.error('Location permission denied. Allow location access and try again.');
+          return;
+        }
+        if (geoError.code === 2) {
+          toast.error('Unable to detect your location right now.');
+          return;
+        }
+        if (geoError.code === 3) {
+          toast.error('Location request timed out. Try again.');
+          return;
+        }
+        toast.error('Could not fetch current location.');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 60000,
+      }
+    );
+  };
+
+  const handleMapSearch = () => {
+    const query = String(mapSearchQuery || '').trim();
+    if (!query) {
+      toast.error('Enter a place or coordinates to search on map.');
+      return;
+    }
+
+    const coordinatePoint = parseCoordinateQuery(query);
+    if (coordinatePoint) {
+      setManualMapFocusPoint(coordinatePoint);
+      setManualMapFocusLabel(
+        `Manual coordinates (${formatCoordinateValue(coordinatePoint.latitude)}, ${formatCoordinateValue(coordinatePoint.longitude)})`
+      );
+      toast.success('Map centered to entered coordinates.');
+      return;
+    }
+
+    setManualMapFocusPoint(null);
+    setManualMapFocusLabel(query);
+    toast.success('Map focused to searched place.');
+  };
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters, viewMode]);
+
+  useEffect(() => {
+    if (page <= totalPages) return;
+    setPage(totalPages);
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    const sync = () => setCompareCount(readComparedListings().length);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'zdt_compared_listings') return;
+      sync();
+    };
+    sync();
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(COMPARE_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(COMPARE_CHANGED_EVENT, sync);
+    };
+  }, []);
+
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string }> = [];
+    if (filters.state.trim()) chips.push({ key: 'state', label: `State: ${filters.state.trim()}` });
+    if (filters.district.trim()) chips.push({ key: 'district', label: `District: ${filters.district.trim()}` });
+    if (filters.city.trim()) chips.push({ key: 'city', label: `City: ${filters.city.trim()}` });
+    if (filters.locality.trim()) chips.push({ key: 'locality', label: `Locality: ${filters.locality.trim()}` });
+    if (filters.propertyType !== 'Any') chips.push({ key: 'propertyType', label: filters.propertyType });
+    if (filters.availability !== 'Any') chips.push({ key: 'availability', label: filters.availability });
+    if (filters.tenantPreference !== 'Any') chips.push({ key: 'tenantPreference', label: filters.tenantPreference });
+    if (filters.furnishing !== 'Any') chips.push({ key: 'furnishing', label: filters.furnishing });
+    if (filters.verifiedOnly) chips.push({ key: 'verifiedOnly', label: 'Verified Only' });
+    if (filters.photosOnly) chips.push({ key: 'photosOnly', label: 'Photos Only' });
+    return chips;
+  }, [filters]);
+
+  const removeFilterChip = (key: string) => {
+    setFilters((prev) => {
+      if (key === 'state') return { ...prev, state: '' };
+      if (key === 'district') return { ...prev, district: '' };
+      if (key === 'city') return { ...prev, city: '' };
+      if (key === 'locality') return { ...prev, locality: '' };
+      if (key === 'propertyType') return { ...prev, propertyType: 'Any' };
+      if (key === 'availability') return { ...prev, availability: 'Any' };
+      if (key === 'tenantPreference') return { ...prev, tenantPreference: 'Any' };
+      if (key === 'furnishing') return { ...prev, furnishing: 'Any' };
+      if (key === 'verifiedOnly') return { ...prev, verifiedOnly: false };
+      if (key === 'photosOnly') return { ...prev, photosOnly: false };
+      return prev;
+    });
+  };
+
+  const handleSaveSearch = () => {
+    const primaryLocation = filters.locality || filters.city || filters.district || filters.state || 'All India';
+    const label = `Rent | ${primaryLocation} | ${filters.propertyType === 'Any' ? 'All types' : filters.propertyType}`;
+    addSavedSearch({
+      label,
+      targetView: 'rent',
+      criteria: filters,
+    });
+    void trackFeatureUsage({
+      featureKey: 'saved_search_applied',
+      context: 'rent_marketplace',
+      view: viewMode === 'map' ? 'rent-map' : 'rent',
+      detail: label,
+    });
+    toast.success('Search saved. You can reopen it from Saved Searches.');
+  };
+
   return (
-    <section className="pb-20 pt-28 text-slate-900">
+    <section className="pb-16 pt-28 text-slate-900">
       <div className="page-container space-y-6">
-        <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-[#0b1220] via-[#111827] to-[#24364b] p-6 text-white shadow-xl">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-blue-200">ZDT RENTAL HUB</p>
-              <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Premium rentals with flexible tenure.</h1>
-              <p className="mt-2 max-w-2xl text-sm text-blue-100">
-                Long-term, short-term, and co-living inventory. Verified owners, transparent pricing, and instant apply.
-              </p>
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-6 text-white">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h1 className="text-3xl font-semibold">Rent Property</h1>
+                <p className="mt-2 text-sm text-slate-200">Find verified rental properties with clear terms and genuine owners.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-xl border border-white/20 bg-white/10 p-1 text-sm">
+                  <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'list' ? 'bg-white text-slate-900' : 'text-slate-200'}`}>List</button>
+                  <button type="button" onClick={() => setViewMode('map')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'map' ? 'bg-white text-slate-900' : 'text-slate-200'}`}>Map</button>
+                </div>
+                <Button variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={onOpenSaved}>
+                  <Heart className="mr-2 h-4 w-4" />
+                  Saved
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-white/30 bg-white/10 text-white hover:bg-white/20"
+                  onClick={onOpenCompare}
+                >
+                  <GitCompareArrows className="mr-2 h-4 w-4" />
+                  Compare ({compareCount})
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button className="h-10 rounded-full bg-white/10 text-white hover:bg-white/20" onClick={onOpenSaved}>
+          </div>
+
+          <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-3">
+            <LgdLocationInput
+              value={filters.state}
+              onChange={(value) => setFilters((p) => ({ ...p, state: value }))}
+              placeholder="State"
+              className="h-11"
+              suggestKind="india"
+              indiaValueField="state"
+            />
+            <LgdLocationInput
+              value={filters.district}
+              onChange={(value) => setFilters((p) => ({ ...p, district: value }))}
+              placeholder="District"
+              className="h-11"
+              suggestKind="india"
+              indiaValueField="district"
+            />
+            <LgdLocationInput value={filters.city} onChange={(value) => setFilters((p) => ({ ...p, city: value }))} placeholder="City / Town" className="h-11" suggestKind="india" indiaValueField="village" />
+            <LgdLocationInput value={filters.locality} onChange={(value) => setFilters((p) => ({ ...p, locality: value }))} placeholder="Area / Locality" className="h-11" suggestKind="india" indiaValueField="subdistrict" />
+            <Select value={filters.propertyType} onValueChange={(value) => setFilters((p) => ({ ...p, propertyType: value }))}>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Property Type" /></SelectTrigger>
+              <SelectContent>
+                {['Any', 'Apartment / Flat', 'Independent House', 'Room / PG', 'Commercial Shop', 'Office Space'].map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {optionLabel(v, 'All property types')}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly Rent: INR {filters.minRent.toLocaleString('en-IN')} - INR {filters.maxRent.toLocaleString('en-IN')}</p>
+              <Slider className="mt-2" min={3000} max={300000} step={500} value={[filters.minRent, filters.maxRent]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minRent: min, maxRent: max }))} />
+            </div>
+            <LgdLocationAccuracyNote className="sm:col-span-2 xl:col-span-3" />
+            <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-3">
+              <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={applyFilters}>Find Rental Property</Button>
+              <Button variant="outline" className="border-slate-300" onClick={onOpenListProperty}>List Property for Rent</Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm xl:sticky xl:top-24 xl:self-start">
+          <h2 className="text-xl font-semibold text-slate-900">Smart Filters</h2>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Security Deposit: INR {filters.minDeposit.toLocaleString('en-IN')} - INR {filters.maxDeposit.toLocaleString('en-IN')}</p>
+              <Slider className="mt-2" min={0} max={1000000} step={1000} value={[filters.minDeposit, filters.maxDeposit]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minDeposit: min, maxDeposit: max }))} />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Available From</p>
+              <Input type="date" value={filters.availableFrom} onChange={(e) => setFilters((p) => ({ ...p, availableFrom: e.target.value }))} className="h-10" />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Availability</p>
+              <Select value={filters.availability} onValueChange={(value: FiltersState['availability']) => setFilters((p) => ({ ...p, availability: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Availability" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Any">Any timeline</SelectItem>
+                  <SelectItem value="Immediate">Immediate</SelectItem>
+                  <SelectItem value="Future">Future</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Tenant Preference</p>
+              <Select value={filters.tenantPreference} onValueChange={(value) => setFilters((p) => ({ ...p, tenantPreference: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Tenant Preference" /></SelectTrigger>
+                <SelectContent>
+                  {['Any', 'Family', 'Bachelor', 'Company Lease'].map((v) => (
+                    <SelectItem key={v} value={v}>{optionLabel(v, 'Any tenant')}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Furnishing</p>
+              <Select value={filters.furnishing} onValueChange={(value) => setFilters((p) => ({ ...p, furnishing: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Furnishing" /></SelectTrigger>
+                <SelectContent>
+                  {['Any', 'Fully Furnished', 'Semi Furnished', 'Unfurnished'].map((v) => (
+                    <SelectItem key={v} value={v}>{optionLabel(v, 'Any furnishing')}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sort</p>
+              <Select value={filters.sort} onValueChange={(value: SortKey) => setFilters((p) => ({ ...p, sort: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Sort" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recommended">Recommended</SelectItem>
+                  <SelectItem value="rent_low">Rent low to high</SelectItem>
+                  <SelectItem value="rent_high">Rent high to low</SelectItem>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="verified">Verified first</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">Verified Owner / Builder<Checkbox checked={filters.verifiedOnly} onCheckedChange={(v) => setFilters((p) => ({ ...p, verifiedOnly: Boolean(v) }))} /></label>
+            <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">Photos available<Checkbox checked={filters.photosOnly} onCheckedChange={(v) => setFilters((p) => ({ ...p, photosOnly: Boolean(v) }))} /></label>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <Button variant="outline" onClick={() => { const reset = defaultFilters(); setFilters(reset); setApplied(reset); }}>Reset</Button>
+            <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={applyFilters}>Apply Filters</Button>
+          </div>
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Quick Actions</p>
+            <div className="mt-3 grid gap-2">
+              <Button variant="outline" onClick={handleSaveSearch}>
+                <SearchCheck className="mr-2 h-4 w-4" />
+                Save Search
+              </Button>
+              {onOpenSavedSearches && (
+                <Button variant="outline" onClick={onOpenSavedSearches}>
+                  Saved Searches
+                </Button>
+              )}
+              <Button variant="outline" onClick={onOpenSaved}>
                 <Heart className="mr-2 h-4 w-4" />
                 Saved Rentals
               </Button>
-              <Button className="h-10 rounded-full bg-white/10 text-white hover:bg-white/20" onClick={onOpenShortTerm}>
-                <CalendarDays className="mr-2 h-4 w-4" />
-                Short-Term
-              </Button>
-              <Button className="h-10 rounded-full bg-white/10 text-white hover:bg-white/20" onClick={onOpenCoLiving}>
-                <Users className="mr-2 h-4 w-4" />
-                Co-Living
-              </Button>
-              <Button className="h-10 rounded-full bg-blue-500 text-white hover:bg-blue-400" onClick={onOpenMap}>
-                <MapPin className="mr-2 h-4 w-4" />
-                Map View
+              <Button variant="outline" onClick={onOpenCompare}>
+                <GitCompareArrows className="mr-2 h-4 w-4" />
+                Open Compare ({compareCount})
               </Button>
             </div>
-          </div>
-          <div className="mt-5 flex flex-wrap items-center gap-3 text-xs text-blue-100/80">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1">
-              <BadgeCheck className="h-3.5 w-3.5" />
-              KYC verified owners
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1">
-              <Sparkles className="h-3.5 w-3.5" />
-              AI affordability ready
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Trusted agreements
-            </span>
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Filters</h2>
-                <Button variant="ghost" className="h-8 text-xs" onClick={() => setFilters(defaultFilters)}>
-                  Reset
-                </Button>
-              </div>
-
-              <div className="mt-4 space-y-4 text-sm">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Location</p>
-                  <div className="mt-2 grid gap-2">
-                    <LgdLocationInput
-                      value={filters.city}
-                      onChange={(value) => setFilters((prev) => ({ ...prev, city: value }))}
-                      placeholder="City"
-                      suggestKind="india"
-                      indiaValueField="village"
-                    />
-                    <LgdLocationInput
-                      value={filters.locality}
-                      onChange={(value) => setFilters((prev) => ({ ...prev, locality: value }))}
-                      placeholder="Locality"
-                      suggestKind="india"
-                      indiaValueField="subdistrict"
-                    />
-                    <LgdLocationAccuracyNote />
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Rent</p>
-                  <div className="mt-2 grid gap-3">
-                    <Slider
-                      value={[filters.minRent, filters.maxRent]}
-                      onValueChange={([min, max]) => setFilters((prev) => ({ ...prev, minRent: min, maxRent: max }))}
-                      min={3000}
-                      max={200000}
-                      step={500}
-                    />
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>{formatCurrency(filters.minRent)}</span>
-                      <span>{formatCurrency(filters.maxRent)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deposit Range</p>
-                  <div className="mt-2 grid gap-3">
-                    <Slider
-                      value={[filters.minDeposit, filters.maxDeposit]}
-                      onValueChange={([min, max]) => setFilters((prev) => ({ ...prev, minDeposit: min, maxDeposit: max }))}
-                      min={0}
-                      max={800000}
-                      step={1000}
-                    />
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>{formatCurrency(filters.minDeposit)}</span>
-                      <span>{formatCurrency(filters.maxDeposit)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Configuration</p>
-                  <div className="mt-2 grid gap-2">
-                    <Select value={filters.bhk} onValueChange={(value) => setFilters((prev) => ({ ...prev, bhk: value }))}>
-                      <SelectTrigger className="h-9"><SelectValue placeholder="BHK" /></SelectTrigger>
-                      <SelectContent>
-                        {bhkOptions.map((item) => (
-                          <SelectItem key={item} value={item}>{item}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={filters.type} onValueChange={(value) => setFilters((prev) => ({ ...prev, type: value }))}>
-                      <SelectTrigger className="h-9"><SelectValue placeholder="Type" /></SelectTrigger>
-                      <SelectContent>
-                        {typeOptions.map((item) => (
-                          <SelectItem key={item} value={item}>{item}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Furnishing</p>
-                  <Select value={filters.furnished} onValueChange={(value) => setFilters((prev) => ({ ...prev, furnished: value }))}>
-                    <SelectTrigger className="mt-2 h-9"><SelectValue placeholder="Furnished" /></SelectTrigger>
-                    <SelectContent>
-                      {furnishedOptions.map((item) => (
-                        <SelectItem key={item} value={item}>{item}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tenant Preference</p>
-                  <Select value={filters.tenants} onValueChange={(value) => setFilters((prev) => ({ ...prev, tenants: value }))}>
-                    <SelectTrigger className="mt-2 h-9"><SelectValue placeholder="Tenants" /></SelectTrigger>
-                    <SelectContent>
-                      {tenantOptions.map((item) => (
-                        <SelectItem key={item} value={item}>{item}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Availability</p>
-                  <Select value={filters.availability} onValueChange={(value) => setFilters((prev) => ({ ...prev, availability: value }))}>
-                    <SelectTrigger className="mt-2 h-9"><SelectValue placeholder="Availability" /></SelectTrigger>
-                    <SelectContent>
-                      {availabilityOptions.map((item) => (
-                        <SelectItem key={item} value={item}>{item}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-xs">
-                  Maintenance included
-                  <Checkbox
-                    checked={filters.maintenanceIncluded}
-                    onCheckedChange={(value) => setFilters((prev) => ({ ...prev, maintenanceIncluded: Boolean(value) }))}
-                  />
-                </label>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Amenities</p>
-                  <div className="mt-2 grid gap-2">
-                    {amenityOptions.map((amenity) => (
-                      <label key={amenity.key} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-xs">
-                        <span className="inline-flex items-center gap-2 text-slate-700">{amenity.label}</span>
-                        <Checkbox checked={filters.amenities.includes(amenity.key)} onCheckedChange={() => toggleAmenity(amenity.key)} />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sort By</p>
-                  <Select value={filters.sort} onValueChange={(value: SortKey) => setFilters((prev) => ({ ...prev, sort: value }))}>
-                    <SelectTrigger className="mt-2 h-9"><SelectValue placeholder="Sort by" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="recommended">Recommended</SelectItem>
-                      <SelectItem value="rent_low">Rent low to high</SelectItem>
-                      <SelectItem value="rent_high">Rent high to low</SelectItem>
-                      <SelectItem value="newest">Newest</SelectItem>
-                      <SelectItem value="verified">Verified only</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button className="mt-2 h-10 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800" onClick={() => { setApplied(filters); setPage(1); }}>
-                  Apply Filters
-                </Button>
-              </div>
-            </div>
-          </aside>
-
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900">Rental Listings</h2>
-                <p className="text-sm text-slate-600">{summary}</p>
-              </div>
-              <Button variant="outline" className="h-9" onClick={onOpenMap}>Map View</Button>
-            </div>
-
-            {loading ? (
-              <PropertyCardsSkeleton />
-            ) : error ? (
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
-            ) : rentals.length === 0 ? (
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
-                No rentals match the selected filters.
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {rentals.map((rental) => (
-                  <RentalCard
-                    key={rental.id}
-                    rental={rental}
-                    onOpenDetails={onOpenDetails}
-                    onOpenMessages={onOpenMessages}
-                  />
-                ))}
-              </div>
+        <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-900">Rental Listings</h2>
+            <p className="text-sm text-slate-600">{filtered.length.toLocaleString('en-IN')} matched rentals from {total.toLocaleString('en-IN')} listings</p>
+            {viewMode === 'list' && filtered.length > 0 && (
+              <p className="text-xs text-slate-500">
+                Showing {showingFrom}-{showingTo} of {filtered.length}
+              </p>
             )}
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            Safe communication, no broker pressure
+          </div>
+        </div>
+        {activeFilterChips.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => removeFilterChip(chip.key)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300"
+              >
+                {chip.label} x
+              </button>
+            ))}
+          </div>
+        )}
 
+        {loading ? <PropertyCardsSkeleton /> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : viewMode === 'map' ? (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="inline-flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-brand-gray2 bg-white">
+                    <img src="/images/logo-mark.svg" alt="ZDT Realty logo" className="h-4 w-4 object-contain" />
+                  </span>
+                  <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">
+                    <MapPin className="h-3.5 w-3.5 text-brand-primary" />
+                    Live Map Section
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={mapSearchQuery}
+                    onChange={(event) => setMapSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        handleMapSearch();
+                      }
+                    }}
+                    placeholder="Search place or Lat, Lng"
+                    className="h-8 w-[220px] bg-white text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 border-slate-300 bg-white text-xs text-slate-700"
+                    onClick={handleMapSearch}
+                  >
+                    Search
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 border-slate-300 bg-white text-xs text-slate-700"
+                    onClick={handleUseCurrentLocation}
+                    disabled={locatingCurrentPosition}
+                  >
+                    {locatingCurrentPosition ? 'Locating...' : 'Use current location'}
+                  </Button>
+                  <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600">
+                    Focus: {mapFocusLabel}
+                  </span>
+                </div>
+              </div>
+              <iframe
+                title={`Rent properties map for ${mapFocusLabel}`}
+                src={liveMapUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                className="h-[520px] w-full border-0"
+              />
+            </div>
+            <aside className="max-h-[520px] space-y-3 overflow-auto pr-1">
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <p className="text-sm font-semibold text-slate-900">Nearby Rentals</p>
+                <p className="mt-1 text-xs text-slate-500">Ranked by selected location filters.</p>
+              </div>
+              {nearbyRentals.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+                  No rentals match current filters. Clear filters to see rentals on map.
+                </div>
+              ) : (
+                nearbyRentals.map((r) => <button key={`map-${r.id}`} type="button" onClick={() => onOpenDetails(String(r.id))} className="w-full rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300"><p className="truncate text-sm font-semibold text-slate-900">{r.title}</p><p className="text-xs text-slate-500">{r.locality || r.city}</p><p className="mt-1 text-sm font-semibold text-slate-900">{fmt(r.monthlyRent, '/mo')}</p></button>)
+              )}
+            </aside>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">No rentals match your selected filters.</div>
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{pagedRentals.map((rental) => <RentalCard key={rental.id} rental={rental} onOpenDetails={onOpenDetails} onOpenMessages={onOpenMessages} onOpenCompare={onOpenCompare} />)}</div>
             {totalPages > 1 && (
-              <Pagination className="pt-4">
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious
-                      href="#"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setPage((prev) => Math.max(1, prev - 1));
-                      }}
-                    />
-                  </PaginationItem>
-                  {Array.from({ length: Math.min(5, totalPages) }).map((_, index) => {
-                    const pageNumber = index + 1;
-                    return (
-                      <PaginationItem key={`page-${pageNumber}`}>
-                        <PaginationLink
-                          href="#"
-                          isActive={page === pageNumber}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            setPage(pageNumber);
-                          }}
-                        >
-                          {pageNumber}
-                        </PaginationLink>
-                      </PaginationItem>
-                    );
-                  })}
-                  <PaginationItem>
-                    <PaginationNext
-                      href="#"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setPage((prev) => Math.min(totalPages, prev + 1));
-                      }}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  disabled={page <= 1}
+                >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Prev
+                </Button>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                  Page {page} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Next
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </div>
             )}
-          </div>
+          </>
+        )}
         </div>
+        </div>
+
+        <p className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">ZDT Realty is an independent real estate platform focused on transparent and verified rental listings.</p>
       </div>
     </section>
   );
 }
 
-function RentalCard({
-  rental,
-  onOpenDetails,
-  onOpenMessages,
-}: {
-  rental: RentalListing;
-  onOpenDetails: (propertyId: string) => void;
-  onOpenMessages: (propertyReference?: string) => void;
-}) {
+function RentalCard({ rental, onOpenDetails, onOpenMessages, onOpenCompare }: { rental: RentalListing; onOpenDetails: (propertyId: string) => void; onOpenMessages: (propertyReference?: string) => void; onOpenCompare?: () => void; }) {
   const referenceId = String(rental.id);
   const [saved, setSaved] = useState(() => isSavedRental(referenceId));
-  const contactPhone = '+91 90000 10001';
+  const [compared, setCompared] = useState(() => isCompared(referenceId));
+  const ownerName = rental.ownerName || rental.builderName || rental.companyName || 'Owner / Builder';
+  const available = rental.availableFrom
+    ? Number.isNaN(new Date(rental.availableFrom).getTime())
+      ? 'Immediate'
+      : new Date(rental.availableFrom).toLocaleDateString('en-IN')
+    : 'Immediate';
+  const area = rental.carpetArea || rental.builtupArea || 0;
 
   useEffect(() => {
     const sync = () => setSaved(isSavedRental(referenceId));
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === 'zdt_saved_rentals') sync();
-    };
-
+    const onStorage = (event: StorageEvent) => { if (event.key && event.key !== 'zdt_saved_rentals') return; sync(); };
     sync();
-    window.addEventListener('storage', handleStorage);
+    window.addEventListener('storage', onStorage);
     window.addEventListener(SAVED_RENTALS_CHANGED_EVENT, sync);
+    return () => { window.removeEventListener('storage', onStorage); window.removeEventListener(SAVED_RENTALS_CHANGED_EVENT, sync); };
+  }, [referenceId]);
+
+  useEffect(() => {
+    const sync = () => setCompared(isCompared(referenceId));
+    const onStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'zdt_compared_listings') return;
+      sync();
+    };
+    sync();
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(COMPARE_CHANGED_EVENT, sync);
     return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener(SAVED_RENTALS_CHANGED_EVENT, sync);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(COMPARE_CHANGED_EVENT, sync);
     };
   }, [referenceId]);
 
-  const handleSave = () => {
+  const toggleSave = () => {
     if (saved) {
       removeSavedRental(referenceId);
-      toast.success('Removed from saved rentals');
       setSaved(false);
+      toast.success('Removed from saved rentals');
       return;
     }
-
     upsertSavedRental({
       id: referenceId,
       title: rental.title,
       image: rental.primaryImage || '/images/property-1.jpg',
       city: rental.city,
       locality: rental.locality,
-      monthlyRentLabel: formatCurrency(rental.monthlyRent, '/mo'),
-      bhk: rental.bhk ? `${rental.bhk} BHK` : 'Studio',
-      furnishedStatus: rental.furnishedStatus,
+      monthlyRentLabel: fmt(rental.monthlyRent, '/mo'),
+      bhk: rental.bhk ? `${rental.bhk} BHK` : rental.propertyType || 'Rental',
+      furnishedStatus: rental.furnishedStatus || 'Furnishing on request',
       availableFrom: rental.availableFrom || '',
     });
-    toast.success('Saved rental');
     setSaved(true);
+    toast.success('Saved rental');
   };
 
-  const amenityIcons = rental.amenities.slice(0, 3);
-  const availableLabel = rental.availableFrom ? new Date(rental.availableFrom).toLocaleDateString('en-IN') : 'Immediate';
+  const toggleCompare = () => {
+    if (compared) {
+      removeComparedListing(referenceId);
+      setCompared(false);
+      toast.success('Removed from compare');
+      return;
+    }
+
+    upsertComparedListing({
+      id: referenceId,
+      referenceId,
+      title: rental.title,
+      image: rental.primaryImage || '/images/property-1.jpg',
+      city: rental.city,
+      area: rental.locality || rental.area || '',
+      priceLabel: fmt(rental.monthlyRent, '/mo'),
+      areaLabel: area > 0 ? `${area} sq.ft` : 'Area on request',
+      propertyType: rental.propertyType || 'Rental',
+      bhk: rental.bhk ? `${rental.bhk} BHK` : rental.propertyType || 'Rental',
+      mainDoorFacing: 'NA',
+      vastuScore: 0,
+      verified: rental.isVerified,
+      ownerPhone: 'Hidden',
+      updatedAt: new Date().toISOString(),
+    });
+    setCompared(true);
+    toast.success('Added to compare');
+  };
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="relative">
-        <img src={rental.primaryImage || '/images/property-1.jpg'} alt={rental.title} className="h-44 w-full object-cover" loading="lazy" />
-        <div className="absolute left-3 top-3 flex flex-wrap gap-2">
-          {rental.isVerified && (
-            <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-              <BadgeCheck className="mr-1 h-3.5 w-3.5" />
-              Verified
-            </Badge>
-          )}
-          {rental.isFeatured && (
-            <Badge className="bg-amber-500 text-white hover:bg-amber-500">New</Badge>
-          )}
-        </div>
-        <button
-          type="button"
-          className={`absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition ${
-            saved
-              ? 'border-rose-200 bg-rose-50 text-rose-600'
-              : 'border-white/70 bg-white/90 text-slate-600 hover:text-rose-500'
-          }`}
-          onClick={handleSave}
-        >
-          <Heart className={`h-4 w-4 ${saved ? 'fill-current' : ''}`} />
-        </button>
+        <img src={rental.primaryImage || '/images/property-1.jpg'} alt={rental.title} className="h-48 w-full object-cover" loading="lazy" />
+        {rental.isVerified && <Badge className="absolute left-3 top-3 bg-emerald-600 text-white hover:bg-emerald-600"><BadgeCheck className="mr-1 h-3.5 w-3.5" />Verified</Badge>}
       </div>
-
       <div className="space-y-3 p-4">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">{rental.title}</h3>
-          <p className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
-            <MapPin className="h-3.5 w-3.5" />
-            {rental.locality || rental.city}
-          </p>
-        </div>
-
+        <h3 className="line-clamp-2 text-base font-semibold text-slate-900">{rental.title}</h3>
+        <p className="inline-flex items-center gap-1 text-xs text-slate-600"><MapPin className="h-3.5 w-3.5 text-slate-500" />{rental.locality || rental.city}</p>
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-lg font-bold text-slate-900">{formatCurrency(rental.monthlyRent, '/mo')}</p>
-          <p className="text-xs text-slate-500">Deposit {formatCurrency(rental.securityDeposit)}</p>
+          <p className="text-lg font-semibold text-slate-900">{fmt(rental.monthlyRent, '/mo')}</p>
+          <p className="text-xs text-slate-600">Security Deposit: {fmt(rental.securityDeposit)}</p>
         </div>
-
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <span>{rental.bhk ? `${rental.bhk} BHK` : 'Studio'} • {rental.carpetArea ? `${rental.carpetArea} sq.ft` : 'Area on request'}</span>
-          <span className="inline-flex items-center gap-1">
-            <Sofa className="h-3.5 w-3.5" />
-            {rental.furnishedStatus}
-          </span>
+        <div className="text-xs text-slate-600">
+          <p>{area > 0 ? `${area} sq.ft` : 'Area on request'} - {rental.bhk ? `${rental.bhk} BHK` : rental.propertyType || 'Rental'}</p>
+          <p>{rental.furnishedStatus || 'Furnishing on request'}</p>
+          <p>Available from {available}</p>
+          <p>{ownerName}</p>
         </div>
-
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <span className="inline-flex items-center gap-1">
-            <CalendarDays className="h-3.5 w-3.5" />
-            Available {availableLabel}
-          </span>
-          <span>{rental.viewCount} views</span>
+        {rental.isVerified && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" />Verified Owner / Builder</span>}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <Button className="h-10 bg-slate-900 text-white hover:bg-slate-800" onClick={() => onOpenDetails(referenceId)}>View Details</Button>
+          <Button variant="outline" className="h-10 border-slate-300" onClick={() => onOpenMessages(referenceId)}><MessageCircle className="mr-1 h-3.5 w-3.5" />Contact Owner</Button>
+          <Button variant="outline" className={`h-10 border-slate-300 ${compared ? 'text-blue-700' : ''}`} onClick={toggleCompare}><GitCompareArrows className="mr-1 h-3.5 w-3.5" />{compared ? 'Compared' : 'Compare'}</Button>
+          <Button variant="outline" className={`h-10 border-slate-300 ${saved ? 'text-rose-600' : ''}`} onClick={toggleSave}><Heart className={`mr-1 h-3.5 w-3.5 ${saved ? 'fill-current' : ''}`} />{saved ? 'Saved' : 'Save'}</Button>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {amenityIcons.map((amenity) => (
-            <span key={amenity} className="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600">
-              {amenity}
-            </span>
-          ))}
-        </div>
-
-        <p className="text-xs text-slate-600">
-          Contact Owner: <span className="font-semibold text-slate-900">{contactPhone}</span>
-        </p>
-
-        <div className="grid grid-cols-3 gap-2">
-          <Button className="h-10 rounded-xl bg-blue-700 text-white hover:bg-blue-800" onClick={() => onOpenDetails(referenceId)}>
-            View Details
-          </Button>
-          <Button asChild variant="outline" className="h-10 rounded-xl border-slate-300">
-            <a href={`tel:${toDialNumber(contactPhone)}`}>
-              <PhoneCall className="mr-1 h-3.5 w-3.5" />
-              Call
-            </a>
-          </Button>
-          <Button variant="outline" className="h-10 rounded-xl border-slate-300" onClick={() => onOpenMessages(referenceId)}>
-            <MessageCircle className="mr-1 h-3.5 w-3.5" />
-            Message
-          </Button>
-        </div>
+        {compared && <button type="button" onClick={onOpenCompare} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:border-blue-300">Open compare board</button>}
       </div>
     </article>
   );
 }
-

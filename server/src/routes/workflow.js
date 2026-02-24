@@ -108,6 +108,41 @@ const listingInteractionActionKey = {
   like: 'property_listing_liked',
   unlike: 'property_listing_unliked',
 };
+const FEATURE_USAGE_WINDOW_DAYS = 30;
+const FEATURE_USAGE_ACTION_CATALOG = [
+  { key: 'property_listing_viewed', label: 'Property Details Viewed' },
+  { key: 'property_listing_clicked', label: 'Property Contact Clicks' },
+  { key: 'property_listing_saved', label: 'Save Listing' },
+  { key: 'property_listing_liked', label: 'Like Listing' },
+  { key: 'schedule_visit_requested', label: 'Schedule Visit Requests' },
+  { key: 'fraud_report_submitted', label: 'Fraud Reports' },
+  { key: 'property_request_submitted', label: 'Post Property Submissions' },
+  { key: 'phone_otp_requested', label: 'Phone OTP Requests' },
+  { key: 'phone_otp_verified', label: 'Phone OTP Verifications' },
+  { key: 'buy_map_view_opened', label: 'Buy Map Opened' },
+  { key: 'rent_map_view_opened', label: 'Rent Map Opened' },
+  { key: 'buy_filters_applied', label: 'Buy Filters Applied' },
+  { key: 'rent_filters_applied', label: 'Rent Filters Applied' },
+  { key: 'compare_page_opened', label: 'Compare Page Opened' },
+  { key: 'compare_listing_added', label: 'Compare Listing Added' },
+  { key: 'compare_listing_removed', label: 'Compare Listing Removed' },
+  { key: 'compare_cleared', label: 'Compare Cleared' },
+  { key: 'notifications_page_opened', label: 'Notifications Page Opened' },
+  { key: 'notification_marked_read', label: 'Notification Marked Read' },
+  { key: 'notifications_mark_all_read', label: 'Notifications Mark All Read' },
+  { key: 'notifications_cleared', label: 'Notifications Cleared' },
+  { key: 'saved_searches_page_opened', label: 'Saved Searches Page Opened' },
+  { key: 'saved_search_applied', label: 'Saved Search Applied' },
+  { key: 'saved_search_deleted', label: 'Saved Search Deleted' },
+  { key: 'saved_searches_cleared', label: 'Saved Searches Cleared' },
+];
+const FEATURE_USAGE_ACTION_KEYS = FEATURE_USAGE_ACTION_CATALOG.map((item) => item.key);
+const featureUsageTrackSchema = z.object({
+  featureKey: z.enum(FEATURE_USAGE_ACTION_KEYS),
+  context: z.string().trim().max(80).optional().or(z.literal('')),
+  view: z.string().trim().max(80).optional().or(z.literal('')),
+  detail: z.string().trim().max(240).optional().or(z.literal('')),
+});
 
 const teamQueueQuerySchema = z.object({
   type: z.enum(['all', 'buy', 'sell', 'rent', 'assisted']).default('all'),
@@ -391,6 +426,20 @@ const listingInteractionLimiter = createRateLimiter({
     const userKey = req.user?.id ? `u:${req.user.id}` : `ip:${ip}`;
     const referenceId = String(req.params?.referenceId || '').trim().slice(0, 40) || '-';
     return `workflow:interaction:${userKey}:${referenceId}`;
+  },
+});
+const featureUsageLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 320,
+  message: 'Too many feature usage tracking requests. Please try again shortly.',
+  keyGenerator: (req) => {
+    const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+    const userKey = req.user?.id ? `u:${req.user.id}` : `ip:${ip}`;
+    const featureKey =
+      req.body && typeof req.body === 'object' && typeof req.body.featureKey === 'string'
+        ? req.body.featureKey.trim().slice(0, 80) || '-'
+        : '-';
+    return `workflow:feature-usage:${userKey}:${featureKey}`;
   },
 });
 
@@ -1334,6 +1383,33 @@ router.post('/public/listings/:referenceId/interaction', listingInteractionLimit
         },
       });
     }
+
+    return res.json({ ok: true, tracked: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/public/feature-usage', featureUsageLimiter, async (req, res, next) => {
+  try {
+    const payload = featureUsageTrackSchema.parse(req.body);
+    const userId = await resolveOptionalUserId(req);
+
+    await writeActivityLog({
+      actorUserId: userId,
+      actorRole: userId ? 'user' : 'public',
+      actionKey: payload.featureKey,
+      entityType: 'feature',
+      entityId: null,
+      requestReference: null,
+      metadata: {
+        source: payload.context || payload.view || 'feature_usage',
+        context: payload.context || '',
+        view: payload.view || '',
+        detail: payload.detail || '',
+        ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
+      },
+    });
 
     return res.json({ ok: true, tracked: true });
   } catch (error) {
@@ -2930,6 +3006,8 @@ router.get(
   requirePermission('access_risk_dashboard'),
   async (req, res, next) => {
   try {
+    const featureUsageKeys = FEATURE_USAGE_ACTION_CATALOG.map((item) => item.key);
+    const featureUsageLabels = FEATURE_USAGE_ACTION_CATALOG.map((item) => item.label);
     const [
       requestCounts,
       interactionCounts,
@@ -2942,6 +3020,8 @@ router.get(
       teamPerformance,
       adminPerformance,
       listingsPerDay,
+      featureUsageRows,
+      featureUsageSummary,
     ] =
       await Promise.all([
         pool.query(
@@ -3090,7 +3170,68 @@ router.get(
             ORDER BY day ASC
           `
         ),
+        pool.query(
+          `
+            WITH feature_catalog AS (
+              SELECT *
+              FROM UNNEST($1::text[], $2::text[]) AS f(feature_key, feature_label)
+            )
+            SELECT
+              f.feature_key,
+              f.feature_label,
+              COUNT(a.id)::INT AS total_events,
+              COUNT(
+                DISTINCT CASE
+                  WHEN a.actor_user_id IS NOT NULL THEN CONCAT('u:', a.actor_user_id::TEXT)
+                  WHEN NULLIF(a.ip_address, '') IS NOT NULL THEN CONCAT('ip:', a.ip_address)
+                  ELSE NULL
+                END
+              )::INT AS unique_users
+            FROM feature_catalog f
+            LEFT JOIN activity_logs a
+              ON a.action_key = f.feature_key
+             AND a.actor_role IN ('user', 'public')
+             AND a.created_at >= NOW() - ($3::INT * INTERVAL '1 day')
+            GROUP BY f.feature_key, f.feature_label
+            ORDER BY total_events DESC, unique_users DESC, f.feature_label ASC
+          `,
+          [featureUsageKeys, featureUsageLabels, FEATURE_USAGE_WINDOW_DAYS]
+        ),
+        pool.query(
+          `
+            SELECT
+              COUNT(*)::INT AS total_events,
+              COUNT(
+                DISTINCT CASE
+                  WHEN actor_user_id IS NOT NULL THEN CONCAT('u:', actor_user_id::TEXT)
+                  WHEN NULLIF(ip_address, '') IS NOT NULL THEN CONCAT('ip:', ip_address)
+                  ELSE NULL
+                END
+              )::INT AS unique_users
+            FROM activity_logs
+            WHERE action_key = ANY($1::text[])
+              AND actor_role IN ('user', 'public')
+              AND created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+          `,
+          [featureUsageKeys, FEATURE_USAGE_WINDOW_DAYS]
+        ),
       ]);
+
+    const featureUsageFeatures = featureUsageRows.rows.map((row) => ({
+      featureKey: row.feature_key,
+      featureLabel: row.feature_label,
+      totalEvents: Number(row.total_events || 0),
+      uniqueUsers: Number(row.unique_users || 0),
+    }));
+
+    const leastUsedFeatures = [...featureUsageFeatures]
+      .sort(
+        (left, right) =>
+          left.totalEvents - right.totalEvents ||
+          left.uniqueUsers - right.uniqueUsers ||
+          left.featureLabel.localeCompare(right.featureLabel)
+      )
+      .slice(0, 5);
 
     return res.json({
       requests: {
@@ -3126,6 +3267,15 @@ router.get(
       teamPerformance: teamPerformance.rows,
       adminPerformance: adminPerformance.rows,
       listingsPerDay: listingsPerDay.rows,
+      featureUsage: {
+        periodDays: FEATURE_USAGE_WINDOW_DAYS,
+        totalTrackedFeatures: featureUsageFeatures.length,
+        totalEvents: Number(featureUsageSummary.rows[0]?.total_events || 0),
+        uniqueUsers: Number(featureUsageSummary.rows[0]?.unique_users || 0),
+        features: featureUsageFeatures,
+        mostUsed: featureUsageFeatures.slice(0, 5),
+        leastUsed: leastUsedFeatures,
+      },
     });
   } catch (error) {
     return next(error);

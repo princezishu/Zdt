@@ -252,6 +252,9 @@ interface DealersBuildersPageProps {
   user: AuthUser | null;
   onAuthSuccess: (payload: { token: string; user: AuthUser }) => void;
   onLogout: () => void;
+  initialAuthMode?: 'login' | 'register';
+  onOpenCompanyLogin?: () => void;
+  onOpenCompanyRegister?: () => void;
 }
 
 export default function DealersBuildersPage({
@@ -259,6 +262,9 @@ export default function DealersBuildersPage({
   user,
   onAuthSuccess,
   onLogout,
+  initialAuthMode = 'login',
+  onOpenCompanyLogin,
+  onOpenCompanyRegister,
 }: DealersBuildersPageProps) {
   const isAuthenticated = Boolean(token && user);
 
@@ -278,6 +284,7 @@ export default function DealersBuildersPage({
   const [pendingBannerBytes, setPendingBannerBytes] = useState(0);
   const [bannerCropOpen, setBannerCropOpen] = useState(false);
   const [bannerCropSrc, setBannerCropSrc] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>(initialAuthMode);
 
   const company = me?.company ?? null;
   const membership = me?.membership ?? null;
@@ -357,6 +364,10 @@ export default function DealersBuildersPage({
     };
   }, [bannerCropSrc]);
 
+  useEffect(() => {
+    setAuthMode(initialAuthMode);
+  }, [initialAuthMode]);
+
   const uploadCompanyLogo = async () => {
     if (!token || !pendingLogoDataUrl) return;
 
@@ -389,7 +400,15 @@ export default function DealersBuildersPage({
 
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginCompanyCode, setLoginCompanyCode] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [showOtpRecovery, setShowOtpRecovery] = useState(false);
+  const [otpRecoveryEmail, setOtpRecoveryEmail] = useState('');
+  const [otpRecoveryCode, setOtpRecoveryCode] = useState('');
+  const [otpRecoverySent, setOtpRecoverySent] = useState(false);
+  const [otpRecoveryDevCode, setOtpRecoveryDevCode] = useState('');
+  const [otpRecoverySending, setOtpRecoverySending] = useState(false);
+  const [otpRecoveryVerifying, setOtpRecoveryVerifying] = useState(false);
 
   const [companyName, setCompanyName] = useState('');
   const [companyType, setCompanyType] = useState<CompanyType>('builder');
@@ -420,6 +439,23 @@ export default function DealersBuildersPage({
   const [bannerSubmitting, setBannerSubmitting] = useState(false);
   const [bannerActionId, setBannerActionId] = useState<number | null>(null);
 
+  const openOtpRecoveryMode = () => {
+    setShowOtpRecovery(true);
+    setOtpRecoverySent(false);
+    setOtpRecoveryCode('');
+    setOtpRecoveryDevCode('');
+    setOtpRecoveryEmail(loginEmail.trim());
+    setError('');
+    setMessage('');
+  };
+
+  const closeOtpRecoveryMode = () => {
+    setShowOtpRecovery(false);
+    setOtpRecoverySent(false);
+    setOtpRecoveryCode('');
+    setOtpRecoveryDevCode('');
+  };
+
   const handleCompanyLogin = async () => {
     setError('');
     setMessage('');
@@ -432,6 +468,10 @@ export default function DealersBuildersPage({
       setError('Password is required.');
       return;
     }
+    if (!loginCompanyCode.trim()) {
+      setError('Company register number is required.');
+      return;
+    }
 
     setLoginSubmitting(true);
     try {
@@ -440,6 +480,7 @@ export default function DealersBuildersPage({
         body: JSON.stringify({
           email: loginEmail.trim(),
           password: loginPassword,
+          companyCode: loginCompanyCode.trim().toUpperCase(),
           deviceId: readOrCreateDeviceId(),
         }),
       });
@@ -451,12 +492,91 @@ export default function DealersBuildersPage({
 
       onAuthSuccess({ token: response.token, user: parsed });
       setLoginPassword('');
+       setLoginCompanyCode('');
       setMessage('Logged in. Loading company...');
       clearBannerAfterDelay();
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'Unable to login');
     } finally {
       setLoginSubmitting(false);
+    }
+  };
+
+  const handleRequestCompanyOtp = async () => {
+    setError('');
+    setMessage('');
+
+    const email = otpRecoveryEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      setError('Valid company email is required to send OTP.');
+      return;
+    }
+
+    setOtpRecoverySending(true);
+    try {
+      const response = await apiRequest<{ message?: string; devOtp?: string }>(
+        '/auth/company-access/request-otp',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        }
+      );
+      setOtpRecoverySent(true);
+      setOtpRecoveryDevCode(response.devOtp || '');
+      setMessage(response.message || 'OTP sent to your company email.');
+      clearBannerAfterDelay();
+    } catch (otpError) {
+      setError(otpError instanceof Error ? otpError.message : 'Unable to send OTP');
+    } finally {
+      setOtpRecoverySending(false);
+    }
+  };
+
+  const handleVerifyCompanyOtp = async () => {
+    setError('');
+    setMessage('');
+
+    const email = otpRecoveryEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      setError('Valid company email is required.');
+      return;
+    }
+    if (otpRecoveryCode.trim().length !== 6) {
+      setError('Enter the 6-digit OTP.');
+      return;
+    }
+
+    setOtpRecoveryVerifying(true);
+    try {
+      const response = await apiRequest<{ token: string; user: unknown; message?: string }>(
+        '/auth/company-access/verify-otp',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            otp: otpRecoveryCode.trim(),
+            deviceId: readOrCreateDeviceId(),
+          }),
+        }
+      );
+
+      const parsed = parseApiUser(response.user);
+      if (!parsed) {
+        throw new Error('Invalid user payload');
+      }
+
+      onAuthSuccess({ token: response.token, user: parsed });
+      setLoginPassword('');
+      setLoginCompanyCode('');
+      setOtpRecoveryCode('');
+      setOtpRecoveryDevCode('');
+      setShowOtpRecovery(false);
+      setMessage(response.message || 'OTP verified. Loading company...');
+      clearBannerAfterDelay();
+    } catch (verifyError) {
+      setError(verifyError instanceof Error ? verifyError.message : 'Unable to verify OTP');
+    } finally {
+      setOtpRecoveryVerifying(false);
     }
   };
 
@@ -474,6 +594,10 @@ export default function DealersBuildersPage({
     }
     if (!ownerEmail.trim() || !ownerEmail.includes('@')) {
       setError('Valid owner email is required.');
+      return;
+    }
+    if (!ownerPhone.trim() || ownerPhone.trim().length < 8) {
+      setError('Valid owner phone number is required.');
       return;
     }
     if (!ownerPassword.trim() || ownerPassword.trim().length < 8) {
@@ -494,22 +618,22 @@ export default function DealersBuildersPage({
             ownerEmail: ownerEmail.trim(),
             ownerPhone: ownerPhone.trim(),
             ownerPassword: ownerPassword,
+            deviceId: readOrCreateDeviceId(),
           }),
         }
       );
-
-      const parsed = parseApiUser(response.user);
-      if (!parsed) {
-        throw new Error('Invalid user payload');
-      }
-
-      onAuthSuccess({ token: response.token, user: parsed });
       setCompanyName('');
       setOwnerName('');
+      setLoginEmail(ownerEmail.trim().toLowerCase());
       setOwnerEmail('');
       setOwnerPhone('');
       setOwnerPassword('');
-      setMessage(`Company created. Your Company ID is ${response.company.code}.`);
+      setLoginCompanyCode(String(response.company.code || '').trim().toUpperCase());
+      setLoginPassword('');
+      openLoginAuthView();
+      setMessage(
+        `Company created. Your company register number is ${response.company.code}. Use it on company login.`
+      );
       clearBannerAfterDelay();
     } catch (registerError) {
       setError(registerError instanceof Error ? registerError.message : 'Unable to register company');
@@ -774,11 +898,26 @@ export default function DealersBuildersPage({
     return `${count}/${max} users`;
   }, [me]);
 
-  const scrollToRegister = () => {
-    const el = document.getElementById('register-company');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const openLoginAuthView = () => {
+    closeOtpRecoveryMode();
+    if (onOpenCompanyLogin) {
+      onOpenCompanyLogin();
+      return;
     }
+    setAuthMode('login');
+  };
+
+  const openRegisterAuthView = () => {
+    closeOtpRecoveryMode();
+    if (onOpenCompanyRegister) {
+      onOpenCompanyRegister();
+      return;
+    }
+    setAuthMode('register');
+  };
+
+  const scrollToRegister = () => {
+    openRegisterAuthView();
   };
 
   const openSalesEmail = () => {
@@ -810,99 +949,197 @@ export default function DealersBuildersPage({
 
         {!isAuthenticated ? (
           <>
-            <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <BriefcaseBusiness className="h-4 w-4 text-blue-700" />
-                Company Login
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                Login with your company email. If your boss added you, use the credentials they provided.
-              </p>
-              <div className="mt-4 grid gap-3">
-                <Input
-                  value={loginEmail}
-                  onChange={(event) => setLoginEmail(event.target.value)}
-                  placeholder="Email"
-                  className="h-11"
-                />
-                <Input
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                  placeholder="Password"
-                  type="password"
-                  className="h-11"
-                />
-                <Button
-                  onClick={handleCompanyLogin}
-                  disabled={loginSubmitting}
-                  className="h-11 bg-blue-700 text-white hover:bg-blue-800"
-                >
-                  {loginSubmitting ? 'Logging in...' : 'Login'}
-                </Button>
-              </div>
-            </div>
-
-            <div id="register-company" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Users className="h-4 w-4 text-blue-700" />
-                Register Company
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                Create your company and become the main boss (owner). Company ID will be generated automatically.
-              </p>
-              <div className="mt-4 grid gap-3">
-                <Input
-                  value={companyName}
-                  onChange={(event) => setCompanyName(event.target.value)}
-                  placeholder="Company Name"
-                  className="h-11"
-                />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Select value={companyType} onValueChange={(value) => setCompanyType(value as CompanyType)}>
-                    <SelectTrigger className="h-11 bg-white text-slate-900">
-                      <SelectValue placeholder="Company Type" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white text-slate-900">
-                      <SelectItem value="builder">Builder</SelectItem>
-                      <SelectItem value="dealer">Dealer</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={ownerPhone}
-                    onChange={(event) => setOwnerPhone(event.target.value)}
-                    placeholder="Owner Phone (optional)"
-                    className="h-11"
-                  />
+            <div className="grid gap-4">
+              {authMode === 'login' ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <BriefcaseBusiness className="h-4 w-4 text-blue-700" />
+                    Company Login
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Dealers and builders must sign in with email, password, and company register number.
+                  </p>
+                  <div className="mt-4 grid gap-3 md:max-w-xl">
+                    <Input
+                      value={loginEmail}
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                      placeholder="Company Email"
+                      className="h-11"
+                    />
+                    <Input
+                      value={loginPassword}
+                      onChange={(event) => setLoginPassword(event.target.value)}
+                      placeholder="Password"
+                      type="password"
+                      className="h-11"
+                    />
+                    <Input
+                      value={loginCompanyCode}
+                      onChange={(event) => setLoginCompanyCode(event.target.value)}
+                      placeholder="Company Register Number"
+                      className="h-11"
+                    />
+                    <Button
+                      onClick={handleCompanyLogin}
+                      disabled={loginSubmitting}
+                      className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                    >
+                      {loginSubmitting ? 'Logging in...' : 'Login to Company Portal'}
+                    </Button>
+                  </div>
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={openOtpRecoveryMode}
+                      className="text-sm font-semibold text-blue-700 hover:text-blue-800"
+                    >
+                      Forgot register number or password?
+                    </button>
+                  </div>
+                  {showOtpRecovery ? (
+                    <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                      <p className="text-sm font-semibold text-slate-900">Recover with Email OTP</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Enter your registered company email. After OTP verification, you will be logged in.
+                      </p>
+                      <div className="mt-3 grid gap-3">
+                        <Input
+                          value={otpRecoveryEmail}
+                          onChange={(event) => setOtpRecoveryEmail(event.target.value)}
+                          placeholder="Company Email"
+                          className="h-11 bg-white"
+                        />
+                        <Button
+                          type="button"
+                          onClick={handleRequestCompanyOtp}
+                          disabled={otpRecoverySending}
+                          className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                        >
+                          {otpRecoverySending
+                            ? 'Sending OTP...'
+                            : otpRecoverySent
+                              ? 'Resend OTP'
+                              : 'Send OTP'}
+                        </Button>
+                        {otpRecoverySent ? (
+                          <>
+                            <Input
+                              value={otpRecoveryCode}
+                              onChange={(event) =>
+                                setOtpRecoveryCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                              }
+                              inputMode="numeric"
+                              placeholder="Enter 6-digit OTP"
+                              className="h-11 bg-white"
+                            />
+                            <Button
+                              type="button"
+                              onClick={handleVerifyCompanyOtp}
+                              disabled={otpRecoveryVerifying || otpRecoveryCode.trim().length !== 6}
+                              className="h-11 bg-slate-900 text-white hover:bg-slate-800"
+                            >
+                              {otpRecoveryVerifying ? 'Verifying OTP...' : 'Verify OTP and Login'}
+                            </Button>
+                          </>
+                        ) : null}
+                        {otpRecoveryDevCode ? (
+                          <p className="rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-xs text-amber-800">
+                            Dev OTP: <strong>{otpRecoveryDevCode}</strong>
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={closeOtpRecoveryMode}
+                          className="justify-self-start text-xs font-semibold text-slate-600 hover:text-slate-900"
+                        >
+                          Close recovery
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <p className="mt-4 text-sm text-slate-600">
+                    New dealer or builder?{' '}
+                    <button
+                      type="button"
+                      onClick={openRegisterAuthView}
+                      className="font-semibold text-blue-700 hover:text-blue-800"
+                    >
+                      Create company account
+                    </button>
+                  </p>
                 </div>
-                <Input
-                  value={ownerName}
-                  onChange={(event) => setOwnerName(event.target.value)}
-                  placeholder="Owner Name"
-                  className="h-11"
-                />
-                <Input
-                  value={ownerEmail}
-                  onChange={(event) => setOwnerEmail(event.target.value)}
-                  placeholder="Owner Email"
-                  className="h-11"
-                />
-                <Input
-                  value={ownerPassword}
-                  onChange={(event) => setOwnerPassword(event.target.value)}
-                  placeholder="Owner Password"
-                  type="password"
-                  className="h-11"
-                />
-                <Button
-                  onClick={handleRegisterCompany}
-                  disabled={registerSubmitting}
-                  className="h-11 bg-blue-700 text-white hover:bg-blue-800"
-                >
-                  {registerSubmitting ? 'Creating company...' : 'Create Company'}
-                </Button>
-              </div>
-            </div>
+              ) : (
+                <div id="register-company" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <Users className="h-4 w-4 text-blue-700" />
+                    Register Company
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Register as dealer/builder and get your company register number for future logins.
+                  </p>
+                  <div className="mt-4 grid gap-3 md:max-w-xl">
+                    <Input
+                      value={companyName}
+                      onChange={(event) => setCompanyName(event.target.value)}
+                      placeholder="Company Name"
+                      className="h-11"
+                    />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Select value={companyType} onValueChange={(value) => setCompanyType(value as CompanyType)}>
+                        <SelectTrigger className="h-11 bg-white text-slate-900">
+                          <SelectValue placeholder="Company Type" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white text-slate-900">
+                          <SelectItem value="builder">Builder</SelectItem>
+                          <SelectItem value="dealer">Dealer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={ownerPhone}
+                        onChange={(event) => setOwnerPhone(event.target.value)}
+                        placeholder="Owner Phone Number"
+                        className="h-11"
+                      />
+                    </div>
+                    <Input
+                      value={ownerName}
+                      onChange={(event) => setOwnerName(event.target.value)}
+                      placeholder="Owner Name"
+                      className="h-11"
+                    />
+                    <Input
+                      value={ownerEmail}
+                      onChange={(event) => setOwnerEmail(event.target.value)}
+                      placeholder="Owner Email"
+                      className="h-11"
+                    />
+                    <Input
+                      value={ownerPassword}
+                      onChange={(event) => setOwnerPassword(event.target.value)}
+                      placeholder="Owner Password"
+                      type="password"
+                      className="h-11"
+                    />
+                    <Button
+                      onClick={handleRegisterCompany}
+                      disabled={registerSubmitting}
+                      className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                    >
+                      {registerSubmitting ? 'Creating company...' : 'Register Company'}
+                    </Button>
+                  </div>
+                  <p className="mt-4 text-sm text-slate-600">
+                    Already registered?{' '}
+                    <button
+                      type="button"
+                      onClick={openLoginAuthView}
+                      className="font-semibold text-blue-700 hover:text-blue-800"
+                    >
+                      Go to company login
+                    </button>
+                  </p>
+                </div>
+              )}
             </div>
 
             <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

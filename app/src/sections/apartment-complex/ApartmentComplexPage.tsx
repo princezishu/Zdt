@@ -85,17 +85,19 @@ export default function ApartmentComplexPage({ token, user }: ApartmentComplexPa
   return (
     <section className="min-h-screen pb-16 pt-28 text-slate-900">
       <div className="page-container zdt-page-stack">
-        <div className="zdt-panel-hero rounded-3xl border border-white/20 bg-gradient-to-r from-slate-900 via-blue-900 to-indigo-900 p-6 text-white shadow-2xl">
-          <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">Property Management</p>
-          <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Apartment & Complex Management</h1>
-          <p className="mt-2 max-w-3xl text-sm text-white/85">
-            Floor-wise building setup, room-level tenant tracking, and monthly rent collection monitoring in one dashboard.
-          </p>
-          <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/30 px-3 py-1 text-xs font-semibold text-cyan-100">
-            <Building2 className="h-3.5 w-3.5" />
-            Active Month: {monthKey || 'Current Month'}
+        {view !== 'details' ? (
+          <div className="zdt-panel-hero rounded-3xl border border-white/20 bg-gradient-to-r from-slate-900 via-blue-900 to-indigo-900 p-6 text-white shadow-2xl">
+            <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">Property Management</p>
+            <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Apartment & Complex Management</h1>
+            <p className="mt-2 max-w-3xl text-sm text-white/85">
+              Floor-wise building setup, room-level tenant tracking, and monthly rent collection monitoring in one dashboard.
+            </p>
+            <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/30 px-3 py-1 text-xs font-semibold text-cyan-100">
+              <Building2 className="h-3.5 w-3.5" />
+              Active Month: {monthKey || 'Current Month'}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {view === 'home' ? (
           <ApartmentComplexHome
@@ -127,6 +129,10 @@ export default function ApartmentComplexPage({ token, user }: ApartmentComplexPa
           <BuildingDetails
             token={token}
             buildingId={selectedBuildingId}
+            availableBuildings={buildings}
+            onSelectBuilding={(nextBuildingId) => {
+              setSelectedBuildingId(nextBuildingId);
+            }}
             onBack={() => setView('home')}
             onBuildingUpdated={loadBuildings}
           />

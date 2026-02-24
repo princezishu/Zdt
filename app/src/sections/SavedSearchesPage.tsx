@@ -12,6 +12,7 @@ import {
   type SavedSearch,
 } from '@/lib/savedSearchStore';
 import { addNotification } from '@/lib/notificationsStore';
+import { trackFeatureUsage } from '@/lib/featureUsageApi';
 
 interface SavedSearchesPageProps {
   onNavigate: (view: AppView) => void;
@@ -50,6 +51,14 @@ export default function SavedSearchesPage({ onNavigate }: SavedSearchesPageProps
       window.removeEventListener(SAVED_SEARCHES_CHANGED_EVENT, handleChanged);
     };
   }, [sync]);
+
+  useEffect(() => {
+    void trackFeatureUsage({
+      featureKey: 'saved_searches_page_opened',
+      context: 'saved_searches_page',
+      view: 'saved-searches',
+    });
+  }, []);
 
   const countLabel = useMemo(() => `${items.length} saved`, [items.length]);
 
@@ -115,6 +124,12 @@ export default function SavedSearchesPage({ onNavigate }: SavedSearchesPageProps
                             criteria: item.criteria,
                             label: item.label,
                           });
+                          void trackFeatureUsage({
+                            featureKey: 'saved_search_applied',
+                            context: 'saved_searches_page',
+                            view: 'saved-searches',
+                            detail: `target=${item.targetView}`,
+                          });
                           toast.success('Search applied', { description: item.label });
                           addNotification({
                             title: 'Saved search applied',
@@ -161,4 +176,3 @@ export default function SavedSearchesPage({ onNavigate }: SavedSearchesPageProps
     </section>
   );
 }
-

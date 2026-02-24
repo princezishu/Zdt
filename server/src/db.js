@@ -4414,6 +4414,18 @@ export async function ensureApartmentComplexTables() {
     );
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS apartment_rent_auto_alerts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      month_key VARCHAR(7) NOT NULL,
+      due_date DATE,
+      tenant_phone VARCHAR(40) NOT NULL DEFAULT '',
+      message_body TEXT NOT NULL DEFAULT '',
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT apartment_rent_auto_alerts_room_month_unique UNIQUE (room_id, month_key)
+    );
+  `);
+  await pool.query(`
     ALTER TABLE rent_payments
       ADD COLUMN IF NOT EXISTS penalty_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS penalty_applied_at TIMESTAMPTZ;
@@ -4604,6 +4616,18 @@ export async function ensureApartmentComplexTables() {
       END IF;
     END $$;
   `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'apartment_rent_auto_alerts_month_key_check'
+      ) THEN
+        ALTER TABLE apartment_rent_auto_alerts
+          ADD CONSTRAINT apartment_rent_auto_alerts_month_key_check
+          CHECK (month_key ~ '^\\d{4}-(0[1-9]|1[0-2])$');
+      END IF;
+    END $$;
+  `);
 
   await pool.query('DROP TRIGGER IF EXISTS trg_rent_payments_updated_at ON rent_payments;');
   await pool.query(`
@@ -4640,6 +4664,14 @@ export async function ensureApartmentComplexTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS rent_payments_due_status_idx
       ON rent_payments (status, due_date);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS apartment_rent_auto_alerts_month_idx
+      ON apartment_rent_auto_alerts (month_key, sent_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS apartment_rent_auto_alerts_sent_idx
+      ON apartment_rent_auto_alerts (sent_at DESC);
   `);
 }
 

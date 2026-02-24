@@ -1,11 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db.js';
+import { requireAuth, requireMainAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
 const categorySchema = z.enum(['plots', 'apartments', 'complex', 'all']);
 const sortSchema = z.enum(['official', 'az', 'newest']);
+const createCardSchema = z.object({
+  name: z.string().trim().min(2).max(180),
+  portalUrl: z.string().trim().url().max(2048),
+  category: categorySchema.optional().default('all'),
+  description: z.string().trim().max(1200).optional().default(''),
+  badges: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([]),
+  isActive: z.boolean().optional().default(true),
+  sortOrder: z.coerce.number().int().min(0).max(10000).optional().default(100),
+});
 
 function normalizeCategoryAlias(value) {
   if (typeof value !== 'string') {
@@ -130,6 +140,105 @@ router.get('/cards', async (req, res, next) => {
       }));
 
     return res.json({ cards });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/cards', requireAuth, requireMainAdmin, async (req, res, next) => {
+  try {
+    const payload = createCardSchema.parse(req.body || {});
+    if (!isSafeHttpUrl(payload.portalUrl)) {
+      return res.status(400).json({ error: 'Portal URL must be a valid http/https URL.' });
+    }
+
+    const badges = Array.from(
+      new Set(
+        (Array.isArray(payload.badges) ? payload.badges : [])
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+      )
+    ).slice(0, 12);
+
+    const rows = await pool.query(
+      `
+        INSERT INTO eauction_sources (
+          name,
+          portal_url,
+          category,
+          description,
+          badges,
+          is_active,
+          sort_order
+        )
+        VALUES ($1, $2, $3, $4, $5::text[], $6, $7)
+        RETURNING
+          id,
+          name,
+          portal_url,
+          category,
+          description,
+          badges,
+          is_active,
+          sort_order,
+          created_at,
+          updated_at
+      `,
+      [
+        payload.name,
+        payload.portalUrl,
+        payload.category,
+        payload.description || '',
+        badges,
+        Boolean(payload.isActive),
+        payload.sortOrder,
+      ]
+    );
+
+    const row = rows.rows[0];
+    return res.status(201).json({
+      card: {
+        id: Number(row.id),
+        name: String(row.name || ''),
+        portalUrl: String(row.portal_url || ''),
+        category: String(row.category || 'all'),
+        description: String(row.description || ''),
+        badges: Array.isArray(row.badges) ? row.badges.map((badge) => String(badge)) : [],
+        isActive: Boolean(row.is_active),
+        sortOrder: Number(row.sort_order || 100),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+      return res.status(409).json({ error: 'This portal URL already exists.' });
+    }
+    return next(error);
+  }
+});
+
+router.delete('/cards/:id', requireAuth, requireMainAdmin, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid card id' });
+  }
+
+  try {
+    const rows = await pool.query(
+      `
+        DELETE FROM eauction_sources
+        WHERE id = $1
+        RETURNING id
+      `,
+      [id]
+    );
+
+    if (rows.rowCount === 0) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+
+    return res.json({ deletedId: Number(rows.rows[0].id) });
   } catch (error) {
     return next(error);
   }

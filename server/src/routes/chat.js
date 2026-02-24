@@ -18,7 +18,7 @@ const openTeamConversationSchema = z.object({
 });
 
 const openOwnerConversationSchema = z.object({
-  propertyReference: z.string().trim().min(4).max(40),
+  propertyReference: z.string().trim().min(1).max(80),
   subject: z.string().trim().max(180).optional().or(z.literal('')),
 });
 
@@ -479,6 +479,7 @@ router.post('/conversations/team', requireAuth, chatConversationLimiter, async (
 router.post('/conversations/owner', requireAuth, chatConversationLimiter, async (req, res, next) => {
   try {
     const payload = openOwnerConversationSchema.parse(req.body || {});
+    const propertyReference = payload.propertyReference.trim();
 
     const propertyRows = await pool.query(
       `
@@ -498,20 +499,153 @@ router.post('/conversations/owner', requireAuth, chatConversationLimiter, async 
           AND request_type IN ('sell', 'rent')
         LIMIT 1
       `,
-      [payload.propertyReference]
+      [propertyReference]
     );
 
-    if (propertyRows.rowCount === 0) {
+    if (propertyRows.rowCount > 0) {
+      const property = propertyRows.rows[0];
+      if (property.is_removed || property.is_fake) {
+        return res.status(404).json({ error: 'Property is not available for chat' });
+      }
+
+      const subject = payload.subject?.trim() || `Owner Chat - ${property.reference_id}`;
+      const conversationKey = `owner:${req.user.id}:${property.id}`;
+
+      const rows = await pool.query(
+        `
+          INSERT INTO chat_conversations (
+            conversation_key,
+            conversation_type,
+            status,
+            subject,
+            created_by_user_id,
+            requester_user_id,
+            owner_user_id,
+            owner_name,
+            property_request_id
+          )
+          VALUES ($1, 'property_owner', 'Open', $2, $3, $3, $4, $5, $6)
+          ON CONFLICT (conversation_key)
+          DO UPDATE
+            SET status = 'Open',
+                updated_at = NOW(),
+                owner_user_id = EXCLUDED.owner_user_id,
+                owner_name = EXCLUDED.owner_name,
+                property_request_id = EXCLUDED.property_request_id
+          RETURNING id
+        `,
+        [
+          conversationKey,
+          subject,
+          req.user.id,
+          property.submitted_by_user_id ?? null,
+          property.requester_name || 'Property Owner',
+          property.id,
+        ]
+      );
+
+      const conversationId = Number(rows.rows[0].id);
+      const conversation = await loadConversationById(conversationId, req.user);
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation unavailable' });
+      }
+
+      await writeChatActivity({
+        actorUserId: req.user.id,
+        actorRole: req.user.role,
+        actionKey: 'chat_owner_conversation_opened',
+        entityId: conversationId,
+        requestReference: property.reference_id,
+        metadata: {
+          propertyReference: property.reference_id,
+        },
+      });
+
+      return res.status(201).json({
+        conversation: serializeConversation(conversation),
+      });
+    }
+
+    if (!NUMERIC_ID_PATTERN.test(propertyReference)) {
       return res.status(404).json({ error: 'Property reference not found' });
     }
 
-    const property = propertyRows.rows[0];
-    if (property.is_removed || property.is_fake) {
-      return res.status(404).json({ error: 'Property is not available for chat' });
+    const listingId = Number(propertyReference);
+    if (!Number.isSafeInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid property reference' });
     }
 
-    const subject = payload.subject?.trim() || `Owner Chat - ${property.reference_id}`;
-    const conversationKey = `owner:${req.user.id}:${property.id}`;
+    const propertyListingRows = await pool.query(
+      `
+        SELECT
+          p.id,
+          p.title,
+          p.posted_by AS owner_user_id,
+          owner_user.name AS owner_name
+        FROM properties p
+        LEFT JOIN users owner_user
+          ON owner_user.id = p.posted_by
+        WHERE p.id = $1
+        LIMIT 1
+      `,
+      [listingId]
+    );
+
+    const rentalListingRows = propertyListingRows.rowCount
+      ? { rowCount: 0, rows: [] }
+      : await pool.query(
+          `
+            SELECT
+              r.id,
+              r.title,
+              r.posted_by AS owner_user_id,
+              owner_user.name AS owner_name
+            FROM rentals r
+            LEFT JOIN users owner_user
+              ON owner_user.id = r.posted_by
+            WHERE r.id = $1
+            LIMIT 1
+          `,
+          [listingId]
+        );
+
+    let listingType = '';
+    let listingTitle = '';
+    let ownerUserId = null;
+    let ownerName = '';
+    let conversationKey = '';
+    let requestReference = '';
+
+    if (propertyListingRows.rowCount > 0) {
+      const listing = propertyListingRows.rows[0];
+      listingType = 'property';
+      listingTitle = String(listing.title || '').trim();
+      ownerUserId = listing.owner_user_id === null ? null : Number(listing.owner_user_id);
+      ownerName = String(listing.owner_name || '').trim();
+      conversationKey = `owner_property:${req.user.id}:${listing.id}`;
+      requestReference = `PROPERTY-${listing.id}`;
+    } else if (rentalListingRows.rowCount > 0) {
+      const listing = rentalListingRows.rows[0];
+      listingType = 'rental';
+      listingTitle = String(listing.title || '').trim();
+      ownerUserId = listing.owner_user_id === null ? null : Number(listing.owner_user_id);
+      ownerName = String(listing.owner_name || '').trim();
+      conversationKey = `owner_rental:${req.user.id}:${listing.id}`;
+      requestReference = `RENTAL-${listing.id}`;
+    } else {
+      return res.status(404).json({ error: 'Property reference not found' });
+    }
+
+    if (!ownerUserId || ownerUserId <= 0) {
+      return res.status(409).json({ error: 'Owner chat is not available right now' });
+    }
+    if (ownerUserId === Number(req.user.id)) {
+      return res.status(409).json({ error: 'You cannot open owner chat for your own listing' });
+    }
+
+    const listingLabel = listingType === 'rental' ? 'Rental' : 'Property';
+    const subject =
+      payload.subject?.trim() || `Owner Chat - ${listingLabel} #${listingId}${listingTitle ? ` (${listingTitle})` : ''}`;
 
     const rows = await pool.query(
       `
@@ -526,24 +660,16 @@ router.post('/conversations/owner', requireAuth, chatConversationLimiter, async 
           owner_name,
           property_request_id
         )
-        VALUES ($1, 'property_owner', 'Open', $2, $3, $3, $4, $5, $6)
+        VALUES ($1, 'property_owner', 'Open', $2, $3, $3, $4, $5, NULL)
         ON CONFLICT (conversation_key)
         DO UPDATE
           SET status = 'Open',
               updated_at = NOW(),
               owner_user_id = EXCLUDED.owner_user_id,
-              owner_name = EXCLUDED.owner_name,
-              property_request_id = EXCLUDED.property_request_id
+              owner_name = EXCLUDED.owner_name
         RETURNING id
       `,
-      [
-        conversationKey,
-        subject,
-        req.user.id,
-        property.submitted_by_user_id ?? null,
-        property.requester_name || 'Property Owner',
-        property.id,
-      ]
+      [conversationKey, subject, req.user.id, ownerUserId, ownerName || 'Property Owner']
     );
 
     const conversationId = Number(rows.rows[0].id);
@@ -557,9 +683,11 @@ router.post('/conversations/owner', requireAuth, chatConversationLimiter, async 
       actorRole: req.user.role,
       actionKey: 'chat_owner_conversation_opened',
       entityId: conversationId,
-      requestReference: property.reference_id,
+      requestReference,
       metadata: {
-        propertyReference: property.reference_id,
+        source: 'listing',
+        listingType,
+        listingId,
       },
     });
 
@@ -869,6 +997,162 @@ router.post('/conversations/:id/messages', requireAuth, chatMessageLimiter, asyn
     return res.status(201).json({
       message: serializedMessage,
       autoReply: serializedAutoReply,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete('/conversations/:id/messages/:messageId', requireAuth, async (req, res, next) => {
+  const parsedConversationId = parseConversationIdentifier(req.params.id);
+  if (!parsedConversationId) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+
+  const messageId = Number(req.params.messageId);
+  if (!Number.isSafeInteger(messageId) || messageId <= 0) {
+    return res.status(400).json({ error: 'Invalid message id' });
+  }
+
+  try {
+    const supportTeamAccess = await isSupportTeam(req);
+    const conversation = await loadConversationById(parsedConversationId, req.user, supportTeamAccess);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    const conversationId = Number(conversation.id);
+
+    const existingMessageRows = await pool.query(
+      `
+        SELECT
+          id,
+          conversation_id,
+          sender_user_id,
+          sender_role,
+          sender_name,
+          body,
+          created_at
+        FROM chat_messages
+        WHERE id = $1
+          AND conversation_id = $2
+        LIMIT 1
+      `,
+      [messageId, conversationId]
+    );
+
+    if (existingMessageRows.rowCount === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const existingMessage = existingMessageRows.rows[0];
+    const isOwnMessage =
+      existingMessage.sender_user_id !== null &&
+      Number(existingMessage.sender_user_id) === Number(req.user.id);
+    if (!supportTeamAccess && !isOwnMessage) {
+      return res.status(403).json({ error: 'You can only delete your own messages' });
+    }
+
+    await pool.query(
+      `
+        DELETE FROM chat_messages
+        WHERE id = $1
+          AND conversation_id = $2
+      `,
+      [messageId, conversationId]
+    );
+
+    const latestRows = await pool.query(
+      `
+        SELECT
+          body,
+          created_at
+        FROM chat_messages
+        WHERE conversation_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `,
+      [conversationId]
+    );
+    const latestMessage = latestRows.rows[0] || null;
+
+    await pool.query(
+      `
+        UPDATE chat_conversations
+        SET
+          last_message_preview = $2,
+          last_message_at = $3
+        WHERE id = $1
+      `,
+      [
+        conversationId,
+        latestMessage?.body ? String(latestMessage.body).slice(0, 240) : '',
+        latestMessage?.created_at || null,
+      ]
+    );
+
+    const updated = await loadConversationById(conversationId, req.user, supportTeamAccess);
+    if (!updated) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    await writeChatActivity({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      actionKey: 'chat_message_deleted',
+      entityId: conversationId,
+      requestReference: updated.property_reference || null,
+      metadata: {
+        messageId,
+        senderUserId:
+          existingMessage.sender_user_id === null ? null : Number(existingMessage.sender_user_id),
+        senderRole: existingMessage.sender_role || '',
+      },
+    });
+
+    return res.json({
+      deletedMessageId: messageId,
+      conversation: serializeConversation(updated),
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete('/conversations/:id', requireAuth, async (req, res, next) => {
+  const parsedConversationId = parseConversationIdentifier(req.params.id);
+  if (!parsedConversationId) {
+    return res.status(400).json({ error: 'Invalid conversation id' });
+  }
+
+  try {
+    const supportTeamAccess = await isSupportTeam(req);
+    const conversation = await loadConversationById(parsedConversationId, req.user, supportTeamAccess);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    const conversationId = Number(conversation.id);
+
+    await pool.query(
+      `
+        DELETE FROM chat_conversations
+        WHERE id = $1
+      `,
+      [conversationId]
+    );
+
+    await writeChatActivity({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      actionKey: 'chat_conversation_deleted',
+      entityId: conversationId,
+      requestReference: conversation.property_reference || null,
+      metadata: {
+        conversationType: conversation.conversation_type || '',
+      },
+    });
+
+    return res.json({
+      deletedConversationId: conversationId,
     });
   } catch (error) {
     return next(error);

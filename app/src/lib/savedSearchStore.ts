@@ -1,4 +1,5 @@
 import { APP_VIEWS, type AppView } from './views';
+import { trackFeatureUsage } from './featureUsageApi';
 
 export interface SavedSearch {
   id: string;
@@ -122,13 +123,26 @@ export function removeSavedSearch(id: string): SavedSearch[] {
   if (!key) return readSavedSearches();
   const next = readSavedSearches().filter((item) => item.id !== key);
   writeSavedSearches(next);
+  void trackFeatureUsage({
+    featureKey: 'saved_search_deleted',
+    context: 'saved_search_store',
+    view: 'saved-searches',
+    detail: `id=${key}`,
+  });
   return next;
 }
 
 export function clearSavedSearches() {
   if (!canUseStorage()) return;
+  const existingCount = readSavedSearches().length;
   window.localStorage.removeItem(SAVED_SEARCHES_KEY);
   emitSavedSearchesChanged([]);
+  void trackFeatureUsage({
+    featureKey: 'saved_searches_cleared',
+    context: 'saved_search_store',
+    view: 'saved-searches',
+    detail: `count=${existingCount}`,
+  });
 }
 
 export function setPendingSavedSearch(payload: {
@@ -167,4 +181,3 @@ export function consumePendingSavedSearch(
     return null;
   }
 }
-

@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Check,
   CheckCheck,
   MessageCircleMore,
@@ -8,15 +9,17 @@ import {
   Search,
   SendHorizonal,
   ShieldAlert,
+  Sparkles,
   Star,
+  Trash2,
   Users,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { API_BASE_URL } from '@/lib/api';
+import { askRealtyAi, type AiChatMessage } from '@/lib/aiChatbotApi';
 import { apiRequest } from '@/lib/http';
 import type { AuthUser } from '@/lib/session';
 import { io, type Socket } from 'socket.io-client';
@@ -134,9 +137,11 @@ interface MessagesPageProps {
   user: AuthUser | null;
   initialPropertyReference?: string;
   initialCompanyId?: number | null;
+  initialDraftMessage?: string;
   initialOpenTeamChat?: boolean;
   onConsumeInitialPropertyReference?: () => void;
   onConsumeInitialCompanyId?: () => void;
+  onConsumeInitialDraftMessage?: () => void;
   onConsumeInitialOpenTeamChat?: () => void;
 }
 
@@ -325,14 +330,49 @@ function messageSenderLabel(message: ChatMessage): string {
   return 'User';
 }
 
+function sanitizeAiAnswer(answer: string): string {
+  return String(answer || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .trim();
+}
+
+function parseAiSuggestions(answer: string): string[] {
+  const lines = sanitizeAiAnswer(answer)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(lines.map((line) => line.replace(/^["']|["']$/g, '').trim()).filter(Boolean)));
+  return unique.slice(0, 3);
+}
+
+function fallbackAiSuggestions(lastIncoming: string): string[] {
+  if (lastIncoming.trim()) {
+    return [
+      'Thank you. Please share available time for a site visit.',
+      'Could you confirm pricing, documents, and current availability?',
+      'Looks good. Please share next steps to proceed.',
+    ];
+  }
+  return [
+    'Hello, I am interested. Could you share more details?',
+    'Please share location, pricing, and availability details.',
+    'Can we schedule a short call to discuss this property?',
+  ];
+}
+
 export default function MessagesPage({
   token,
   user,
   initialPropertyReference,
   initialCompanyId,
+  initialDraftMessage,
   initialOpenTeamChat,
   onConsumeInitialPropertyReference,
   onConsumeInitialCompanyId,
+  onConsumeInitialDraftMessage,
   onConsumeInitialOpenTeamChat,
 }: MessagesPageProps) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -345,10 +385,19 @@ export default function MessagesPage({
   const [messageInput, setMessageInput] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [sendAsOwner, setSendAsOwner] = useState(false);
+  const [mobileConversationOpen, setMobileConversationOpen] = useState(false);
+  const [smartAiEnabled, setSmartAiEnabled] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+  const [aiPolishing, setAiPolishing] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [deferAutoSelect, setDeferAutoSelect] = useState(false);
 
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
+  const [deletingConversation, setDeletingConversation] = useState(false);
+  const [deletingMessageId, setDeletingMessageId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [socketConnected, setSocketConnected] = useState(false);
@@ -401,8 +450,15 @@ export default function MessagesPage({
   const activeConversationDisplayName = activeConversation
     ? conversationDisplayName(activeConversation, user?.id)
     : 'User';
-
-  const unreadCount = useMemo(() => rows.filter((row) => row.meta.unread).length, [rows]);
+  const latestIncomingMessage = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const item = messages[index];
+      if (item.isMine) continue;
+      const body = item.body.trim();
+      if (body) return body;
+    }
+    return '';
+  }, [messages]);
 
   const filteredRows = useMemo(() => {
     const q = n(search);
@@ -703,7 +759,9 @@ export default function MessagesPage({
           preferredConversationIdRef.current = null;
           preferredConversationUntilRef.current = 0;
         } else if (!items.some((item) => item.id === activeConversationId)) {
-          setActiveConversationId(items[0].id);
+          if (!deferAutoSelect) {
+            setActiveConversationId(null);
+          }
         }
       }
 
@@ -713,7 +771,7 @@ export default function MessagesPage({
     } finally {
       setLoadingConversations(false);
     }
-  }, [activeConversationId, token]);
+  }, [activeConversationId, deferAutoSelect, token]);
 
   const loadMessages = useCallback(
     async (conversationId: number) => {
@@ -789,8 +847,8 @@ export default function MessagesPage({
     [token]
   );
 
-  const openTeamConversation = useCallback(async () => {
-    if (!token) return;
+  const openTeamConversation = useCallback(async (): Promise<boolean> => {
+    if (!token) return false;
     setSending(true);
     try {
       const resp = await apiRequest<{ conversation: ConversationSummary }>(
@@ -802,22 +860,26 @@ export default function MessagesPage({
       setConversations((previous) => [created, ...previous.filter((item) => item.id !== created.id)]);
       rememberPreferredConversation(created.id);
       setActiveConversationId(created.id);
+      setMobileConversationOpen(true);
+      setDeferAutoSelect(false);
       setInfo('Team chat opened.');
       setError('');
+      return true;
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : 'Unable to open team chat');
+      return false;
     } finally {
       setSending(false);
     }
   }, [rememberPreferredConversation, token]);
 
   const openOwnerConversation = useCallback(
-    async (referenceArg?: string) => {
-      if (!token) return;
+    async (referenceArg?: string): Promise<boolean> => {
+      if (!token) return false;
       const reference = (referenceArg || '').trim();
       if (!reference) {
         setError('Enter property reference ID.');
-        return;
+        return false;
       }
       setSending(true);
       try {
@@ -830,10 +892,15 @@ export default function MessagesPage({
         setConversations((previous) => [created, ...previous.filter((item) => item.id !== created.id)]);
         rememberPreferredConversation(created.id);
         setActiveConversationId(created.id);
+        setMobileConversationOpen(true);
+        setDeferAutoSelect(false);
         setInfo(`Owner chat opened for ${created.propertyReference || reference}.`);
         setError('');
+        return true;
       } catch (openError) {
+        setActiveConversationId(null);
         setError(openError instanceof Error ? openError.message : 'Unable to open owner chat');
+        return false;
       } finally {
         setSending(false);
       }
@@ -842,12 +909,12 @@ export default function MessagesPage({
   );
 
   const openCompanyConversation = useCallback(
-    async (companyIdArg?: number) => {
-      if (!token) return;
+    async (companyIdArg?: number): Promise<boolean> => {
+      if (!token) return false;
       const candidateId = Number(companyIdArg);
       if (!Number.isInteger(candidateId) || candidateId <= 0) {
         setError('Enter a valid company ID.');
-        return;
+        return false;
       }
       setSending(true);
       try {
@@ -860,16 +927,101 @@ export default function MessagesPage({
         setConversations((previous) => [created, ...previous.filter((item) => item.id !== created.id)]);
         rememberPreferredConversation(created.id);
         setActiveConversationId(created.id);
+        setMobileConversationOpen(true);
+        setDeferAutoSelect(false);
         setInfo(`Builder chat opened for ${created.ownerName || 'company'}.`);
         setError('');
+        return true;
       } catch (openError) {
+        setActiveConversationId(null);
         setError(openError instanceof Error ? openError.message : 'Unable to open builder chat');
+        return false;
       } finally {
         setSending(false);
       }
     },
     [rememberPreferredConversation, token]
   );
+
+  const buildAiContext = useCallback((): AiChatMessage[] => {
+    return messages.slice(-6).map((item) => ({
+      role: item.isMine ? 'assistant' : 'user',
+      content: item.body.slice(0, 900),
+    }));
+  }, [messages]);
+
+  const polishWithAi = useCallback(
+    async (rawText: string): Promise<string> => {
+      const text = rawText.trim();
+      if (!text) return '';
+      const context = buildAiContext();
+      const prompt = [
+        'Rewrite this chat draft so it sounds polite, clear, and professional.',
+        'Keep the same intent and keep it concise (max 60 words).',
+        'Use plain text only, no bullets.',
+        `Draft: ${text}`,
+      ].join('\n');
+
+      const response = await askRealtyAi({
+        messages: context,
+        message: prompt,
+      });
+      const polished = sanitizeAiAnswer(response.answer);
+      return polished || text;
+    },
+    [buildAiContext]
+  );
+
+  const generateReplySuggestions = useCallback(async (): Promise<void> => {
+    if (!smartAiEnabled || !activeConversationId) {
+      setAiSuggestions([]);
+      return;
+    }
+    const incoming = latestIncomingMessage;
+    if (!incoming) {
+      setAiSuggestions(fallbackAiSuggestions(''));
+      return;
+    }
+
+    setAiSuggesting(true);
+    setAiError('');
+    try {
+      const response = await askRealtyAi({
+        message: [
+          'Generate exactly 3 short reply suggestions for a property chat.',
+          'Keep each suggestion polite and practical.',
+          'One suggestion per line, plain text only.',
+          `Incoming message: ${incoming}`,
+        ].join('\n'),
+      });
+      const parsed = parseAiSuggestions(response.answer);
+      setAiSuggestions(parsed.length > 0 ? parsed : fallbackAiSuggestions(incoming));
+    } catch {
+      setAiSuggestions(fallbackAiSuggestions(incoming));
+      setAiError('Smart AI suggestions are unavailable right now.');
+    } finally {
+      setAiSuggesting(false);
+    }
+  }, [activeConversationId, latestIncomingMessage, smartAiEnabled]);
+
+  const polishDraftWithAi = useCallback(async () => {
+    const draft = messageInput.trim();
+    if (!draft) {
+      setAiError('Type a message first to use Smart AI.');
+      return;
+    }
+    setAiPolishing(true);
+    setAiError('');
+    try {
+      const polished = await polishWithAi(draft);
+      setMessageInput(polished);
+      setInfo('Smart AI polished your draft.');
+    } catch {
+      setAiError('Smart AI could not polish this draft right now.');
+    } finally {
+      setAiPolishing(false);
+    }
+  }, [messageInput, polishWithAi]);
 
   const sendMessage = useCallback(async () => {
     if (!token || !activeConversationId || !activeConversation || !activeMeta) return;
@@ -882,8 +1034,20 @@ export default function MessagesPage({
       return;
     }
 
-    const body = messageInput.trim();
+    let body = messageInput.trim();
     if (!body && attachments.length === 0) return;
+
+    if (smartAiEnabled && body) {
+      setAiPolishing(true);
+      setAiError('');
+      try {
+        body = await polishWithAi(body);
+      } catch {
+        setAiError('Smart AI could not polish this draft. Sent your original message.');
+      } finally {
+        setAiPolishing(false);
+      }
+    }
 
     const attachmentBlock =
       attachments.length > 0 ? attachments.map((file) => `[Attachment] ${file.name}`).join('\n') : '';
@@ -995,7 +1159,9 @@ export default function MessagesPage({
     activeMeta,
     attachments,
     messageInput,
+    polishWithAi,
     sendAsOwner,
+    smartAiEnabled,
     token,
     updateLocalMeta,
     user?.id,
@@ -1005,6 +1171,8 @@ export default function MessagesPage({
 
   const selectConversation = useCallback(
     (conversationId: number) => {
+      setMobileConversationOpen(true);
+      setDeferAutoSelect(false);
       setActiveConversationId(conversationId);
       const current = metaStore[String(conversationId)] || defaultMeta();
       if (!current.unread) return;
@@ -1058,6 +1226,112 @@ export default function MessagesPage({
     updateLocalMeta(activeConversationId, (meta) => ({ ...meta, muted: !meta.muted }));
   }, [activeConversationId, updateLocalMeta]);
 
+  const deleteMessage = useCallback(
+    async (messageId: number) => {
+      if (!token || !activeConversationId) return;
+      if (!Number.isSafeInteger(messageId) || messageId <= 0) return;
+
+      const candidate = messages.find((item) => item.id === messageId);
+      if (!candidate) return;
+
+      const canDeleteAny = user?.role === 'admin' || user?.role === 'team_member';
+      if (!candidate.isMine && !canDeleteAny) {
+        setInfo('You can only delete your own messages.');
+        return;
+      }
+
+      const confirmed = window.confirm('Delete this message?');
+      if (!confirmed) return;
+
+      setDeletingMessageId(messageId);
+      try {
+        const resp = await apiRequest<{ deletedMessageId: number; conversation?: ConversationSummary }>(
+          `/chat/conversations/${activeConversationId}/messages/${messageId}`,
+          { method: 'DELETE' },
+          token
+        );
+
+        setMessages((previous) => previous.filter((item) => item.id !== messageId));
+        const updatedConversation = resp.conversation;
+        if (updatedConversation) {
+          setConversations((previous) =>
+            previous.map((item) => (item.id === updatedConversation.id ? updatedConversation : item))
+          );
+        }
+
+        setError('');
+        setInfo('Message deleted.');
+      } catch (deleteError) {
+        setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete message');
+      } finally {
+        setDeletingMessageId((current) => (current === messageId ? null : current));
+      }
+    },
+    [activeConversationId, messages, token, user?.role]
+  );
+
+  const deleteConversation = useCallback(async () => {
+    if (!token || !activeConversationId) return;
+    const targetConversationId = activeConversationId;
+    const confirmed = window.confirm(
+      'Delete this chat? All messages in this conversation will be removed for all participants.'
+    );
+    if (!confirmed) return;
+
+    setDeletingConversation(true);
+    try {
+      await apiRequest<{ deletedConversationId: number }>(
+        `/chat/conversations/${targetConversationId}`,
+        { method: 'DELETE' },
+        token
+      );
+
+      setConversations((previous) => previous.filter((item) => item.id !== targetConversationId));
+      setMetaStore((previous) => {
+        const next = { ...previous };
+        delete next[String(targetConversationId)];
+        return next;
+      });
+      setMessages((previous) =>
+        previous.filter((item) => item.conversationId !== targetConversationId)
+      );
+      setTypingByConversation((previous) => {
+        if (!previous[targetConversationId]) return previous;
+        const next = { ...previous };
+        delete next[targetConversationId];
+        return next;
+      });
+      setDeliveredByConversation((previous) => {
+        if (!previous[targetConversationId]) return previous;
+        const next = { ...previous };
+        delete next[targetConversationId];
+        return next;
+      });
+      setReadByConversation((previous) => {
+        if (!previous[targetConversationId]) return previous;
+        const next = { ...previous };
+        delete next[targetConversationId];
+        return next;
+      });
+      setPresenceByConversation((previous) => {
+        if (!previous[targetConversationId]) return previous;
+        const next = { ...previous };
+        delete next[targetConversationId];
+        return next;
+      });
+      setActiveConversationId((current) =>
+        current === targetConversationId ? null : current
+      );
+      setMobileConversationOpen(false);
+      setError('');
+      setInfo('Chat deleted.');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete chat');
+    } finally {
+      setDeletingConversation(false);
+    }
+  }, [activeConversationId, token]);
+
   const onComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key !== 'Enter' || event.shiftKey) return;
@@ -1066,6 +1340,22 @@ export default function MessagesPage({
     },
     [sendMessage]
   );
+
+  useEffect(() => {
+    if (!smartAiEnabled) {
+      setAiSuggestions([]);
+      setAiError('');
+      setAiSuggesting(false);
+      return;
+    }
+    if (!activeConversationId) {
+      setAiSuggestions([]);
+      setAiError('');
+      setAiSuggesting(false);
+      return;
+    }
+    void generateReplySuggestions();
+  }, [activeConversationId, generateReplySuggestions, smartAiEnabled]);
 
   useEffect(() => {
     if (!token || !user) return;
@@ -1339,8 +1629,16 @@ export default function MessagesPage({
 
   useEffect(() => {
     if (!token || !user || !initialPropertyReference) return;
-    void openOwnerConversation(initialPropertyReference);
+    let active = true;
+    setDeferAutoSelect(true);
+    void openOwnerConversation(initialPropertyReference).then((opened) => {
+      if (!active) return;
+      setDeferAutoSelect(!opened);
+    });
     onConsumeInitialPropertyReference?.();
+    return () => {
+      active = false;
+    };
   }, [
     initialPropertyReference,
     onConsumeInitialPropertyReference,
@@ -1351,21 +1649,49 @@ export default function MessagesPage({
 
   useEffect(() => {
     if (!token || !user || !initialCompanyId || initialCompanyId <= 0) return;
-    void openCompanyConversation(initialCompanyId);
+    let active = true;
+    setDeferAutoSelect(true);
+    void openCompanyConversation(initialCompanyId).then((opened) => {
+      if (!active) return;
+      setDeferAutoSelect(!opened);
+    });
     onConsumeInitialCompanyId?.();
+    return () => {
+      active = false;
+    };
   }, [initialCompanyId, onConsumeInitialCompanyId, openCompanyConversation, token, user]);
 
   useEffect(() => {
     if (!token || !user || !initialOpenTeamChat) return;
-    void openTeamConversation();
+    let active = true;
+    setDeferAutoSelect(true);
+    void openTeamConversation().then((opened) => {
+      if (!active) return;
+      setDeferAutoSelect(!opened);
+    });
     onConsumeInitialOpenTeamChat?.();
+    return () => {
+      active = false;
+    };
   }, [initialOpenTeamChat, onConsumeInitialOpenTeamChat, openTeamConversation, token, user]);
+
+  useEffect(() => {
+    const seededDraft = (initialDraftMessage || '').trim();
+    if (!seededDraft) return;
+    setMessageInput(seededDraft);
+    onConsumeInitialDraftMessage?.();
+  }, [initialDraftMessage, onConsumeInitialDraftMessage]);
 
   useEffect(() => {
     const scroller = messagesScrollerRef.current;
     if (!scroller) return;
     scroller.scrollTop = scroller.scrollHeight;
   }, [messages, sending]);
+
+  useEffect(() => {
+    if (activeConversationId) return;
+    setMobileConversationOpen(false);
+  }, [activeConversationId]);
 
   if (!user) {
     return (
@@ -1378,27 +1704,17 @@ export default function MessagesPage({
   }
 
   return (
-    <section className="min-h-screen overflow-x-hidden pb-10 pt-24 text-slate-900">
-      <div className="page-container space-y-3">
-        <div className="rounded-3xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-cyan-50 p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">Messaging</p>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <h1 className="text-2xl font-semibold text-slate-900">Messages</h1>
-            <Badge variant="outline" className="border-emerald-200 bg-white text-emerald-700">
-              {unreadCount} unread
-            </Badge>
-          </div>
-        </div>
-
+    <section className="h-screen overflow-x-hidden pt-24 text-slate-900">
+      <div className="page-container flex h-full min-h-0 flex-col space-y-3 pb-3">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-        {info && (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {info}
-          </div>
-        )}
+        {info ? <p className="sr-only" aria-live="polite">{info}</p> : null}
 
-        <div className="grid min-w-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="grid min-w-0 min-h-0 flex-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <aside
+            className={`min-w-0 min-h-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm flex-col ${
+              mobileConversationOpen ? 'hidden xl:flex' : 'flex'
+            }`}
+          >
             <div className="grid gap-2">
               <Button
                 onClick={() => void openTeamConversation()}
@@ -1437,7 +1753,7 @@ export default function MessagesPage({
               </div>
             </div>
 
-            <div className="mt-3 max-h-[68vh] space-y-1.5 overflow-y-auto pr-1">
+            <div className="mt-3 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
               {loadingConversations &&
                 Array.from({ length: 7 }).map((_, index) => <Skeleton key={`chat-skeleton-${index}`} className="h-20 bg-slate-200" />)}
               {!loadingConversations && filteredRows.length === 0 && (
@@ -1511,17 +1827,53 @@ export default function MessagesPage({
             </div>
           </aside>
 
-          <section className="min-w-0 flex min-h-[72vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <section
+            className={`min-w-0 h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${
+              mobileConversationOpen ? 'flex' : 'hidden xl:flex'
+            }`}
+          >
             {!activeConversation || !activeMeta ? (
-              <div className="flex min-h-[72vh] flex-col items-center justify-center gap-2 p-6 text-center">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
                 <MessageCircleMore className="h-12 w-12 text-slate-300" />
                 <p className="text-sm text-slate-600">Select a chat to start messaging.</p>
+                <p className="max-w-md text-xs text-slate-500">
+                  Smart AI can suggest polite replies and improve your draft before sending.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => void openTeamConversation()}
+                    disabled={sending}
+                  >
+                    Start Team Chat
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => setSmartAiEnabled((current) => !current)}
+                  >
+                    {smartAiEnabled ? 'Disable Smart AI' : 'Enable Smart AI'}
+                  </Button>
+                </div>
               </div>
             ) : (
               <>
                 <div className="border-b border-slate-200 bg-white px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 xl:hidden"
+                        onClick={() => setMobileConversationOpen(false)}
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        <span className="sr-only">Back to chats</span>
+                      </Button>
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-200 to-cyan-200 text-sm font-semibold text-emerald-900">
                         {(activeConversationDisplayName || 'U').charAt(0).toUpperCase()}
                       </div>
@@ -1536,26 +1888,38 @@ export default function MessagesPage({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button variant="outline" size="sm" className="h-8" onClick={() => void markUnread()}>
-                        Mark unread
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-8" onClick={() => void togglePinned()}>
-                        {activeMeta.pinned ? 'Unpin' : 'Pin'}
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-8" onClick={() => void toggleStarred()}>
-                        {activeMeta.starred ? 'Unstar' : 'Star'}
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-8" onClick={toggleMuted}>
-                        {activeMeta.muted ? 'Unmute' : 'Mute'}
-                      </Button>
+                    <div className="flex items-center gap-1.5">
+                      <div className="hidden flex-wrap gap-1.5 sm:flex">
+                        <Button variant="outline" size="sm" className="h-8" onClick={() => void markUnread()}>
+                          Mark unread
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-8" onClick={() => void togglePinned()}>
+                          {activeMeta.pinned ? 'Unpin' : 'Pin'}
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-8" onClick={() => void toggleStarred()}>
+                          {activeMeta.starred ? 'Unstar' : 'Star'}
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-8" onClick={toggleMuted}>
+                          {activeMeta.muted ? 'Unmute' : 'Mute'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 border-red-200 text-red-700 hover:bg-red-50"
+                          onClick={() => void toggleBlocked()}
+                        >
+                          {activeMeta.blocked ? 'Unblock' : 'Block'}
+                        </Button>
+                      </div>
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-8 border-red-200 text-red-700 hover:bg-red-50"
-                        onClick={() => void toggleBlocked()}
+                        onClick={() => void deleteConversation()}
+                        disabled={deletingConversation}
                       >
-                        {activeMeta.blocked ? 'Unblock' : 'Block'}
+                        <Trash2 className="mr-1 h-3.5 w-3.5" />
+                        {deletingConversation ? 'Deleting...' : 'Delete chat'}
                       </Button>
                     </div>
                   </div>
@@ -1563,7 +1927,7 @@ export default function MessagesPage({
 
                 <div
                   ref={messagesScrollerRef}
-                  className="flex-1 overflow-x-hidden overflow-y-auto bg-[#efeae2] bg-[radial-gradient(circle_at_1px_1px,rgba(16,185,129,0.16)_1px,transparent_0)] [background-size:24px_24px] px-3 py-4 sm:px-4"
+                  className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[#efeae2] bg-[radial-gradient(circle_at_1px_1px,rgba(16,185,129,0.16)_1px,transparent_0)] [background-size:24px_24px] px-3 py-4 sm:px-4"
                 >
                   {loadingMessages &&
                     Array.from({ length: 6 }).map((_, index) => (
@@ -1595,19 +1959,36 @@ export default function MessagesPage({
                           <article className={`max-w-[86%] rounded-2xl px-3 py-2 shadow-sm ${bubbleTone}`}>
                             <p className="mb-0.5 text-[11px] font-medium text-slate-600">{messageSenderLabel(message)}</p>
                             <p className="whitespace-pre-wrap break-words text-sm text-slate-900">{message.body}</p>
-                            <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-slate-500">
-                              <span>{fmtClock(message.createdAt)}</span>
-                              {message.isMine && (
-                                receipt === 'sent' ? (
-                                  <Check className="h-3.5 w-3.5 text-slate-400" />
-                                ) : (
-                                  <CheckCheck
-                                    className={`h-3.5 w-3.5 ${
-                                      receipt === 'read' ? 'text-sky-500' : 'text-slate-400'
-                                    }`}
-                                  />
-                                )
-                              )}
+                            <div
+                              className={`mt-1 flex items-center gap-2 text-[10px] text-slate-500 ${
+                                message.isMine && message.id > 0 ? 'justify-between' : 'justify-end'
+                              }`}
+                            >
+                              {message.isMine && message.id > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteMessage(message.id)}
+                                  className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700 hover:bg-red-100"
+                                  disabled={deletingMessageId === message.id}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  {deletingMessageId === message.id ? 'Deleting...' : 'Delete'}
+                                </button>
+                              ) : null}
+                              <div className="flex items-center gap-1">
+                                <span>{fmtClock(message.createdAt)}</span>
+                                {message.isMine && (
+                                  receipt === 'sent' ? (
+                                    <Check className="h-3.5 w-3.5 text-slate-400" />
+                                  ) : (
+                                    <CheckCheck
+                                      className={`h-3.5 w-3.5 ${
+                                        receipt === 'read' ? 'text-sky-500' : 'text-slate-400'
+                                      }`}
+                                    />
+                                  )
+                                )}
+                              </div>
                             </div>
                           </article>
                         </div>
@@ -1622,6 +2003,24 @@ export default function MessagesPage({
                     </div>
                   )}
 
+                  {smartAiEnabled && aiSuggesting && !aiPolishing && (
+                    <div className="mt-2 flex justify-end">
+                      <div className="inline-flex items-center gap-1.5 rounded-2xl rounded-br-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                        <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                        AI is preparing smart reply suggestions...
+                      </div>
+                    </div>
+                  )}
+
+                  {aiPolishing && (
+                    <div className="mt-2 flex justify-end">
+                      <div className="inline-flex items-center gap-1.5 rounded-2xl rounded-br-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                        <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                        AI is polishing your message...
+                      </div>
+                    </div>
+                  )}
+
                   {sending && (
                     <div className="mt-2 flex justify-start">
                       <div className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
@@ -1631,7 +2030,62 @@ export default function MessagesPage({
                   )}
                 </div>
 
-                <div className="border-t border-slate-200 bg-white px-3 py-3">
+                <div className="sticky bottom-0 border-t border-slate-200 bg-white px-3 py-3">
+                  <div className="mb-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={smartAiEnabled}
+                          onChange={(event) => setSmartAiEnabled(event.target.checked)}
+                        />
+                        Smart AI Assist
+                      </label>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 border-slate-300 text-xs"
+                        onClick={() => void polishDraftWithAi()}
+                        disabled={!messageInput.trim() || aiPolishing || sending}
+                      >
+                        <Sparkles className="mr-1 h-3.5 w-3.5" />
+                        {aiPolishing ? 'Polishing...' : 'Polish Draft'}
+                      </Button>
+                    </div>
+
+                    {smartAiEnabled && (
+                      <div className="mt-2">
+                        <p className="text-[11px] text-slate-600">AI quick reply suggestions</p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {aiSuggesting && (
+                            <>
+                              <Skeleton className="h-7 w-48 rounded-full bg-slate-200" />
+                              <Skeleton className="h-7 w-44 rounded-full bg-slate-200" />
+                              <Skeleton className="h-7 w-52 rounded-full bg-slate-200" />
+                            </>
+                          )}
+                          {!aiSuggesting &&
+                            aiSuggestions.map((suggestion) => (
+                              <button
+                                key={suggestion}
+                                type="button"
+                                onClick={() => setMessageInput(suggestion)}
+                                className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] text-emerald-700 hover:bg-emerald-50"
+                              >
+                                {suggestion}
+                              </button>
+                            ))}
+                          {!aiSuggesting && aiSuggestions.length === 0 && (
+                            <span className="text-[11px] text-slate-500">
+                              Open a chat thread to generate smart replies.
+                            </span>
+                          )}
+                        </div>
+                        {aiError && <p className="mt-1 text-[11px] text-amber-700">{aiError}</p>}
+                      </div>
+                    )}
+                  </div>
+
                   {attachments.length > 0 && (
                     <div className="mb-2 flex flex-wrap gap-2">
                       {attachments.map((file, index) => (
@@ -1684,6 +2138,7 @@ export default function MessagesPage({
                     <Button
                       onClick={() => void sendMessage()}
                       disabled={
+                        aiPolishing ||
                         sending ||
                         activeConversation.status === 'Closed' ||
                         activeMeta.blocked ||

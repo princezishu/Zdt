@@ -9,6 +9,7 @@ import {
   readNotifications,
   type NotificationItem,
 } from '@/lib/notificationsStore';
+import { trackFeatureUsage } from '@/lib/featureUsageApi';
 
 function formatTimestamp(value: string): string {
   const dt = new Date(value);
@@ -57,6 +58,14 @@ export default function NotificationsPage() {
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, handleChanged);
     };
   }, [sync]);
+
+  useEffect(() => {
+    void trackFeatureUsage({
+      featureKey: 'notifications_page_opened',
+      context: 'notifications_page',
+      view: 'notifications',
+    });
+  }, []);
 
   const unreadCount = useMemo(() => items.filter((item) => !item.isRead).length, [items]);
 
@@ -163,4 +172,3 @@ export default function NotificationsPage() {
     </section>
   );
 }
-

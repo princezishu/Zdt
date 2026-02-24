@@ -6,6 +6,7 @@ import {
   EyeOff,
   ArrowRight,
   ArrowLeft,
+  Building2,
   MapPin,
   ShieldCheck,
   Sparkles,
@@ -15,6 +16,8 @@ import { API_BASE_URL } from '../lib/api';
 interface LoginProps {
   onBack: () => void;
   onSwitchToRegister: () => void;
+  onOpenCompanyLogin: () => void;
+  onOpenCompanyRegister: () => void;
   onLoginSuccess: () => void;
 }
 
@@ -36,10 +39,19 @@ const perks = [
   },
 ];
 
-export default function Login({ onBack, onSwitchToRegister, onLoginSuccess }: LoginProps) {
+export default function Login({
+  onBack,
+  onSwitchToRegister,
+  onOpenCompanyLogin,
+  onOpenCompanyRegister,
+  onLoginSuccess,
+}: LoginProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [referenceId, setReferenceId] = useState('');
+  const [registrationNumber, setRegistrationNumber] = useState('');
+  const [requiresPromotionProof, setRequiresPromotionProof] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const apiUrl = API_BASE_URL;
@@ -141,22 +153,46 @@ export default function Login({ onBack, onSwitchToRegister, onLoginSuccess }: Lo
                   setIsSubmitting(true);
 
                   try {
+                    const shouldSendPromotionProof =
+                      requiresPromotionProof ||
+                      referenceId.trim().length > 0 ||
+                      registrationNumber.trim().length > 0;
+
+                    const payload: Record<string, string> = {
+                      email,
+                      password,
+                    };
+                    if (shouldSendPromotionProof) {
+                      payload.referenceId = referenceId.trim();
+                      payload.registrationNumber = registrationNumber.trim().toUpperCase();
+                    }
+
                     const response = await fetch(`${apiUrl}/auth/login`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ email, password }),
+                      body: JSON.stringify(payload),
                     });
 
                     const data = await response.json();
 
                     if (!response.ok) {
-                      throw new Error(data?.error || 'Unable to sign in');
+                      const message = String(data?.error || 'Unable to sign in');
+                      if (
+                        message.toLowerCase().includes('requires reference id') &&
+                        message.toLowerCase().includes('registration number')
+                      ) {
+                        setRequiresPromotionProof(true);
+                      }
+                      throw new Error(message);
                     }
 
                     if (data?.token) {
                       localStorage.setItem('authToken', data.token);
                     }
 
+                    setRequiresPromotionProof(false);
+                    setReferenceId('');
+                    setRegistrationNumber('');
                     onLoginSuccess();
                   } catch (err) {
                     setError(err instanceof Error ? err.message : 'Unable to sign in');
@@ -220,6 +256,50 @@ export default function Login({ onBack, onSwitchToRegister, onLoginSuccess }: Lo
                   </div>
                 </div>
 
+                {requiresPromotionProof ? (
+                  <div className="rounded-xl border border-brand-secondary/30 bg-brand-secondary/10 p-3 space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray3">
+                      Promoted Staff Verification
+                    </p>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
+                        Reference ID
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter reference ID"
+                        value={referenceId}
+                        onChange={(event) => setReferenceId(event.target.value)}
+                        className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
+                        Registration Number
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter registration number"
+                        value={registrationNumber}
+                        onChange={(event) => setRegistrationNumber(event.target.value)}
+                        className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {!requiresPromotionProof ? (
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => setRequiresPromotionProof(true)}
+                      className="text-xs font-semibold text-brand-primary hover:text-brand-secondary transition"
+                    >
+                      I was promoted (Admin/Team)
+                    </button>
+                  </div>
+                ) : null}
+
                 <div className="flex items-center justify-between text-xs text-brand-gray3">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" className="accent-brand-primary" />
@@ -282,6 +362,28 @@ export default function Login({ onBack, onSwitchToRegister, onLoginSuccess }: Lo
                   Create an account
                 </button>
               </p>
+
+              <div className="mt-4 rounded-xl border border-brand-secondary/25 bg-brand-secondary/5 p-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-brand-gray3">
+                  Dealer or Builder
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={onOpenCompanyLogin}
+                    className="inline-flex items-center gap-2 rounded-lg border border-brand-primary/30 bg-white px-3 py-2 text-xs font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary"
+                  >
+                    <Building2 className="h-4 w-4" />
+                    Company Login
+                  </button>
+                  <button
+                    onClick={onOpenCompanyRegister}
+                    className="inline-flex items-center gap-2 rounded-lg border border-brand-primary/30 bg-white px-3 py-2 text-xs font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary"
+                  >
+                    <Building2 className="h-4 w-4" />
+                    Company Register
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

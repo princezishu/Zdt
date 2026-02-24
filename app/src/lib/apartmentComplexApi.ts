@@ -74,6 +74,7 @@ export interface UpdateRoomPayload {
   tenantName?: string;
   tenantPhone?: string;
   tenantJoinedOn?: string | null;
+  dueDate?: string | null;
 }
 
 export interface MarkPaidPayload {

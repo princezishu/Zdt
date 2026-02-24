@@ -9,6 +9,7 @@ import {
   removeComparedListing,
   type ComparedListing,
 } from '@/lib/compareStore';
+import { trackFeatureUsage } from '@/lib/featureUsageApi';
 
 interface ComparePageProps {
   onOpenDetails: (referenceId?: string) => void;
@@ -47,6 +48,14 @@ export default function ComparePage({ onOpenDetails, onOpenMessages }: ComparePa
       window.removeEventListener(COMPARE_CHANGED_EVENT, handleChanged);
     };
   }, [sync]);
+
+  useEffect(() => {
+    void trackFeatureUsage({
+      featureKey: 'compare_page_opened',
+      context: 'compare_page',
+      view: 'compare',
+    });
+  }, []);
 
   const tableRows = useMemo(
     () =>
@@ -196,4 +205,3 @@ export default function ComparePage({ onOpenDetails, onOpenMessages }: ComparePa
     </section>
   );
 }
-

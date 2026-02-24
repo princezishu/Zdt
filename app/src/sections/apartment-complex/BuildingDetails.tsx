@@ -34,6 +34,7 @@ import {
   updateApartmentRoom,
   type BuildingSummary,
   type PaymentMethod,
+  type UpdateRoomPayload,
   type RoomRecord,
 } from '@/lib/apartmentComplexApi';
 import RoomHistoryModal from './RoomHistoryModal';
@@ -41,6 +42,8 @@ import RoomHistoryModal from './RoomHistoryModal';
 interface BuildingDetailsProps {
   token: string;
   buildingId: string;
+  availableBuildings: BuildingSummary[];
+  onSelectBuilding: (buildingId: string) => void;
   onBack: () => void;
   onBuildingUpdated: () => Promise<void> | void;
 }
@@ -97,6 +100,60 @@ function toDraft(room: RoomRecord): RoomDraft {
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function formatDateDisplay(value?: string | null): string {
+  if (!value) return '-';
+  const text = String(value);
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : text;
+}
+
+function getDueDayFromDateValue(value?: string | null): number | null {
+  const text = formatDateDisplay(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const day = Number(text.slice(8, 10));
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
+function parseMonthKey(value: string): { year: number; month: number } | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(value || '');
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+function getDaysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function getNextMonthKey(value: string): string {
+  const parts = parseMonthKey(value);
+  if (!parts) return todayIso().slice(0, 7);
+  const nextMonth = parts.month === 12 ? 1 : parts.month + 1;
+  const nextYear = parts.month === 12 ? parts.year + 1 : parts.year;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+}
+
+function resolveDueDateForMonth(monthKey: string, dueDay: number): string | null {
+  const parts = parseMonthKey(monthKey);
+  if (!parts || !Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) return null;
+  const finalDay = Math.min(dueDay, getDaysInMonth(parts.year, parts.month));
+  return `${monthKey}-${String(finalDay).padStart(2, '0')}`;
+}
+
+function getDueDateForMonth(monthKey: string, dueDate?: string | null, joinedOn?: string | null): string {
+  const dueDay = getDueDayFromDateValue(dueDate) || getDueDayFromDateValue(joinedOn);
+  if (!dueDay) return '';
+  return resolveDueDateForMonth(monthKey, dueDay) || '';
+}
+
+function getNextDueDate(monthKey: string, dueDate?: string | null, joinedOn?: string | null): string | null {
+  const dueDay = getDueDayFromDateValue(dueDate) || getDueDayFromDateValue(joinedOn);
+  if (!dueDay) return null;
+  return resolveDueDateForMonth(getNextMonthKey(monthKey), dueDay);
 }
 
 function formatCurrency(value: number): string {
@@ -166,6 +223,8 @@ function firstErrorMessage(errors: RoomDraftErrors): string | null {
 export default function BuildingDetails({
   token,
   buildingId,
+  availableBuildings,
+  onSelectBuilding,
   onBack,
   onBuildingUpdated,
 }: BuildingDetailsProps) {
@@ -194,12 +253,15 @@ export default function BuildingDetails({
   const [deleting, setDeleting] = useState(false);
   const [updatingSold, setUpdatingSold] = useState(false);
   const [sendingAlerts, setSendingAlerts] = useState(false);
+  const [activeFloorNumber, setActiveFloorNumber] = useState<number | null>(null);
+  const [selectedExplorerRoomId, setSelectedExplorerRoomId] = useState<string | null>(null);
+  const isBuildingSold = Boolean(building?.isSold);
 
-  const loadBuilding = async () => {
+  const loadBuilding = async (targetMonth?: string) => {
     try {
       setLoading(true);
       setError('');
-      const response = await getApartmentBuildingDetails(buildingId, token);
+      const response = await getApartmentBuildingDetails(buildingId, token, targetMonth);
       setMonthKey(response.monthKey);
       setBuilding(response.building || null);
       setRooms(Array.isArray(response.rooms) ? response.rooms : []);
@@ -256,10 +318,87 @@ export default function BuildingDetails({
     (room) => room.currentMonthPayment?.status === 'not_applicable'
   ).length;
 
+  const explorerFloorSummaries = useMemo(() => {
+    const grouped = new Map<number, RoomRecord[]>();
+    filteredRooms.forEach((room) => {
+      const floor = Number(room.floorNumber || 1);
+      const floorRooms = grouped.get(floor) || [];
+      floorRooms.push(room);
+      grouped.set(floor, floorRooms);
+    });
+    return Array.from(grouped.entries())
+      .map(([floorNumber, floorRooms]) => {
+        const occupiedCount = floorRooms.filter((room) => {
+          const draft = drafts[room.id] || toDraft(room);
+          return Boolean(draft.tenantName.trim() || draft.tenantPhone.trim());
+        }).length;
+        const availableCount = floorRooms.length - occupiedCount;
+        return {
+          floorNumber,
+          rooms: floorRooms,
+          totalUnits: floorRooms.length,
+          occupiedCount,
+          availableCount,
+        };
+      })
+      .sort((a, b) => b.floorNumber - a.floorNumber);
+  }, [drafts, filteredRooms]);
+
+  const activeFloorRooms = useMemo(
+    () => explorerFloorSummaries.find((item) => item.floorNumber === activeFloorNumber)?.rooms || [],
+    [activeFloorNumber, explorerFloorSummaries]
+  );
+
+  const selectedExplorerRoom = useMemo(
+    () =>
+      (selectedExplorerRoomId
+        ? rooms.find((room) => room.id === selectedExplorerRoomId) || null
+        : null),
+    [rooms, selectedExplorerRoomId]
+  );
+
+  const selectedExplorerDraft = useMemo(
+    () => (selectedExplorerRoom ? drafts[selectedExplorerRoom.id] || toDraft(selectedExplorerRoom) : null),
+    [drafts, selectedExplorerRoom]
+  );
+
+  const selectedExplorerStatus = useMemo(() => {
+    if (!selectedExplorerRoom || !selectedExplorerDraft) return null;
+    return Boolean(selectedExplorerDraft.tenantName.trim() || selectedExplorerDraft.tenantPhone.trim())
+      ? 'occupied'
+      : 'available';
+  }, [selectedExplorerDraft, selectedExplorerRoom]);
+
   useEffect(() => {
     const existingIds = new Set(rooms.map((room) => room.id));
     setSelectedRoomIds((prev) => prev.filter((roomId) => existingIds.has(roomId)));
   }, [rooms]);
+
+  useEffect(() => {
+    if (explorerFloorSummaries.length === 0) {
+      setActiveFloorNumber(null);
+      return;
+    }
+    setActiveFloorNumber((current) => {
+      if (current && explorerFloorSummaries.some((floor) => floor.floorNumber === current)) {
+        return current;
+      }
+      return explorerFloorSummaries[0].floorNumber;
+    });
+  }, [explorerFloorSummaries]);
+
+  useEffect(() => {
+    if (activeFloorRooms.length === 0) {
+      setSelectedExplorerRoomId(null);
+      return;
+    }
+    setSelectedExplorerRoomId((current) => {
+      if (current && activeFloorRooms.some((room) => room.id === current)) {
+        return current;
+      }
+      return activeFloorRooms[0].id;
+    });
+  }, [activeFloorRooms]);
 
   const toggleRoomSelection = (roomId: string, checked: boolean) => {
     setSelectedRoomIds((prev) => {
@@ -310,47 +449,94 @@ export default function BuildingDetails({
   const updateDraft = (roomId: string, patch: Partial<RoomDraft>) => {
     setDrafts((prev) => ({
       ...prev,
-      [roomId]: {
-        ...(prev[roomId] || {
-          roomLabel: '',
-          rentAmount: '',
-          tenantName: '',
-          tenantPhone: '',
-          tenantJoinedOn: '',
-          dueDate: '',
-          paidDate: '',
-          amountPaid: '',
-          paymentMethod: 'cash' as PaymentMethod,
-        }),
-        ...patch,
-      },
+      [roomId]: (() => {
+        const room = rooms.find((item) => item.id === roomId);
+        const baseDraft: RoomDraft =
+          prev[roomId] ||
+          (room
+            ? toDraft(room)
+            : {
+                roomLabel: '',
+                rentAmount: '',
+                tenantName: '',
+                tenantPhone: '',
+                tenantJoinedOn: '',
+                dueDate: '',
+                paidDate: '',
+                amountPaid: '',
+                paymentMethod: 'cash' as PaymentMethod,
+              });
+
+        const nextDraft: RoomDraft = {
+          ...baseDraft,
+          ...patch,
+        };
+
+        const hasTenantInfo = Boolean(
+          nextDraft.tenantName.trim() || nextDraft.tenantPhone.trim()
+        );
+        if (!baseDraft.tenantJoinedOn && !nextDraft.tenantJoinedOn && hasTenantInfo) {
+          nextDraft.tenantJoinedOn = todayIso();
+        }
+        if (!hasTenantInfo && !room?.tenantJoinedOn) {
+          nextDraft.tenantJoinedOn = '';
+        }
+
+        return nextDraft;
+      })(),
     }));
   };
 
   const saveRoom = async (room: RoomRecord) => {
+    if (isBuildingSold) {
+      toast.error('Building is marked as sold. Room updates are locked.');
+      return;
+    }
     const draft = drafts[room.id] || toDraft(room);
-    const validation = validateRoomDraft(draft);
+    const normalizedRoomLabel = draft.roomLabel.trim() || room.roomLabel;
+    const parsedRent = Number(draft.rentAmount);
+    const fallbackRent = Number(room.rentAmount || 0);
+    const normalizedRentAmount =
+      Number.isFinite(parsedRent) && parsedRent > 0
+        ? parsedRent
+        : Number.isFinite(fallbackRent) && fallbackRent > 0
+          ? fallbackRent
+          : 0;
+    const normalizedDraft: RoomDraft = {
+      ...draft,
+      roomLabel: normalizedRoomLabel,
+      rentAmount: normalizedRentAmount > 0 ? String(normalizedRentAmount) : '',
+    };
+    const validation = validateRoomDraft(normalizedDraft);
     const errorMessage = firstErrorMessage(validation);
     if (errorMessage) {
       toast.error(errorMessage);
       return;
     }
-    const rentAmount = Number(draft.rentAmount);
+    const rentAmount = Number(normalizedDraft.rentAmount);
 
     try {
       setSavingRoomId(room.id);
+      const hasTenantInfo = Boolean(
+        normalizedDraft.tenantName.trim() || normalizedDraft.tenantPhone.trim()
+      );
+      const roomPayload: UpdateRoomPayload = {
+        roomLabel: normalizedDraft.roomLabel.trim(),
+        rentAmount,
+        tenantName: normalizedDraft.tenantName.trim(),
+        tenantPhone: normalizedDraft.tenantPhone.trim(),
+      };
+      if (room.tenantJoinedOn) {
+        roomPayload.tenantJoinedOn = room.tenantJoinedOn;
+      } else if (hasTenantInfo && normalizedDraft.tenantJoinedOn) {
+        roomPayload.tenantJoinedOn = normalizedDraft.tenantJoinedOn;
+      }
       await updateApartmentRoom(
         room.id,
-        {
-          roomLabel: draft.roomLabel.trim(),
-          rentAmount,
-          tenantName: draft.tenantName.trim(),
-          tenantPhone: draft.tenantPhone.trim(),
-          tenantJoinedOn: draft.tenantJoinedOn || null,
-        },
+        roomPayload,
         token
       );
-      toast.success(`${draft.roomLabel} updated.`);
+      toast.success(`${normalizedDraft.roomLabel} updated.`);
       await loadBuilding();
       await onBuildingUpdated();
     } catch (saveError) {
@@ -375,6 +561,11 @@ export default function BuildingDetails({
 
   const runPendingAction = async () => {
     if (!pendingAction) return;
+    if (isBuildingSold) {
+      toast.error('Building is marked as sold. Room updates are locked.');
+      setPendingAction(null);
+      return;
+    }
 
     const targetRooms = rooms.filter((item) => pendingAction.roomIds.includes(item.id));
     if (targetRooms.length === 0) {
@@ -389,6 +580,7 @@ export default function BuildingDetails({
       let successCount = 0;
       let failedCount = 0;
       let firstFailureMessage = '';
+      let firstSuccessNextDueDate = '';
 
       for (const room of targetRooms) {
         const draft = drafts[room.id] || toDraft(room);
@@ -401,23 +593,28 @@ export default function BuildingDetails({
             }
 
             const amountPaid = Number(draft.amountPaid);
-            await markRoomPaid(
+            const paidResponse = await markRoomPaid(
               room.id,
               {
                 monthKey: activeMonth,
-                dueDate: draft.dueDate || null,
-                paidDate: draft.paidDate || todayIso(),
                 amountPaid,
                 paymentMethod: draft.paymentMethod,
               },
               token
             );
+            if (!firstSuccessNextDueDate) {
+              const nextDueDate = getNextDueDate(
+                activeMonth,
+                paidResponse.payment?.dueDate || room.currentMonthPayment?.dueDate || draft.dueDate,
+                room.tenantJoinedOn || draft.tenantJoinedOn
+              );
+              firstSuccessNextDueDate = nextDueDate || '';
+            }
           } else {
             await markRoomUnpaid(
               room.id,
               {
                 monthKey: activeMonth,
-                dueDate: draft.dueDate || null,
               },
               token
             );
@@ -435,12 +632,26 @@ export default function BuildingDetails({
 
       if (failedCount === 0) {
         if (pendingAction.scope === 'floor') {
-          toast.success(
-            `Updated ${successCount} room(s) on floor ${pendingAction.floorNumber} as ${pendingAction.type}.`
-          );
+          if (pendingAction.type === 'paid') {
+            toast.success(
+              `Updated ${successCount} room(s) on floor ${pendingAction.floorNumber} as paid. Next month dues were auto-created.`
+            );
+          } else {
+            toast.success(
+              `Updated ${successCount} room(s) on floor ${pendingAction.floorNumber} as ${pendingAction.type}.`
+            );
+          }
         } else {
           const label = targetRooms[0]?.roomLabel || 'Room';
-          toast.success(`${label} marked as ${pendingAction.type}.`);
+          if (pendingAction.type === 'paid') {
+            toast.success(
+              firstSuccessNextDueDate
+                ? `${label} marked as paid. Next due date: ${firstSuccessNextDueDate}.`
+                : `${label} marked as paid. Next month due date is auto-set.`
+            );
+          } else {
+            toast.success(`${label} marked as ${pendingAction.type}.`);
+          }
         }
       } else {
         if (successCount > 0) {
@@ -450,7 +661,9 @@ export default function BuildingDetails({
       }
 
       setPendingAction(null);
-      await loadBuilding();
+      const shouldJumpToNextMonth = pendingAction.type === 'paid' && successCount > 0;
+      const nextMonthToLoad = shouldJumpToNextMonth ? getNextMonthKey(activeMonth) : undefined;
+      await loadBuilding(nextMonthToLoad);
       await onBuildingUpdated();
     } catch (actionError) {
       toast.error(actionError instanceof Error ? actionError.message : 'Unable to update rent status.');
@@ -461,6 +674,11 @@ export default function BuildingDetails({
 
   const runPendingDelete = async () => {
     if (!pendingDelete || pendingDelete.roomIds.length === 0) {
+      setPendingDelete(null);
+      return;
+    }
+    if (isBuildingSold) {
+      toast.error('Building is marked as sold. Room updates are locked.');
       setPendingDelete(null);
       return;
     }
@@ -487,6 +705,10 @@ export default function BuildingDetails({
   };
 
   const handleGenerateRooms = async () => {
+    if (isBuildingSold) {
+      toast.error('Building is marked as sold. Room updates are locked.');
+      return;
+    }
     const count = Number(generateCount);
     const floorNumber = Number(generateFloorNumber);
     const defaultRent = Number(generateRent);
@@ -528,8 +750,7 @@ export default function BuildingDetails({
         'Optional sold note (e.g. buyer name, closing date):',
         building.soldNote || ''
       );
-      if (input === null) return;
-      soldNote = input.trim() || null;
+      soldNote = input === null ? building.soldNote || null : input.trim() || null;
     }
 
     try {
@@ -591,9 +812,525 @@ export default function BuildingDetails({
     }
   };
 
+  const selectedExplorerOwner =
+    selectedExplorerDraft && selectedExplorerDraft.tenantName.trim()
+      ? selectedExplorerDraft.tenantName.trim()
+      : 'Unassigned';
+  const selectedExplorerRent = Number(
+    selectedExplorerDraft?.rentAmount || selectedExplorerRoom?.rentAmount || 0
+  );
+  const selectedExplorerJoinedOn = formatDateDisplay(
+    selectedExplorerDraft?.tenantJoinedOn || selectedExplorerRoom?.tenantJoinedOn || null
+  );
+  const selectedExplorerPenalty = Number(
+    selectedExplorerRoom?.currentMonthPayment?.penaltyAmount ?? 0
+  );
+  const selectedExplorerPaidDate = formatDateDisplay(
+    selectedExplorerDraft?.paidDate || selectedExplorerRoom?.currentMonthPayment?.paidDate || null
+  );
+  const selectedExplorerDueDate = formatDateDisplay(
+    getDueDateForMonth(
+      monthKey || todayIso().slice(0, 7),
+      selectedExplorerRoom?.currentMonthPayment?.dueDate || selectedExplorerDraft?.dueDate || null,
+      selectedExplorerRoom?.tenantJoinedOn || selectedExplorerDraft?.tenantJoinedOn || null
+    )
+  );
+  const selectedExplorerAmountPaid = Number(
+    selectedExplorerDraft?.amountPaid || selectedExplorerRoom?.currentMonthPayment?.amountPaid || 0
+  );
+  const selectedExplorerNextDueDate = formatDateDisplay(
+    getNextDueDate(
+      monthKey || todayIso().slice(0, 7),
+      selectedExplorerRoom?.currentMonthPayment?.dueDate || selectedExplorerDraft?.dueDate || null,
+      selectedExplorerRoom?.tenantJoinedOn || selectedExplorerDraft?.tenantJoinedOn || null
+    )
+  );
+
   return (
     <div className="space-y-4">
-      <div className="zdt-panel rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="zdt-panel rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Property Management</p>
+            <h2 className="mt-1 text-2xl font-bold text-slate-900">Building Explorer</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Visual overview of buildings, floors, and unit availability
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <span
+                className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                  isBuildingSold
+                    ? 'border-amber-300 bg-amber-100 text-amber-800'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                }`}
+              >
+                Status: {isBuildingSold ? 'Sold' : 'Active'}
+              </span>
+            </div>
+            {isBuildingSold ? (
+              <p className="mt-1 text-xs font-medium text-amber-700">
+                Building marked as sold. Room edits and deletes are locked.
+              </p>
+            ) : null}
+          </div>
+          <div className="w-full max-w-sm">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Project</p>
+            <select
+              value={buildingId}
+              onChange={(event) => onSelectBuilding(event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 shadow-sm outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+            >
+              {availableBuildings.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {error ? (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          {error}
+        </p>
+      ) : null}
+
+      {loading ? (
+        <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
+          <div className="h-[520px] animate-pulse rounded-2xl border border-slate-200 bg-white" />
+          <div className="h-[520px] animate-pulse rounded-2xl border border-slate-200 bg-white" />
+          <div className="h-[520px] animate-pulse rounded-2xl border border-slate-200 bg-white" />
+        </div>
+      ) : null}
+
+      {!loading ? (
+        <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
+          <div className="space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-500">Buildings</h3>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                  {availableBuildings.length}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {availableBuildings.map((item) => {
+                  const isActive = item.id === buildingId;
+                  const unitsPerFloor =
+                    item.totalFloors > 0
+                      ? item.totalRooms % item.totalFloors === 0
+                        ? String(item.totalRooms / item.totalFloors)
+                        : (item.totalRooms / item.totalFloors).toFixed(1)
+                      : '-';
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onSelectBuilding(item.id)}
+                      className={`w-full rounded-xl border p-3 text-left transition-all duration-200 ${
+                        isActive
+                          ? 'border-slate-900 bg-slate-100 shadow-sm'
+                          : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:shadow-md'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{item.name}</p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                        <span>Floors: {item.totalFloors}</span>
+                        <span>Units/Floor: {unitsPerFloor}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-500">Floors</h3>
+              {explorerFloorSummaries.length === 0 ? (
+                <p className="text-sm text-slate-500">No units found on this floor</p>
+              ) : (
+                <div className="space-y-2">
+                  {explorerFloorSummaries.map((floor) => (
+                    <button
+                      key={floor.floorNumber}
+                      type="button"
+                      onClick={() => setActiveFloorNumber(floor.floorNumber)}
+                      className={`w-full rounded-xl border px-3 py-2 text-left transition-all duration-200 ${
+                        floor.floorNumber === activeFloorNumber
+                          ? 'border-blue-600 bg-blue-50 shadow-sm'
+                          : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:shadow-md'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-900">Floor {floor.floorNumber}</p>
+                        <span className="text-xs text-slate-600">{floor.totalUnits} units</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-xs">
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">
+                          Available {floor.availableCount}
+                        </span>
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">
+                          Occupied {floor.occupiedCount}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-slate-500">Actions</h3>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button variant="outline" onClick={onBack}>
+                  Back
+                </Button>
+                <Button variant="outline" onClick={() => void loadBuilding()} disabled={loading}>
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void handleSendRentAlert()}
+                  disabled={sendingAlerts || rooms.length === 0}
+                >
+                  <BellRing className="mr-2 h-4 w-4" />
+                  Alerts
+                </Button>
+                <Button
+                  variant={building?.isSold ? 'outline' : 'default'}
+                  onClick={() => void handleToggleSold()}
+                  disabled={updatingSold}
+                >
+                  {building?.isSold ? 'Remove Sold' : 'Mark Sold'}
+                </Button>
+              </div>
+              <div className="mt-3 grid gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  value={generateFloorNumber}
+                  onChange={(event) => setGenerateFloorNumber(event.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="Floor number"
+                  disabled={isBuildingSold}
+                  className="h-10 bg-white"
+                />
+                <Input
+                  type="number"
+                  min={1}
+                  value={generateCount}
+                  onChange={(event) => setGenerateCount(event.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="Units to add"
+                  disabled={isBuildingSold}
+                  className="h-10 bg-white"
+                />
+                <Input
+                  type="number"
+                  min={1}
+                  value={generateRent}
+                  onChange={(event) => setGenerateRent(event.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="Default rent"
+                  disabled={isBuildingSold}
+                  className="h-10 bg-white"
+                />
+                <Button onClick={() => void handleGenerateRooms()} disabled={generating || isBuildingSold}>
+                  <PlusSquare className="mr-2 h-4 w-4" />
+                  {generating ? 'Adding...' : 'Add Units'}
+                </Button>
+              </div>
+            </section>
+          </div>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Unit Availability</h3>
+                <p className="text-sm text-slate-600">
+                  Floor {activeFloorNumber ?? '-'} | {activeFloorRooms.length} units
+                </p>
+              </div>
+              <div className="grid w-full gap-2 sm:max-w-lg sm:grid-cols-[minmax(0,1fr)_180px]">
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search unit / owner / phone"
+                  className="h-10 bg-white"
+                />
+                <select
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(event.target.value as 'all' | 'paid' | 'unpaid' | 'not_applicable')
+                  }
+                  className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="all">All payment status</option>
+                  <option value="paid">Paid</option>
+                  <option value="unpaid">Pending</option>
+                  <option value="not_applicable">Not Applicable</option>
+                </select>
+              </div>
+            </div>
+
+            {activeFloorRooms.length === 0 ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-600">
+                No units found on this floor
+              </div>
+            ) : (
+              <div
+                key={`floor-grid-${activeFloorNumber}`}
+                className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 transition-all duration-200"
+              >
+                {activeFloorRooms.map((room) => {
+                  const draft = drafts[room.id] || toDraft(room);
+                  const isOccupied = Boolean(draft.tenantName.trim() || draft.tenantPhone.trim());
+                  const paymentStatus = room.currentMonthPayment?.status || 'not_applicable';
+                  const isActive = room.id === selectedExplorerRoomId;
+                  return (
+                    <button
+                      key={room.id}
+                      type="button"
+                      onClick={() => setSelectedExplorerRoomId(room.id)}
+                      className={`rounded-2xl border p-4 text-left transition-all duration-200 ${
+                        isOccupied ? 'border-red-200 bg-red-50/80' : 'border-emerald-200 bg-emerald-50/80'
+                      } ${
+                        isActive
+                          ? 'ring-2 ring-blue-600 ring-offset-1 shadow-md'
+                          : 'hover:-translate-y-0.5 hover:shadow-md'
+                      }`}
+                    >
+                      <p className="text-xl font-bold text-slate-900">{draft.roomLabel.trim() || room.roomLabel}</p>
+                      <div className="mt-2 flex items-center gap-2 text-xs font-semibold">
+                        <span className={`h-2.5 w-2.5 rounded-full ${isOccupied ? 'bg-red-600' : 'bg-emerald-600'}`} />
+                        <span className={isOccupied ? 'text-red-700' : 'text-emerald-700'}>
+                          {isOccupied ? 'Occupied' : 'Available'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-700">Rent: {formatCurrency(Number(draft.rentAmount || room.rentAmount || 0))}</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Payment: {paymentStatus === 'paid' ? 'Paid' : paymentStatus === 'unpaid' ? 'Pending' : 'Not Applicable'}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 xl:sticky xl:top-24">
+            <h3 className="text-lg font-semibold text-slate-900">Property File</h3>
+            {!selectedExplorerRoom || !selectedExplorerDraft ? (
+              <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-600">
+                Select a unit to view ownership and payment details.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-3xl font-bold text-slate-900">
+                    {selectedExplorerDraft.roomLabel.trim() || selectedExplorerRoom.roomLabel}
+                  </p>
+                  <Badge
+                    className={
+                      selectedExplorerStatus === 'occupied'
+                        ? 'border-red-200 bg-red-100 text-red-700'
+                        : 'border-emerald-200 bg-emerald-100 text-emerald-700'
+                    }
+                  >
+                    {selectedExplorerStatus === 'occupied' ? 'Occupied' : 'Available'}
+                  </Badge>
+                </div>
+
+                <div className="mt-4 divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-slate-500">Owner name</span>
+                    <span className="font-medium text-slate-900">{selectedExplorerOwner}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-slate-500">Rent amount</span>
+                    <span className="font-medium text-slate-900">{formatCurrency(selectedExplorerRent)}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-slate-500">Date of join</span>
+                    <span className="font-medium text-slate-900">{selectedExplorerJoinedOn}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-slate-500">Late fee</span>
+                    <span className="font-medium text-slate-900">{formatCurrency(selectedExplorerPenalty)}</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-2">
+                  <Input
+                    value={selectedExplorerDraft.tenantName}
+                    onChange={(event) =>
+                      selectedExplorerRoom
+                        ? updateDraft(selectedExplorerRoom.id, { tenantName: event.target.value })
+                        : null
+                    }
+                    placeholder="Owner / tenant name"
+                    className="h-10 bg-white"
+                  />
+                  <Input
+                    value={selectedExplorerDraft.tenantPhone}
+                    onChange={(event) =>
+                      selectedExplorerRoom
+                        ? updateDraft(selectedExplorerRoom.id, { tenantPhone: event.target.value })
+                        : null
+                    }
+                    placeholder="Phone"
+                    className="h-10 bg-white"
+                  />
+                  <Input
+                    type="number"
+                    min={1}
+                    value={selectedExplorerDraft.rentAmount}
+                    onChange={(event) =>
+                      selectedExplorerRoom
+                        ? updateDraft(selectedExplorerRoom.id, {
+                            rentAmount: event.target.value.replace(/[^0-9.]/g, ''),
+                          })
+                        : null
+                    }
+                    placeholder="Monthly rent"
+                    className="h-10 bg-white"
+                  />
+                  <div className="grid gap-1">
+                    <p className="text-xs font-medium text-slate-500">Due date</p>
+                    <Input
+                      type="date"
+                      value={selectedExplorerDueDate === '-' ? '' : selectedExplorerDueDate}
+                      readOnly
+                      disabled
+                      className="h-10 bg-white"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      Auto: same day every month from join date.
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={selectedExplorerDraft.amountPaid}
+                    onChange={(event) =>
+                      selectedExplorerRoom
+                        ? updateDraft(selectedExplorerRoom.id, {
+                            amountPaid: event.target.value.replace(/[^0-9.]/g, ''),
+                          })
+                        : null
+                    }
+                    placeholder="Amount paid"
+                    className="h-10 bg-white"
+                  />
+                  <select
+                    value={selectedExplorerDraft.paymentMethod}
+                    onChange={(event) =>
+                      selectedExplorerRoom
+                        ? updateDraft(selectedExplorerRoom.id, {
+                            paymentMethod: event.target.value as PaymentMethod,
+                          })
+                        : null
+                    }
+                    className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="upi">UPI</option>
+                    <option value="bank">Bank</option>
+                  </select>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  <p>Paid Date: {selectedExplorerPaidDate}</p>
+                  <p className="mt-1">Amount Paid: {formatCurrency(selectedExplorerAmountPaid)}</p>
+                  <p className="mt-1">
+                    Next Due Date:{' '}
+                    {selectedExplorerRoom?.currentMonthPayment?.status === 'paid'
+                      ? selectedExplorerNextDueDate
+                      : '-'}
+                  </p>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void saveRoom(selectedExplorerRoom)}
+                    disabled={savingRoomId === selectedExplorerRoom.id || isBuildingSold}
+                  >
+                    {savingRoomId === selectedExplorerRoom.id ? 'Saving...' : 'Save'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resetTenantDraft(selectedExplorerRoom)}
+                    disabled={savingRoomId === selectedExplorerRoom.id || isBuildingSold}
+                  >
+                    Reset Tenant
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      setPendingAction({
+                        type: 'paid',
+                        scope: 'room',
+                        roomId: selectedExplorerRoom.id,
+                        roomLabel: selectedExplorerRoom.roomLabel,
+                        roomIds: [selectedExplorerRoom.id],
+                      })
+                    }
+                    disabled={
+                      confirming ||
+                      isBuildingSold ||
+                      selectedExplorerRoom.currentMonthPayment?.status === 'not_applicable'
+                    }
+                  >
+                    Mark Paid
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      setPendingAction({
+                        type: 'unpaid',
+                        scope: 'room',
+                        roomId: selectedExplorerRoom.id,
+                        roomLabel: selectedExplorerRoom.roomLabel,
+                        roomIds: [selectedExplorerRoom.id],
+                      })
+                    }
+                    disabled={
+                      confirming ||
+                      isBuildingSold ||
+                      selectedExplorerRoom.currentMonthPayment?.status === 'not_applicable'
+                    }
+                  >
+                    Mark Unpaid
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setHistoryRoom(selectedExplorerRoom)}>
+                    <History className="mr-2 h-4 w-4" />
+                    History
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      setPendingDelete({
+                        scope: 'room',
+                        roomLabel: selectedExplorerRoom.roomLabel,
+                        roomIds: [selectedExplorerRoom.id],
+                      })
+                    }
+                    disabled={deleting || isBuildingSold}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
+      ) : null}
+
+      <div className="hidden zdt-panel rounded-2xl border border-slate-200 bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Building Dashboard</p>
@@ -660,7 +1397,7 @@ export default function BuildingDetails({
         </div>
       </div>
 
-      <div className="zdt-panel rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="hidden zdt-panel rounded-2xl border border-slate-200 bg-white p-5">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="grid gap-3 md:grid-cols-[1fr_170px]">
             <Input
@@ -719,6 +1456,7 @@ export default function BuildingDetails({
               value={generateFloorNumber}
               onChange={(event) => setGenerateFloorNumber(event.target.value.replace(/[^0-9]/g, ''))}
               placeholder="Floor"
+              disabled={isBuildingSold}
               className="h-11 bg-white"
             />
             <Input
@@ -727,6 +1465,7 @@ export default function BuildingDetails({
               value={generateCount}
               onChange={(event) => setGenerateCount(event.target.value.replace(/[^0-9]/g, ''))}
               placeholder="Rooms"
+              disabled={isBuildingSold}
               className="h-11 bg-white"
             />
             <Input
@@ -735,9 +1474,10 @@ export default function BuildingDetails({
               value={generateRent}
               onChange={(event) => setGenerateRent(event.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="Default rent"
+              disabled={isBuildingSold}
               className="h-11 bg-white"
             />
-            <Button onClick={() => void handleGenerateRooms()} disabled={generating}>
+            <Button onClick={() => void handleGenerateRooms()} disabled={generating || isBuildingSold}>
               <PlusSquare className="mr-2 h-4 w-4" />
               {generating ? 'Adding...' : 'Add Rooms'}
             </Button>
@@ -810,7 +1550,7 @@ export default function BuildingDetails({
                 roomIds: selectedRoomIds,
               })
             }
-            disabled={selectedCount === 0 || deleting}
+            disabled={selectedCount === 0 || deleting || isBuildingSold}
           >
             <Trash2 className="mr-2 h-4 w-4" />
             Delete Selected
@@ -818,22 +1558,28 @@ export default function BuildingDetails({
         </div>
       </div>
 
-      {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+      <div className="hidden">
+        {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p> : null}
+      </div>
 
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <div key={`room-skeleton-${index}`} className="h-64 animate-pulse rounded-2xl border border-slate-200 bg-white" />
-          ))}
-        </div>
-      ) : null}
+      <div className="hidden">
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={`room-skeleton-${index}`} className="h-64 animate-pulse rounded-2xl border border-slate-200 bg-white" />
+            ))}
+          </div>
+        ) : null}
+      </div>
 
-      {!loading && filteredRooms.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">No rooms found for the selected filter.</div>
-      ) : null}
+      <div className="hidden">
+        {!loading && filteredRooms.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">No rooms found for the selected filter.</div>
+        ) : null}
+      </div>
 
       {!loading ? (
-        <div className="space-y-4">
+        <div className="hidden space-y-4">
           {groupedFilteredRooms.map(([floorNumber, floorRooms]) => {
             const applicableFloorRooms = floorRooms.filter(
               (room) => room.currentMonthPayment?.status !== 'not_applicable'
@@ -876,7 +1622,7 @@ export default function BuildingDetails({
                           roomIds: applicableFloorRooms.map((item) => item.id),
                         })
                       }
-                      disabled={confirming || applicableFloorRooms.length === 0}
+                      disabled={confirming || isBuildingSold || applicableFloorRooms.length === 0}
                     >
                       Mark Floor Paid
                     </Button>
@@ -892,7 +1638,7 @@ export default function BuildingDetails({
                           roomIds: applicableFloorRooms.map((item) => item.id),
                         })
                       }
-                      disabled={confirming || applicableFloorRooms.length === 0}
+                      disabled={confirming || isBuildingSold || applicableFloorRooms.length === 0}
                     >
                       Mark Floor Unpaid
                     </Button>
@@ -905,6 +1651,11 @@ export default function BuildingDetails({
                       const draft = drafts[room.id] || toDraft(room);
                       const fieldErrors = validateRoomDraft(draft);
                       const status = room.currentMonthPayment?.status || 'not_applicable';
+                      const autoDueDate = getDueDateForMonth(
+                        monthKey || todayIso().slice(0, 7),
+                        room.currentMonthPayment?.dueDate || draft.dueDate || null,
+                        room.tenantJoinedOn || draft.tenantJoinedOn || null
+                      );
                       const isNotApplicable = status === 'not_applicable';
                       const hasTenant = Boolean((draft.tenantName || '').trim() || (draft.tenantPhone || '').trim());
                       const penaltyAmount = Number(room.currentMonthPayment?.penaltyAmount ?? 0);
@@ -1009,8 +1760,14 @@ export default function BuildingDetails({
                               type="date"
                               value={draft.tenantJoinedOn}
                               onChange={(event) => updateDraft(room.id, { tenantJoinedOn: event.target.value })}
+                              disabled={Boolean(room.tenantJoinedOn)}
                               className="h-10 bg-white"
                             />
+                            {room.tenantJoinedOn ? (
+                              <p className="text-[11px] font-medium text-slate-500">
+                                Join date locked: {room.tenantJoinedOn}. It can only be set once.
+                              </p>
+                            ) : null}
                             {fieldErrors.tenantPhone ? (
                               <p className="text-[11px] font-medium text-red-600">{fieldErrors.tenantPhone}</p>
                             ) : null}
@@ -1019,8 +1776,9 @@ export default function BuildingDetails({
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
                             <Input
                               type="date"
-                              value={draft.dueDate}
-                              onChange={(event) => updateDraft(room.id, { dueDate: event.target.value })}
+                              value={autoDueDate}
+                              readOnly
+                              disabled
                               className="h-10 bg-white"
                             />
                             <Input
@@ -1081,22 +1839,22 @@ export default function BuildingDetails({
                           </div>
 
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void saveRoom(room)}
-                              disabled={savingRoomId === room.id}
-                            >
-                              {savingRoomId === room.id ? 'Saving...' : 'Save'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => resetTenantDraft(room)}
-                              disabled={savingRoomId === room.id}
-                            >
-                              Reset Tenant
-                            </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void saveRoom(room)}
+                                disabled={savingRoomId === room.id || isBuildingSold}
+                              >
+                                {savingRoomId === room.id ? 'Saving...' : 'Save'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => resetTenantDraft(room)}
+                                disabled={savingRoomId === room.id || isBuildingSold}
+                              >
+                                Reset Tenant
+                              </Button>
                             <Button
                               size="sm"
                               onClick={() =>
@@ -1108,7 +1866,7 @@ export default function BuildingDetails({
                                   roomIds: [room.id],
                                 })
                               }
-                              disabled={confirming || isNotApplicable}
+                              disabled={confirming || isBuildingSold || isNotApplicable}
                             >
                               Mark Paid
                             </Button>
@@ -1124,7 +1882,7 @@ export default function BuildingDetails({
                                   roomIds: [room.id],
                                 })
                               }
-                              disabled={confirming || isNotApplicable}
+                              disabled={confirming || isBuildingSold || isNotApplicable}
                             >
                               Mark Unpaid
                             </Button>
@@ -1142,7 +1900,7 @@ export default function BuildingDetails({
                                   roomIds: [room.id],
                                 })
                               }
-                              disabled={deleting}
+                              disabled={deleting || isBuildingSold}
                             >
                               Delete
                             </Button>
@@ -1175,6 +1933,11 @@ export default function BuildingDetails({
                           const draft = drafts[room.id] || toDraft(room);
                           const fieldErrors = validateRoomDraft(draft);
                           const status = room.currentMonthPayment?.status || 'not_applicable';
+                          const autoDueDate = getDueDateForMonth(
+                            monthKey || todayIso().slice(0, 7),
+                            room.currentMonthPayment?.dueDate || draft.dueDate || null,
+                            room.tenantJoinedOn || draft.tenantJoinedOn || null
+                          );
                           const isNotApplicable = status === 'not_applicable';
                           const hasTenant = Boolean((draft.tenantName || '').trim() || (draft.tenantPhone || '').trim());
                           const penaltyAmount = Number(room.currentMonthPayment?.penaltyAmount ?? 0);
@@ -1233,8 +1996,14 @@ export default function BuildingDetails({
                                   type="date"
                                   value={draft.tenantJoinedOn}
                                   onChange={(event) => updateDraft(room.id, { tenantJoinedOn: event.target.value })}
+                                  disabled={Boolean(room.tenantJoinedOn)}
                                   className="h-9 bg-white text-sm"
                                 />
+                                {room.tenantJoinedOn ? (
+                                  <p className="mt-1 text-[11px] font-medium text-slate-500">
+                                    Locked: {room.tenantJoinedOn}
+                                  </p>
+                                ) : null}
                               </TableCell>
                               <TableCell>
                                 <div className="space-y-1">
@@ -1266,8 +2035,9 @@ export default function BuildingDetails({
                               <TableCell className="max-w-[140px]">
                                 <Input
                                   type="date"
-                                  value={draft.dueDate}
-                                  onChange={(event) => updateDraft(room.id, { dueDate: event.target.value })}
+                                  value={autoDueDate}
+                                  readOnly
+                                  disabled
                                   className="h-9 bg-white text-sm"
                                 />
                               </TableCell>
@@ -1313,7 +2083,7 @@ export default function BuildingDetails({
                                     variant="outline"
                                     className="h-8 px-2"
                                     onClick={() => void saveRoom(room)}
-                                    disabled={savingRoomId === room.id}
+                                    disabled={savingRoomId === room.id || isBuildingSold}
                                   >
                                     {savingRoomId === room.id ? 'Saving...' : 'Save'}
                                   </Button>
@@ -1322,7 +2092,7 @@ export default function BuildingDetails({
                                     variant="outline"
                                     className="h-8 px-2"
                                     onClick={() => resetTenantDraft(room)}
-                                    disabled={savingRoomId === room.id}
+                                    disabled={savingRoomId === room.id || isBuildingSold}
                                   >
                                     Reset Tenant
                                   </Button>
@@ -1338,7 +2108,7 @@ export default function BuildingDetails({
                                         roomIds: [room.id],
                                       })
                                     }
-                                    disabled={confirming || isNotApplicable}
+                                    disabled={confirming || isBuildingSold || isNotApplicable}
                                   >
                                     Paid
                                   </Button>
@@ -1355,7 +2125,7 @@ export default function BuildingDetails({
                                         roomIds: [room.id],
                                       })
                                     }
-                                    disabled={confirming || isNotApplicable}
+                                    disabled={confirming || isBuildingSold || isNotApplicable}
                                   >
                                     Unpaid
                                   </Button>
@@ -1379,7 +2149,7 @@ export default function BuildingDetails({
                                         roomIds: [room.id],
                                       })
                                     }
-                                    disabled={deleting}
+                                    disabled={deleting || isBuildingSold}
                                   >
                                     Delete
                                   </Button>
@@ -1422,7 +2192,7 @@ export default function BuildingDetails({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={confirming}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void runPendingAction()} disabled={confirming}>
+            <AlertDialogAction onClick={() => void runPendingAction()} disabled={confirming || isBuildingSold}>
               {confirming ? 'Updating...' : 'Confirm'}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1446,7 +2216,7 @@ export default function BuildingDetails({
             <AlertDialogAction
               className="bg-red-600 text-white hover:bg-red-700"
               onClick={() => void runPendingDelete()}
-              disabled={deleting}
+              disabled={deleting || isBuildingSold}
             >
               {deleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>

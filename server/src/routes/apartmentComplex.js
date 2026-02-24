@@ -20,6 +20,16 @@ const APARTMENT_RENT_LATE_PENALTY_PERCENT = Number.isFinite(latePenaltyPercentCa
   ? Math.min(Math.max(latePenaltyPercentCandidate, 0), 100)
   : DEFAULT_LATE_PENALTY_PERCENT;
 const APARTMENT_RENT_LATE_PENALTY_MULTIPLIER = APARTMENT_RENT_LATE_PENALTY_PERCENT / 100;
+const DEFAULT_AUTO_RENT_ALERT_DAYS = 2;
+const autoRentAlertDaysCandidate = Number(
+  process.env.APARTMENT_RENT_AUTO_ALERT_DAYS || DEFAULT_AUTO_RENT_ALERT_DAYS
+);
+const APARTMENT_RENT_AUTO_ALERT_DAYS = Number.isInteger(autoRentAlertDaysCandidate)
+  ? Math.min(Math.max(autoRentAlertDaysCandidate, 1), 7)
+  : DEFAULT_AUTO_RENT_ALERT_DAYS;
+const APARTMENT_RENT_AUTO_ALERT_TEMPLATE = String(
+  process.env.APARTMENT_RENT_AUTO_ALERT_TEMPLATE || ''
+).trim();
 
 const uuidSchema = z.string().uuid();
 const monthKeySchema = z.string().regex(monthKeyRegex, 'Invalid month_key format. Use YYYY-MM.');
@@ -27,6 +37,10 @@ const isoDateSchema = z
   .string()
   .trim()
   .regex(dateRegex, 'Invalid date format. Use YYYY-MM-DD.');
+const nullableIsoDateSchema = z
+  .union([isoDateSchema, z.literal(''), z.null()])
+  .optional()
+  .transform((value) => (value ? value : null));
 
 const createBuildingSchema = z
   .object({
@@ -38,10 +52,7 @@ const createBuildingSchema = z
     floorCount: z.coerce.number().int().min(1).max(300).optional(),
     roomsPerFloor: z.coerce.number().int().min(1).max(500).optional(),
     defaultRent: z.coerce.number().positive(),
-    defaultDueDate: z
-      .union([isoDateSchema, z.literal('')])
-      .optional()
-      .transform((value) => (value ? value : null)),
+    defaultDueDate: nullableIsoDateSchema,
   })
   .superRefine((payload, ctx) => {
     const hasFloorFields = payload.floorCount !== undefined || payload.roomsPerFloor !== undefined;
@@ -104,10 +115,7 @@ const generateRoomsSchema = z.object({
   count: z.coerce.number().int().min(1).max(1000),
   floorNumber: z.coerce.number().int().min(1).max(300),
   defaultRent: z.coerce.number().positive(),
-  defaultDueDate: z
-    .union([isoDateSchema, z.literal('')])
-    .optional()
-    .transform((value) => (value ? value : null)),
+  defaultDueDate: nullableIsoDateSchema,
 });
 
 const updateRoomSchema = z
@@ -123,10 +131,8 @@ const updateRoomSchema = z
       .union([z.string().trim().max(40), z.literal('')])
       .optional()
       .transform((value) => (value === '' ? null : value)),
-    tenantJoinedOn: z
-      .union([isoDateSchema, z.literal('')])
-      .optional()
-      .transform((value) => (value ? value : null)),
+    tenantJoinedOn: nullableIsoDateSchema,
+    dueDate: nullableIsoDateSchema,
   })
   .refine((payload) => Object.keys(payload).length > 0, {
     message: 'Provide at least one room field to update.',
@@ -134,24 +140,15 @@ const updateRoomSchema = z
 
 const markPaidSchema = z.object({
   monthKey: monthKeySchema.optional(),
-  dueDate: z
-    .union([isoDateSchema, z.literal('')])
-    .optional()
-    .transform((value) => (value ? value : null)),
-  paidDate: z
-    .union([isoDateSchema, z.literal('')])
-    .optional()
-    .transform((value) => (value ? value : null)),
+  dueDate: nullableIsoDateSchema,
+  paidDate: nullableIsoDateSchema,
   amountPaid: z.coerce.number().positive().optional(),
   paymentMethod: z.enum(PAYMENT_METHODS).optional(),
 });
 
 const markUnpaidSchema = z.object({
   monthKey: monthKeySchema.optional(),
-  dueDate: z
-    .union([isoDateSchema, z.literal('')])
-    .optional()
-    .transform((value) => (value ? value : null)),
+  dueDate: nullableIsoDateSchema,
 });
 
 const rentHistoryQuerySchema = z.object({
@@ -172,6 +169,13 @@ function getCurrentDateKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function getDateKeyWithOffset(days) {
+  const safeDays = Number.isInteger(days) ? days : 0;
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + safeDays);
+  return date.toISOString().slice(0, 10);
+}
+
 function getDaysInMonth(year, month) {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
@@ -182,6 +186,24 @@ function getDueDayFromDate(value) {
   const day = Number(value.slice(8, 10));
   if (!Number.isInteger(day) || day < 1 || day > 31) return null;
   return day;
+}
+
+function getDateKeyFromValue(value) {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : null;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function getDueDayFromDateValue(value) {
+  const dateKey = getDateKeyFromValue(value);
+  return dateKey ? getDueDayFromDate(dateKey) : null;
 }
 
 function getMonthParts(monthKey) {
@@ -373,14 +395,15 @@ function getCreatorScopeUserId(user) {
 }
 
 function getDueDateSqlForMonth(alias, monthParamRef) {
+  const dueDaySql = `COALESCE(${alias}.rent_due_day, EXTRACT(DAY FROM ${alias}.tenant_joined_on)::INT)`;
   return `
     CASE
-      WHEN ${alias}.rent_due_day IS NULL THEN NULL
+      WHEN ${dueDaySql} IS NULL THEN NULL
       ELSE (
         to_date(${monthParamRef}::VARCHAR(7) || '-01', 'YYYY-MM-DD')
         + (
           LEAST(
-            ${alias}.rent_due_day,
+            ${dueDaySql},
             EXTRACT(
               DAY FROM (
                 date_trunc('month', to_date(${monthParamRef}::VARCHAR(7) || '-01', 'YYYY-MM-DD'))
@@ -457,7 +480,7 @@ async function ensureMonthlyRows(client, monthKey, updatedBy, options = {}) {
         ${dueDateSql},
         0,
         NULL,
-        $2,
+        $2::BIGINT,
         NOW()
       FROM rooms r
       WHERE NOT EXISTS (
@@ -483,6 +506,40 @@ async function ensureMonthlyRowsForAllBuildings(client, monthKey, updatedBy, opt
 
 async function ensureMonthlyRowsForRoom(client, roomId, monthKey, updatedBy) {
   await ensureMonthlyRows(client, monthKey, updatedBy, { roomId });
+}
+
+async function ensureNextMonthRowForRoom(client, roomId, monthKey, updatedBy) {
+  const dueDateSql = getDueDateSqlForMonth('r', '$2');
+  const rentApplicableSql = getRentApplicableSql('r', '$2');
+
+  await client.query(
+    `
+      INSERT INTO rent_payments (
+        room_id,
+        month_key,
+        status,
+        due_date,
+        penalty_amount,
+        penalty_applied_at,
+        updated_by,
+        updated_at
+      )
+      SELECT
+        r.id,
+        $2::VARCHAR(7),
+        'unpaid',
+        ${dueDateSql},
+        0,
+        NULL,
+        $3::BIGINT,
+        NOW()
+      FROM rooms r
+      WHERE r.id = $1::UUID
+        AND (${rentApplicableSql})
+      ON CONFLICT (room_id, month_key) DO NOTHING
+    `,
+    [roomId, monthKey, updatedBy ?? null]
+  );
 }
 
 async function applyOverduePenalty(client, updatedBy, options = {}) {
@@ -613,6 +670,190 @@ async function fetchBuildingWithSummary(client, buildingId, monthKey, options = 
   }
 
   return mapBuildingWithSummary(rows.rows[0]);
+}
+
+export async function runApartmentRentAutoReminderJob(options = {}) {
+  const windowDaysCandidate = Number(options.windowDays);
+  const windowDays = Number.isInteger(windowDaysCandidate)
+    ? Math.min(Math.max(windowDaysCandidate, 1), 7)
+    : APARTMENT_RENT_AUTO_ALERT_DAYS;
+  const monthKey = options.monthKey && monthKeyRegex.test(options.monthKey)
+    ? options.monthKey
+    : getCurrentMonthKey();
+  const fromDate =
+    typeof options.fromDate === 'string' && dateRegex.test(options.fromDate)
+      ? options.fromDate
+      : getCurrentDateKey();
+  const toDate =
+    typeof options.toDate === 'string' && dateRegex.test(options.toDate)
+      ? options.toDate
+      : getDateKeyWithOffset(windowDays);
+  const template =
+    typeof options.template === 'string' && options.template.trim()
+      ? options.template.trim()
+      : APARTMENT_RENT_AUTO_ALERT_TEMPLATE ||
+        `Rent reminder from {app}: Your rent for {room} is due in under ${windowDays} day(s) on {dueDate}. Please pay {amount}. If payment is delayed, late fine {penalty} may apply.`;
+
+  const client = await pool.connect();
+  let startedTx = false;
+  try {
+    await client.query('BEGIN');
+    startedTx = true;
+
+    await ensureMonthlyRowsForAllBuildings(client, monthKey, null);
+    await applyOverduePenalty(client, null, { monthKey });
+
+    const rentApplicableSql = getRentApplicableSql('r', '$1');
+    const recipientRows = await client.query(
+      `
+        SELECT
+          r.id,
+          r.room_label,
+          r.tenant_name,
+          r.tenant_phone,
+          r.rent_amount,
+          rp.due_date,
+          COALESCE(rp.penalty_amount, 0)::NUMERIC AS penalty_amount
+        FROM rooms r
+        JOIN buildings b
+          ON b.id = r.building_id
+        JOIN rent_payments rp
+          ON rp.room_id = r.id
+         AND rp.month_key = $1
+         AND (${rentApplicableSql})
+        LEFT JOIN apartment_rent_auto_alerts ara
+          ON ara.room_id = r.id
+         AND ara.month_key = $1
+        WHERE b.is_sold = FALSE
+          AND (${rentApplicableSql})
+          AND COALESCE(rp.status, 'unpaid') = 'unpaid'
+          AND rp.due_date IS NOT NULL
+          AND rp.due_date >= $2::DATE
+          AND rp.due_date <= $3::DATE
+          AND TRIM(COALESCE(r.tenant_phone, '')) <> ''
+          AND ara.id IS NULL
+        ORDER BY rp.due_date ASC, r.floor_number ASC, r.room_label ASC
+      `,
+      [monthKey, fromDate, toDate]
+    );
+
+    await client.query('COMMIT');
+    startedTx = false;
+
+    let deliveredCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+    const failures = [];
+    let smsConfigured = true;
+
+    for (const row of recipientRows.rows) {
+      const phone = cleanPhone(row.tenant_phone);
+      if (!phone) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const logInsert = await pool.query(
+        `
+          INSERT INTO apartment_rent_auto_alerts (
+            room_id,
+            month_key,
+            due_date,
+            tenant_phone,
+            message_body
+          )
+          VALUES ($1, $2, $3, $4, '')
+          ON CONFLICT (room_id, month_key) DO NOTHING
+          RETURNING id
+        `,
+        [row.id, monthKey, row.due_date || null, phone]
+      );
+
+      if (logInsert.rowCount === 0) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const alertLogId = logInsert.rows[0].id;
+      const penaltyAmount = toNumber(row.penalty_amount) || 0;
+      const rentAmount = toNumber(row.rent_amount) || 0;
+      const payableAmount = rentAmount + penaltyAmount;
+      const dueDateValue =
+        row.due_date instanceof Date
+          ? row.due_date.toISOString().slice(0, 10)
+          : row.due_date
+            ? String(row.due_date).slice(0, 10)
+            : '';
+      const messageBody = buildRentAlertMessage({
+        template,
+        monthKey,
+        roomLabel: row.room_label,
+        tenantName: row.tenant_name || '',
+        dueDate: dueDateValue,
+        payableAmount,
+        penaltyAmount,
+      });
+
+      try {
+        const sent = await sendSmsMessage({
+          to: phone,
+          body: messageBody,
+          deliveryLabel: 'Apartment auto rent reminder SMS',
+        });
+
+        if (!sent) {
+          smsConfigured = false;
+          skippedCount += 1;
+          await pool.query(`DELETE FROM apartment_rent_auto_alerts WHERE id = $1`, [alertLogId]);
+          break;
+        }
+
+        await pool.query(
+          `
+            UPDATE apartment_rent_auto_alerts
+            SET
+              tenant_phone = $2,
+              due_date = $3,
+              message_body = $4
+            WHERE id = $1
+          `,
+          [alertLogId, phone, dueDateValue || null, messageBody]
+        );
+
+        deliveredCount += 1;
+      } catch (sendError) {
+        failedCount += 1;
+        if (failures.length < 20) {
+          failures.push({
+            roomId: row.id,
+            roomLabel: row.room_label,
+            tenantPhone: phone,
+            error: sendError instanceof Error ? sendError.message : 'SMS failed',
+          });
+        }
+        await pool.query(`DELETE FROM apartment_rent_auto_alerts WHERE id = $1`, [alertLogId]);
+      }
+    }
+
+    return {
+      status: smsConfigured ? 'success' : 'sms_not_configured',
+      monthKey,
+      windowDays,
+      dateRange: { fromDate, toDate },
+      candidateCount: recipientRows.rowCount,
+      deliveredCount,
+      failedCount,
+      skippedCount,
+      failures,
+    };
+  } catch (error) {
+    if (startedTx) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 router.use(requireAuth, requirePermission('manage_complex'));
@@ -835,9 +1076,6 @@ router.get('/buildings/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Building not found' });
     }
 
-    await ensureMonthlyRowsForBuilding(client, buildingId, monthKey, req.user.id);
-    await applyOverduePenalty(client, req.user.id, { monthKey, buildingId });
-
     const building = await fetchBuildingWithSummary(client, buildingId, monthKey, {
       createdByUserId: creatorScopeUserId,
     });
@@ -869,7 +1107,7 @@ router.get('/buildings/:id', async (req, res, next) => {
         FROM rooms r
         LEFT JOIN rent_payments rp
           ON rp.room_id = r.id
-         AND rp.month_key = $2
+         AND rp.month_key = $2::VARCHAR(7)
          AND (${roomRentApplicableSql})
         WHERE r.building_id = $1
         ORDER BY r.floor_number ASC, r.room_label ASC, r.created_at ASC
@@ -1013,7 +1251,7 @@ router.post('/buildings/:id/rent-alert', async (req, res, next) => {
         FROM rooms r
         LEFT JOIN rent_payments rp
           ON rp.room_id = r.id
-         AND rp.month_key = $2
+         AND rp.month_key = $2::VARCHAR(7)
          AND (${rentApplicableSql})
         WHERE r.building_id = $1
           AND (${rentApplicableSql})
@@ -1121,12 +1359,18 @@ router.post('/buildings/:id/rooms/generate', async (req, res, next) => {
       : '';
 
     const buildingRows = await client.query(
-      `SELECT id FROM buildings WHERE id = $1 ${buildingOwnerFilterSql} LIMIT 1`,
+      `SELECT id, is_sold FROM buildings WHERE id = $1 ${buildingOwnerFilterSql} LIMIT 1`,
       buildingLookupValues
     );
     if (buildingRows.rowCount === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Building not found' });
+    }
+    if (buildingRows.rows[0].is_sold) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
     }
 
     const existingCountRows = await client.query(
@@ -1184,9 +1428,10 @@ router.put('/rooms/:roomId', async (req, res, next) => {
   try {
     const roomId = uuidSchema.parse(req.params.roomId);
     const payload = updateRoomSchema.parse(req.body || {});
+    const currentMonthKey = getCurrentMonthKey();
     const creatorScopeUserId = getCreatorScopeUserId(req.user);
 
-    const lookupValues = [roomId];
+    const lookupValues = [roomId, currentMonthKey];
     const lookupOwnerFilterSql = creatorScopeUserId
       ? (() => {
           lookupValues.push(creatorScopeUserId);
@@ -1198,12 +1443,18 @@ router.put('/rooms/:roomId', async (req, res, next) => {
       `
         SELECT
           r.id,
+          b.is_sold AS building_is_sold,
           r.tenant_name,
           r.tenant_phone,
-          r.tenant_joined_on
+          r.tenant_joined_on,
+          r.rent_due_day,
+          rp.due_date AS existing_due_date
         FROM rooms r
         JOIN buildings b
           ON b.id = r.building_id
+        LEFT JOIN rent_payments rp
+          ON rp.room_id = r.id
+         AND rp.month_key = $2
         WHERE r.id = $1
           ${lookupOwnerFilterSql}
         LIMIT 1
@@ -1214,22 +1465,63 @@ router.put('/rooms/:roomId', async (req, res, next) => {
     if (existingRows.rowCount === 0) {
       return res.status(404).json({ error: 'Room not found' });
     }
+    if (existingRows.rows[0].building_is_sold) {
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
+    }
 
     const existing = existingRows.rows[0];
+    const requestedDueDay = getDueDayFromDate(payload.dueDate);
+    const persistedDueDay = toNumber(existing.rent_due_day);
+    const derivedDueDay = getDueDayFromDateValue(existing.existing_due_date || null);
     const nextTenantName = payload.tenantName !== undefined ? payload.tenantName || null : existing.tenant_name;
     const nextTenantPhone = payload.tenantPhone !== undefined ? payload.tenantPhone || null : existing.tenant_phone;
     const hasTenantInfo = Boolean(
       String(nextTenantName || '').trim() || String(nextTenantPhone || '').trim()
     );
 
-    let nextTenantJoinedOn = existing.tenant_joined_on || null;
-    if (payload.tenantJoinedOn !== undefined) {
-      nextTenantJoinedOn = payload.tenantJoinedOn || null;
-    } else if (!hasTenantInfo) {
-      nextTenantJoinedOn = null;
-    } else if (!nextTenantJoinedOn) {
+    const existingTenantJoinedOn = existing.tenant_joined_on
+      ? String(existing.tenant_joined_on).slice(0, 10)
+      : null;
+    const requestedTenantJoinedOn =
+      payload.tenantJoinedOn !== undefined ? payload.tenantJoinedOn || null : undefined;
+
+    let nextTenantJoinedOn = existingTenantJoinedOn;
+    if (existingTenantJoinedOn) {
+      if (
+        requestedTenantJoinedOn !== undefined &&
+        requestedTenantJoinedOn !== existingTenantJoinedOn
+      ) {
+        return res.status(409).json({
+          error: `Join date is locked to ${existingTenantJoinedOn}. It can only be set once.`,
+        });
+      }
+      nextTenantJoinedOn = existingTenantJoinedOn;
+    } else if (requestedTenantJoinedOn !== undefined) {
+      nextTenantJoinedOn = requestedTenantJoinedOn;
+    } else if (hasTenantInfo) {
       nextTenantJoinedOn = getCurrentDateKey();
+    } else {
+      nextTenantJoinedOn = null;
     }
+
+    const joinedDueDay = getDueDayFromDateValue(nextTenantJoinedOn);
+    const effectiveExistingDueDay = persistedDueDay || derivedDueDay || joinedDueDay;
+    if (
+      requestedDueDay &&
+      effectiveExistingDueDay &&
+      requestedDueDay !== effectiveExistingDueDay
+    ) {
+      return res.status(409).json({
+        error: `Due date is locked to day ${effectiveExistingDueDay}. It can only be set once.`,
+      });
+    }
+    const dueDayToPersist = !persistedDueDay
+      ? requestedDueDay || derivedDueDay || joinedDueDay || null
+      : null;
+    const effectiveDueDayForCurrentMonth =
+      requestedDueDay || persistedDueDay || dueDayToPersist || derivedDueDay || joinedDueDay || null;
 
     const updates = [];
     const values = [];
@@ -1253,6 +1545,10 @@ router.put('/rooms/:roomId', async (req, res, next) => {
     if (payload.tenantPhone !== undefined) {
       values.push(payload.tenantPhone || null);
       updates.push(`tenant_phone = $${values.length}`);
+    }
+    if (dueDayToPersist) {
+      values.push(dueDayToPersist);
+      updates.push(`rent_due_day = $${values.length}`);
     }
     values.push(nextTenantJoinedOn || null);
     updates.push(`tenant_joined_on = $${values.length}`);
@@ -1291,6 +1587,27 @@ router.put('/rooms/:roomId', async (req, res, next) => {
       return res.status(404).json({ error: 'Room not found' });
     }
 
+    if (effectiveDueDayForCurrentMonth) {
+      const resolvedCurrentMonthDueDate = resolveDueDateForMonth(
+        currentMonthKey,
+        effectiveDueDayForCurrentMonth
+      );
+      if (resolvedCurrentMonthDueDate) {
+        await pool.query(
+          `
+            UPDATE rent_payments
+            SET
+              due_date = COALESCE(due_date, $3::DATE),
+              updated_by = COALESCE($4::BIGINT, updated_by),
+              updated_at = NOW()
+            WHERE room_id = $1
+              AND month_key = $2
+          `,
+          [roomId, currentMonthKey, resolvedCurrentMonthDueDate, req.user.id]
+        );
+      }
+    }
+
     const row = rows.rows[0];
     return res.json({
       room: {
@@ -1315,11 +1632,41 @@ router.delete('/rooms/:roomId', async (req, res, next) => {
     const roomId = uuidSchema.parse(req.params.roomId);
     const creatorScopeUserId = getCreatorScopeUserId(req.user);
 
+    const lookupValues = [roomId];
+    const lookupOwnerFilterSql = creatorScopeUserId
+      ? (() => {
+          lookupValues.push(creatorScopeUserId);
+          return `AND b.created_by = $${lookupValues.length}`;
+        })()
+      : '';
+
+    const roomLookupRows = await pool.query(
+      `
+        SELECT r.id, b.is_sold AS building_is_sold
+        FROM rooms r
+        JOIN buildings b
+          ON b.id = r.building_id
+        WHERE r.id = $1
+          ${lookupOwnerFilterSql}
+        LIMIT 1
+      `,
+      lookupValues
+    );
+
+    if (roomLookupRows.rowCount === 0) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    if (roomLookupRows.rows[0].building_is_sold) {
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
+    }
+
     const deleteValues = [roomId];
     const ownerFilterSql = creatorScopeUserId
       ? (() => {
-          deleteValues.push(creatorScopeUserId);
-          return `AND b.created_by = $${deleteValues.length}`;
+        deleteValues.push(creatorScopeUserId);
+        return `AND b.created_by = $${deleteValues.length}`;
         })()
       : '';
 
@@ -1359,6 +1706,33 @@ router.post('/rooms/delete-bulk', async (req, res, next) => {
     const payload = bulkDeleteRoomsSchema.parse(req.body || {});
     const roomIds = Array.from(new Set(payload.roomIds));
     const creatorScopeUserId = getCreatorScopeUserId(req.user);
+
+    const soldCheckValues = [roomIds];
+    const soldCheckOwnerFilterSql = creatorScopeUserId
+      ? (() => {
+          soldCheckValues.push(creatorScopeUserId);
+          return `AND b.created_by = $${soldCheckValues.length}`;
+        })()
+      : '';
+
+    const soldRows = await pool.query(
+      `
+        SELECT r.id
+        FROM rooms r
+        JOIN buildings b
+          ON b.id = r.building_id
+        WHERE r.id = ANY($1::UUID[])
+          ${soldCheckOwnerFilterSql}
+          AND b.is_sold = TRUE
+        LIMIT 1
+      `,
+      soldCheckValues
+    );
+    if (soldRows.rowCount > 0) {
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
+    }
 
     const deleteValues = [roomIds];
     const ownerFilterSql = creatorScopeUserId
@@ -1423,6 +1797,7 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
       `
         SELECT
           r.id,
+          b.is_sold AS building_is_sold,
           r.rent_amount,
           r.rent_due_day,
           r.tenant_joined_on,
@@ -1445,6 +1820,13 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
       await client.query('ROLLBACK');
       startedTx = false;
       return res.status(404).json({ error: 'Room not found' });
+    }
+    if (roomRows.rows[0].building_is_sold) {
+      await client.query('ROLLBACK');
+      startedTx = false;
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
     }
 
     const room = roomRows.rows[0];
@@ -1472,8 +1854,20 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
       ? resolveDueDateForMonth(monthKey, requestedDueDay)
       : null;
     const persistedDueDay = toNumber(room.rent_due_day);
-    const derivedDueDay = getDueDayFromDate(existingDueDate);
-    const effectiveExistingDueDay = persistedDueDay || derivedDueDay;
+    const derivedDueDay = getDueDayFromDateValue(existingDueDate);
+    const joinedDueDay = getDueDayFromDateValue(room.tenant_joined_on);
+    const effectiveExistingDueDay = persistedDueDay || derivedDueDay || joinedDueDay;
+    if (
+      requestedDueDay &&
+      effectiveExistingDueDay &&
+      requestedDueDay !== effectiveExistingDueDay
+    ) {
+      await client.query('ROLLBACK');
+      startedTx = false;
+      return res.status(409).json({
+        error: `Due date is locked to day ${effectiveExistingDueDay}. It can only be set once.`,
+      });
+    }
     const dueDay = requestedDueDay || effectiveExistingDueDay;
     const resolvedDueDate =
       requestedDueDateForMonth || resolveDueDateForMonth(monthKey, dueDay) || existingDueDate;
@@ -1483,7 +1877,9 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
       ? calculatePenaltyAmount(rentAmount || 0)
       : 0;
 
-    const dueDayToPersist = requestedDueDay || (!persistedDueDay ? derivedDueDay : null);
+    const dueDayToPersist = !persistedDueDay
+      ? requestedDueDay || derivedDueDay || joinedDueDay || null
+      : null;
     if (dueDayToPersist && dueDayToPersist !== persistedDueDay) {
       await client.query(
         `
@@ -1510,7 +1906,19 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
           updated_by,
           updated_at
         )
-        VALUES ($1, $2, 'paid', $3, $4, $5, $6, CASE WHEN $6 > 0 THEN NOW() ELSE NULL END, $7, $8, NOW())
+        VALUES (
+          $1::UUID,
+          $2::VARCHAR(7),
+          'paid',
+          $3::DATE,
+          $4::DATE,
+          $5::NUMERIC(14, 2),
+          $6::NUMERIC(14, 2),
+          CASE WHEN $6::NUMERIC > 0 THEN NOW() ELSE NULL END,
+          $7::VARCHAR(10),
+          $8::BIGINT,
+          NOW()
+        )
         ON CONFLICT (room_id, month_key)
         DO UPDATE SET
           status = 'paid',
@@ -1527,10 +1935,19 @@ router.post('/rooms/:roomId/rent/mark-paid', async (req, res, next) => {
           updated_at = NOW()
         RETURNING id, room_id, month_key, status, due_date, paid_date, amount_paid, penalty_amount, payment_method, updated_by, updated_at
       `,
-      [roomId, monthKey, resolvedDueDate, paidDate, amountPaid, penaltyAmount, paymentMethod, req.user.id]
+      [
+        roomId,
+        monthKey,
+        resolvedDueDate || null,
+        paidDate || null,
+        amountPaid,
+        penaltyAmount,
+        paymentMethod,
+        req.user.id ?? null,
+      ]
     );
 
-    await ensureMonthlyRowsForRoom(client, roomId, getNextMonthKey(monthKey), req.user.id);
+    await ensureNextMonthRowForRoom(client, roomId, getNextMonthKey(monthKey), req.user.id ?? null);
 
     await client.query('COMMIT');
     startedTx = false;
@@ -1573,6 +1990,7 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
       `
         SELECT
           r.id,
+          b.is_sold AS building_is_sold,
           r.rent_amount,
           r.rent_due_day,
           r.tenant_joined_on,
@@ -1595,6 +2013,13 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
       startedTx = false;
       return res.status(404).json({ error: 'Room not found' });
     }
+    if (roomRows.rows[0].building_is_sold) {
+      await client.query('ROLLBACK');
+      startedTx = false;
+      return res.status(409).json({
+        error: 'Building is marked as sold. Room updates are locked.',
+      });
+    }
 
     const room = roomRows.rows[0];
     const joinedMonthKey = toMonthKeyFromDateValue(room.tenant_joined_on);
@@ -1611,8 +2036,20 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
       ? resolveDueDateForMonth(monthKey, requestedDueDay)
       : null;
     const persistedDueDay = toNumber(room.rent_due_day);
-    const derivedDueDay = getDueDayFromDate(existingDueDate);
-    const effectiveExistingDueDay = persistedDueDay || derivedDueDay;
+    const derivedDueDay = getDueDayFromDateValue(existingDueDate);
+    const joinedDueDay = getDueDayFromDateValue(room.tenant_joined_on);
+    const effectiveExistingDueDay = persistedDueDay || derivedDueDay || joinedDueDay;
+    if (
+      requestedDueDay &&
+      effectiveExistingDueDay &&
+      requestedDueDay !== effectiveExistingDueDay
+    ) {
+      await client.query('ROLLBACK');
+      startedTx = false;
+      return res.status(409).json({
+        error: `Due date is locked to day ${effectiveExistingDueDay}. It can only be set once.`,
+      });
+    }
     const dueDay = requestedDueDay || effectiveExistingDueDay;
     const resolvedDueDate =
       requestedDueDateForMonth || resolveDueDateForMonth(monthKey, dueDay) || existingDueDate;
@@ -1620,7 +2057,9 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
       ? calculatePenaltyAmount(toNumber(room.rent_amount) || 0)
       : 0;
 
-    const dueDayToPersist = requestedDueDay || (!persistedDueDay ? derivedDueDay : null);
+    const dueDayToPersist = !persistedDueDay
+      ? requestedDueDay || derivedDueDay || joinedDueDay || null
+      : null;
     if (dueDayToPersist && dueDayToPersist !== persistedDueDay) {
       await client.query(
         `
@@ -1647,7 +2086,19 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
           updated_by,
           updated_at
         )
-        VALUES ($1, $2, 'unpaid', $3, NULL, NULL, $4, CASE WHEN $4 > 0 THEN NOW() ELSE NULL END, NULL, $5, NOW())
+        VALUES (
+          $1::UUID,
+          $2::VARCHAR(7),
+          'unpaid',
+          $3::DATE,
+          NULL,
+          NULL,
+          $4::NUMERIC(14, 2),
+          CASE WHEN $4::NUMERIC > 0 THEN NOW() ELSE NULL END,
+          NULL,
+          $5::BIGINT,
+          NOW()
+        )
         ON CONFLICT (room_id, month_key)
         DO UPDATE SET
           status = 'unpaid',
@@ -1664,10 +2115,10 @@ router.post('/rooms/:roomId/rent/mark-unpaid', async (req, res, next) => {
           updated_at = NOW()
         RETURNING id, room_id, month_key, status, due_date, paid_date, amount_paid, penalty_amount, payment_method, updated_by, updated_at
       `,
-      [roomId, monthKey, resolvedDueDate, penaltyAmount, req.user.id]
+      [roomId, monthKey, resolvedDueDate || null, penaltyAmount, req.user.id ?? null]
     );
 
-    await ensureMonthlyRowsForRoom(client, roomId, getNextMonthKey(monthKey), req.user.id);
+    await ensureNextMonthRowForRoom(client, roomId, getNextMonthKey(monthKey), req.user.id ?? null);
 
     await client.query('COMMIT');
     startedTx = false;

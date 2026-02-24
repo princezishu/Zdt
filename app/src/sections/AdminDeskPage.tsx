@@ -61,6 +61,30 @@ interface OverviewResponse {
     day: string;
     total: number;
   }>;
+  featureUsage?: {
+    periodDays: number;
+    totalTrackedFeatures: number;
+    totalEvents: number;
+    uniqueUsers: number;
+    features: Array<{
+      featureKey: string;
+      featureLabel: string;
+      totalEvents: number;
+      uniqueUsers: number;
+    }>;
+    mostUsed: Array<{
+      featureKey: string;
+      featureLabel: string;
+      totalEvents: number;
+      uniqueUsers: number;
+    }>;
+    leastUsed: Array<{
+      featureKey: string;
+      featureLabel: string;
+      totalEvents: number;
+      uniqueUsers: number;
+    }>;
+  };
 }
 
 interface WorkflowRequest {
@@ -207,7 +231,7 @@ export default function AdminDeskPage({ token, user, onOpenLayoutUnits }: AdminD
   );
 
   const refresh = useCallback(async (showLoader = true) => {
-    if (!token || !user || user.role !== 'admin') {
+    if (!token || !user || user.role !== 'admin' || !user.isMainAdmin) {
       return;
     }
 
@@ -581,12 +605,12 @@ export default function AdminDeskPage({ token, user, onOpenLayoutUnits }: AdminD
     }
   };
 
-  if (!user || user.role !== 'admin') {
+  if (!user || user.role !== 'admin' || !user.isMainAdmin) {
     return (
       <section className="min-h-screen pt-28 pb-16 text-slate-900">
         <div className="page-container">
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
-            Admin access required.
+            Main admin access required.
           </div>
         </div>
       </section>
@@ -632,6 +656,29 @@ export default function AdminDeskPage({ token, user, onOpenLayoutUnits }: AdminD
             {actionMessage}
           </p>
         )}
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Users, Roles, Permissions</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">Manage user lifecycle and access policy</p>
+            <p className="mt-1 text-xs text-slate-600">Platform Users + Team Members + Career approvals.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Site Settings</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">Control platform operations</p>
+            <p className="mt-1 text-xs text-slate-600">Promotions, support programs, emergency controls.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Master Data & Integrations</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">Property schema and connected modules</p>
+            <p className="mt-1 text-xs text-slate-600">Layout units, apartment systems, infra workflows.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Audit & Global Analytics</p>
+            <p className="mt-2 text-sm font-semibold text-slate-900">Track product and team health</p>
+            <p className="mt-1 text-xs text-slate-600">Feature usage insights, activity log, performance blocks.</p>
+          </div>
+        </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -720,6 +767,83 @@ export default function AdminDeskPage({ token, user, onOpenLayoutUnits }: AdminD
               <p className="mt-1 text-2xl font-semibold">
                 {overview.adminSeats.used}/{overview.adminSeats.max}
               </p>
+            </div>
+          </div>
+        )}
+
+        {user.isMainAdmin && overview?.featureUsage && (
+          <div className="zdt-panel rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Feature Usage Insights</h2>
+                <p className="text-sm text-slate-600">
+                  Last {overview.featureUsage.periodDays} days. Track which user features are used most and least.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-slate-700">
+                  Tracked: {overview.featureUsage.totalTrackedFeatures}
+                </span>
+                <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-slate-700">
+                  Events: {overview.featureUsage.totalEvents}
+                </span>
+                <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-slate-700">
+                  Users: {overview.featureUsage.uniqueUsers}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-emerald-900">Most Used Features</h3>
+                {overview.featureUsage.mostUsed.length === 0 && (
+                  <p className="text-xs text-emerald-800">No feature usage data found.</p>
+                )}
+                {overview.featureUsage.mostUsed.map((item) => (
+                  <div key={`most-${item.featureKey}`} className="rounded-lg border border-emerald-200 bg-white p-3">
+                    <p className="text-sm font-semibold text-slate-900">{item.featureLabel}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Usage: {item.totalEvents} | Users: {item.uniqueUsers}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-amber-900">Least Used Features</h3>
+                {overview.featureUsage.leastUsed.length === 0 && (
+                  <p className="text-xs text-amber-800">No feature usage data found.</p>
+                )}
+                {overview.featureUsage.leastUsed.map((item) => (
+                  <div key={`least-${item.featureKey}`} className="rounded-lg border border-amber-200 bg-white p-3">
+                    <p className="text-sm font-semibold text-slate-900">{item.featureLabel}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Usage: {item.totalEvents} | Users: {item.uniqueUsers}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Feature</th>
+                    <th className="px-3 py-2 font-medium">Total Usage</th>
+                    <th className="px-3 py-2 font-medium">Unique Users</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
+                  {overview.featureUsage.features.map((item) => (
+                    <tr key={item.featureKey}>
+                      <td className="px-3 py-2">{item.featureLabel}</td>
+                      <td className="px-3 py-2">{item.totalEvents}</td>
+                      <td className="px-3 py-2">{item.uniqueUsers}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

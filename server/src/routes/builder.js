@@ -440,9 +440,10 @@ const registerCompanySchema = z.object({
   ownerPassword: z.string().min(8).max(128),
   ownerPhone: z
     .string()
+    .trim()
+    .min(8)
     .max(32)
-    .optional()
-    .transform((value) => (value && value.trim() ? value.trim().slice(0, 32) : null)),
+    .transform((value) => value.slice(0, 32)),
   deviceId: z.string().max(120).optional(),
 });
 
@@ -468,11 +469,11 @@ router.post('/register-company', async (req, res, next) => {
 
       const userInsert = await client.query(
         `
-          INSERT INTO users (name, email, password_hash, phone, role, company_role)
-          VALUES ($1, $2, $3, $4, 'user', 'owner')
-          RETURNING id, role, is_main_admin
+          INSERT INTO users (name, email, password_hash, phone, role, account_type, company_role)
+          VALUES ($1, $2, $3, $4, 'builder', $5, 'owner')
+          RETURNING id, role, account_type, is_main_admin
         `,
-        [payload.ownerName, email, passwordHash, payload.ownerPhone]
+        [payload.ownerName, email, passwordHash, payload.ownerPhone, payload.companyType]
       );
 
       const userId = Number(userInsert.rows[0].id);
@@ -542,7 +543,9 @@ router.post('/register-company', async (req, res, next) => {
         id: userId,
         name: payload.ownerName,
         email,
-        role: 'user',
+        role: userInsert.rows[0].role,
+        accountType: userInsert.rows[0].account_type || payload.companyType,
+        companyRole: 'owner',
         isMainAdmin: false,
       };
 
@@ -1095,11 +1098,11 @@ router.post('/company/users', requireAuth, async (req, res, next) => {
     const passwordHash = await bcrypt.hash(payload.password, 12);
     const insert = await pool.query(
       `
-        INSERT INTO users (name, email, password_hash, phone, role, company_id, company_role)
-        VALUES ($1, $2, $3, $4, 'user', $5, 'member')
+        INSERT INTO users (name, email, password_hash, phone, role, account_type, company_id, company_role)
+        VALUES ($1, $2, $3, $4, 'builder', $5, $6, 'member')
         RETURNING id, name, email, phone, company_role, created_at
       `,
-      [payload.name, email, passwordHash, payload.phone, ctx.companyId]
+      [payload.name, email, passwordHash, payload.phone, ctx.company.type, ctx.companyId]
     );
 
     const row = insert.rows[0];

@@ -205,6 +205,23 @@ export default function TeamAdminPage({ token, user }: TeamDeskProps) {
     () => requests.filter((item) => item.requestType !== 'buy' && item.listingStatus === 'Pending').length,
     [requests]
   );
+  const reportedListingsCount = useMemo(
+    () => requests.filter((item) => item.listingStatus === 'Rejected').length,
+    [requests]
+  );
+  const supportTicketsCount = useMemo(
+    () => requests.filter((item) => item.needHelp).length,
+    [requests]
+  );
+  const moderationQueueCount = useMemo(
+    () =>
+      requests.filter(
+        (item) =>
+          item.interactionStatus !== 'Completed' &&
+          (item.assistedListing || item.requestType !== 'buy')
+      ).length,
+    [requests]
+  );
 
   const updateRequest = async (
     id: number,
@@ -273,6 +290,37 @@ export default function TeamAdminPage({ token, user }: TeamDeskProps) {
             {message}
           </p>
         )}
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Verification Workflow</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{pendingApprovalCount}</p>
+            <p className="mt-1 text-xs text-slate-600">Pending sell/rent listings awaiting review.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Reported Listings</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{reportedListingsCount}</p>
+            <p className="mt-1 text-xs text-slate-600">Rejected or flagged listings for secondary checks.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Content Moderation</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{moderationQueueCount}</p>
+            <p className="mt-1 text-xs text-slate-600">Active queue requiring notes or status updates.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Support Tickets</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{supportTicketsCount}</p>
+            <p className="mt-1 text-xs text-slate-600">Users who requested assisted support.</p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Limited Permissions</p>
+          <p className="mt-2 text-sm text-slate-700">
+            Team panel handles workflow, verification assistance, moderation notes, and support follow-ups.
+            Global roles, platform configuration, and audit controls remain in Main Admin panel only.
+          </p>
+        </div>
 
         {loading && requests.length === 0 ? (
           <TeamDeskSkeleton />

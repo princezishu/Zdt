@@ -63,6 +63,17 @@ const loginSchema = z.object({
   role: z.enum(['user', 'team_member', 'admin']).optional(),
   referenceId: z.string().trim().min(3).max(64).optional(),
   registrationNumber: z.string().trim().min(3).max(64).optional(),
+  companyCode: z.string().trim().min(3).max(64).optional(),
+  deviceId: z.string().trim().min(8).max(120).optional(),
+});
+
+const companyAccessOtpRequestSchema = z.object({
+  email: z.string().email().max(190),
+});
+
+const companyAccessOtpVerifySchema = z.object({
+  email: z.string().email().max(190),
+  otp: z.string().regex(/^\d{6}$/),
   deviceId: z.string().trim().min(8).max(120).optional(),
 });
 
@@ -761,6 +772,34 @@ const forgotPasswordResetLimiter = createRateLimiter({
   },
 });
 
+const companyAccessOtpRequestLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 15,
+  message: 'Too many company OTP requests. Please wait and try again.',
+  keyGenerator: (req) => {
+    const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+    const email =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+    return `auth:company-access-request:${ip}:${email || '-'}`;
+  },
+});
+
+const companyAccessOtpVerifyLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 25,
+  message: 'Too many company OTP attempts. Please wait and try again.',
+  keyGenerator: (req) => {
+    const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+    const email =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+    return `auth:company-access-verify:${ip}:${email || '-'}`;
+  },
+});
+
 async function registerOrRotateSession({
   userId,
   deviceId,
@@ -1432,6 +1471,21 @@ async function findUserForOtpChannel(payload) {
   };
 }
 
+function isCompanyAccountUserRow(userRow) {
+  const accountType =
+    typeof userRow.account_type === 'string' ? userRow.account_type.trim().toLowerCase() : '';
+  const companyRole =
+    typeof userRow.company_role === 'string' ? userRow.company_role.trim().toLowerCase() : '';
+  return (
+    userRow.role === 'builder' ||
+    accountType === 'dealer' ||
+    accountType === 'builder' ||
+    companyRole === 'owner' ||
+    companyRole === 'member' ||
+    Number(userRow.company_id || 0) > 0
+  );
+}
+
 router.post('/newsletter/subscribe', newsletterSubscribeLimiter, async (req, res, next) => {
   try {
     const payload = newsletterSubscribeSchema.parse(req.body || {});
@@ -1570,6 +1624,8 @@ router.post('/login', loginRateLimiter, async (req, res, next) => {
           name,
           email,
           role,
+          company_id,
+          company_role,
           account_type,
           subscription_tier,
           is_main_admin,
@@ -1642,6 +1698,53 @@ router.post('/login', loginRateLimiter, async (req, res, next) => {
       });
     }
 
+    const isCompanyAccount =
+      userRow.role === 'builder' ||
+      userRow.account_type === 'dealer' ||
+      userRow.account_type === 'builder' ||
+      userRow.company_role === 'owner' ||
+      userRow.company_role === 'member' ||
+      Number(userRow.company_id || 0) > 0;
+    let resolvedCompanyCode = '';
+
+    if (isCompanyAccount) {
+      const providedCompanyCode = payload.companyCode?.trim().toUpperCase() || '';
+      if (!providedCompanyCode) {
+        return res.status(400).json({
+          error: 'Dealer/builder login requires company register number.',
+        });
+      }
+
+      const companyId = Number(userRow.company_id || 0);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        return res.status(403).json({
+          error: 'This account is not linked to a dealer/builder company.',
+        });
+      }
+
+      const companyRows = await pool.query(
+        `
+          SELECT company_code
+          FROM builder_companies
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [companyId]
+      );
+      if (companyRows.rowCount === 0) {
+        return res.status(403).json({
+          error: 'Company account not found for this user.',
+        });
+      }
+
+      resolvedCompanyCode = String(companyRows.rows[0].company_code || '').trim().toUpperCase();
+      if (!resolvedCompanyCode || providedCompanyCode !== resolvedCompanyCode) {
+        return res.status(401).json({
+          error: 'Invalid company register number.',
+        });
+      }
+    }
+
     const requiresCareerCredentials =
       (userRow.role === 'admin' && !userRow.is_main_admin) || userRow.role === 'team_member';
     if (requiresCareerCredentials) {
@@ -1682,6 +1785,8 @@ router.post('/login', loginRateLimiter, async (req, res, next) => {
       name: userRow.name,
       email: userRow.email,
       role: userRow.role,
+      companyRole: userRow.company_role || null,
+      companyCode: resolvedCompanyCode || undefined,
       platformRole: userRow.role,
       accountType: userRow.account_type || 'individual',
       subscriptionTier: userRow.subscription_tier || 'free',
@@ -1718,6 +1823,377 @@ router.post('/login', loginRateLimiter, async (req, res, next) => {
     return next(error);
   }
 });
+
+router.post(
+  '/company-access/request-otp',
+  companyAccessOtpRequestLimiter,
+  async (req, res, next) => {
+    try {
+      const payload = companyAccessOtpRequestSchema.parse(req.body || {});
+      const email = payload.email.trim().toLowerCase();
+
+      const userRows = await pool.query(
+        `
+          SELECT
+            id,
+            email,
+            role,
+            company_id,
+            company_role,
+            account_type,
+            is_active,
+            deactivated_until
+          FROM users
+          WHERE email = $1
+          LIMIT 1
+        `,
+        [email]
+      );
+
+      if (userRows.rowCount === 0) {
+        return res.status(404).json({
+          error: 'Email not registered. Please register first.',
+        });
+      }
+
+      const userRow = userRows.rows[0];
+      if (!isCompanyAccountUserRow(userRow)) {
+        return res.status(403).json({
+          error: 'This email is not registered as a dealer/builder account.',
+        });
+      }
+
+      const now = Date.now();
+      const deactivatedUntil = userRow.deactivated_until
+        ? new Date(userRow.deactivated_until).getTime()
+        : null;
+
+      if (deactivatedUntil && deactivatedUntil > now) {
+        return res.status(403).json({
+          error: `Your account is temporarily deactivated until ${new Date(deactivatedUntil).toLocaleString('en-IN')}.`,
+        });
+      }
+
+      if (!userRow.is_active) {
+        if (deactivatedUntil && deactivatedUntil <= now) {
+          try {
+            await pool.query(
+              `
+                UPDATE users
+                SET is_active = TRUE,
+                    deactivated_until = NULL
+                WHERE id = $1
+              `,
+              [userRow.id]
+            );
+            userRow.is_active = true;
+            userRow.deactivated_until = null;
+          } catch (reactivateError) {
+            const code = reactivateError && typeof reactivateError === 'object' ? reactivateError.code : null;
+            if (code === 'P0001') {
+              return res.status(403).json({
+                error:
+                  'Your account deactivation expired, but seats are currently full. Please contact the Main Admin.',
+              });
+            }
+            return next(reactivateError);
+          }
+        } else {
+          return res.status(403).json({ error: 'Your account is deactivated' });
+        }
+      }
+
+      const companyId = Number(userRow.company_id || 0);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        return res.status(403).json({
+          error: 'This account is not linked to a dealer/builder company.',
+        });
+      }
+
+      const companyRows = await pool.query(
+        `
+          SELECT id
+          FROM builder_companies
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [companyId]
+      );
+      if (companyRows.rowCount === 0) {
+        return res.status(403).json({
+          error: 'Company account not found for this user.',
+        });
+      }
+
+      const userId = userRow.id;
+      const existingOtpRows = await pool.query(
+        'SELECT created_at FROM password_reset_otps WHERE user_id = $1 LIMIT 1',
+        [userId]
+      );
+
+      if (existingOtpRows.rowCount > 0) {
+        const createdAt = new Date(existingOtpRows.rows[0].created_at);
+        const elapsedMs = Date.now() - createdAt.getTime();
+        const cooldownMs = OTP_RESEND_COOLDOWN_SECONDS * 1000;
+
+        if (!Number.isNaN(createdAt.getTime()) && elapsedMs < cooldownMs) {
+          const retryAfterSeconds = Math.max(1, Math.ceil((cooldownMs - elapsedMs) / 1000));
+          return res.status(429).json({
+            error: `Please wait ${retryAfterSeconds} seconds before requesting a new OTP.`,
+          });
+        }
+      }
+
+      const otp = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+      const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+
+      await pool.query(
+        `
+          INSERT INTO password_reset_otps (user_id, otp_hash, expires_at, attempts, created_at)
+          VALUES ($1, $2, NOW() + ($3::text || ' minutes')::interval, 0, NOW())
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            otp_hash = EXCLUDED.otp_hash,
+            expires_at = EXCLUDED.expires_at,
+            attempts = 0,
+            created_at = NOW()
+        `,
+        [userId, otpHash, OTP_EXPIRES_MINUTES]
+      );
+
+      let delivered = false;
+      try {
+        delivered = await sendOtp({
+          channel: 'email',
+          email: userRow.email,
+          otp,
+          expiresInMinutes: OTP_EXPIRES_MINUTES,
+        });
+      } catch (deliveryError) {
+        await pool.query('DELETE FROM password_reset_otps WHERE user_id = $1', [userId]);
+        return res.status(503).json({
+          error:
+            deliveryError instanceof Error
+              ? deliveryError.message
+              : 'OTP delivery failed. Please try again.',
+        });
+      }
+
+      const responsePayload = {
+        message: delivered
+          ? `Company access OTP sent to your email. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`
+          : 'Email delivery is not configured in this environment. Use the dev OTP for testing.',
+      };
+
+      if (process.env.NODE_ENV !== 'production') {
+        responsePayload.devOtp = otp;
+      }
+
+      return res.json(responsePayload);
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
+router.post(
+  '/company-access/verify-otp',
+  companyAccessOtpVerifyLimiter,
+  async (req, res, next) => {
+    try {
+      const payload = companyAccessOtpVerifySchema.parse(req.body || {});
+      const email = payload.email.trim().toLowerCase();
+      const deviceId = getClientDeviceId(req, payload);
+
+      const rows = await pool.query(
+        `
+          SELECT
+            id,
+            name,
+            email,
+            role,
+            company_id,
+            company_role,
+            account_type,
+            subscription_tier,
+            is_main_admin,
+            is_active,
+            deactivated_until
+          FROM users
+          WHERE email = $1
+          LIMIT 1
+        `,
+        [email]
+      );
+
+      if (rows.rowCount === 0) {
+        return res.status(404).json({ error: 'Email not registered. Please register first.' });
+      }
+
+      const userRow = rows.rows[0];
+      if (!isCompanyAccountUserRow(userRow)) {
+        return res.status(403).json({
+          error: 'This email is not registered as a dealer/builder account.',
+        });
+      }
+
+      const now = Date.now();
+      const deactivatedUntil = userRow.deactivated_until
+        ? new Date(userRow.deactivated_until).getTime()
+        : null;
+
+      if (deactivatedUntil && deactivatedUntil > now) {
+        return res.status(403).json({
+          error: `Your account is temporarily deactivated until ${new Date(deactivatedUntil).toLocaleString('en-IN')}.`,
+        });
+      }
+
+      if (!userRow.is_active) {
+        if (deactivatedUntil && deactivatedUntil <= now) {
+          try {
+            await pool.query(
+              `
+                UPDATE users
+                SET is_active = TRUE,
+                    deactivated_until = NULL
+                WHERE id = $1
+              `,
+              [userRow.id]
+            );
+            userRow.is_active = true;
+            userRow.deactivated_until = null;
+          } catch (reactivateError) {
+            const code = reactivateError && typeof reactivateError === 'object' ? reactivateError.code : null;
+            if (code === 'P0001') {
+              return res.status(403).json({
+                error:
+                  'Your account deactivation expired, but seats are currently full. Please contact the Main Admin.',
+              });
+            }
+            return next(reactivateError);
+          }
+        } else {
+          return res.status(403).json({ error: 'Your account is deactivated' });
+        }
+      }
+
+      const otpRows = await pool.query(
+        'SELECT otp_hash, expires_at, attempts FROM password_reset_otps WHERE user_id = $1 LIMIT 1',
+        [userRow.id]
+      );
+
+      if (otpRows.rowCount === 0) {
+        return res.status(400).json({ error: 'OTP not requested. Request a new OTP first.' });
+      }
+
+      const otpRow = otpRows.rows[0];
+      if (Number(otpRow.attempts) >= MAX_OTP_ATTEMPTS) {
+        await pool.query('DELETE FROM password_reset_otps WHERE user_id = $1', [userRow.id]);
+        return res.status(429).json({ error: 'Too many invalid OTP attempts. Request a new OTP.' });
+      }
+
+      const expiresAt = new Date(otpRow.expires_at);
+      if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
+        await pool.query('DELETE FROM password_reset_otps WHERE user_id = $1', [userRow.id]);
+        return res.status(400).json({ error: 'OTP expired. Request a new OTP.' });
+      }
+
+      const providedOtpHash = crypto.createHash('sha256').update(payload.otp).digest('hex');
+      const providedBuffer = Buffer.from(providedOtpHash, 'hex');
+      const storedBuffer = Buffer.from(otpRow.otp_hash, 'hex');
+      const otpValid =
+        providedBuffer.length === storedBuffer.length &&
+        crypto.timingSafeEqual(providedBuffer, storedBuffer);
+
+      if (!otpValid) {
+        await pool.query(
+          'UPDATE password_reset_otps SET attempts = attempts + 1 WHERE user_id = $1',
+          [userRow.id]
+        );
+        return res.status(400).json({ error: 'Invalid OTP.' });
+      }
+
+      await pool.query('DELETE FROM password_reset_otps WHERE user_id = $1', [userRow.id]);
+
+      const companyId = Number(userRow.company_id || 0);
+      if (!Number.isFinite(companyId) || companyId <= 0) {
+        return res.status(403).json({
+          error: 'This account is not linked to a dealer/builder company.',
+        });
+      }
+
+      const companyRows = await pool.query(
+        `
+          SELECT company_code
+          FROM builder_companies
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [companyId]
+      );
+      if (companyRows.rowCount === 0) {
+        return res.status(403).json({
+          error: 'Company account not found for this user.',
+        });
+      }
+
+      const resolvedCompanyCode = String(companyRows.rows[0].company_code || '').trim().toUpperCase();
+      if (!resolvedCompanyCode) {
+        return res.status(403).json({
+          error: 'Company register number not found for this account.',
+        });
+      }
+
+      const user = {
+        id: userRow.id,
+        name: userRow.name,
+        email: userRow.email,
+        role: userRow.role,
+        companyRole: userRow.company_role || null,
+        companyCode: resolvedCompanyCode,
+        platformRole: userRow.role,
+        accountType: userRow.account_type || 'individual',
+        subscriptionTier: userRow.subscription_tier || 'free',
+        isMainAdmin: userRow.is_main_admin,
+      };
+
+      const token = signToken(user);
+      const sessionResult = await registerOrRotateSession({
+        userId: user.id,
+        deviceId,
+        token,
+        userAgent: req.get('user-agent') || '',
+        ipAddress: normalizeIpAddress(req.headers['x-forwarded-for'] || req.socket?.remoteAddress),
+      });
+
+      if (!sessionResult.allowed) {
+        return res.status(403).json({
+          error:
+            'Device login limit reached (maximum 2 devices). Log out from an old device and try again.',
+        });
+      }
+
+      await writeAuthActivity({
+        actorUserId: user.id,
+        actorRole: user.role,
+        actionKey: 'account_logged_in',
+        metadata: {
+          deviceId,
+          loginMethod: 'company_email_otp',
+        },
+        ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
+      });
+
+      return res.json({
+        token,
+        user,
+        message: 'OTP verified. Logged in to company portal.',
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
 
 router.post('/forgot-password/request', forgotPasswordRequestLimiter, async (req, res, next) => {
   try {
@@ -2750,6 +3226,7 @@ router.get('/me', requireAuth, async (req, res) => {
         email,
         phone,
         role,
+        company_role,
         account_type,
         subscription_tier,
         is_main_admin,

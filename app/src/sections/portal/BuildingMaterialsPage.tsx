@@ -330,31 +330,43 @@ export default function BuildingMaterialsPage({ token, user }: BuildingMaterials
   return (
     <section className="min-h-screen pb-16 pt-28 text-slate-900">
       <div className="page-container zdt-page-stack">
-        <div className="zdt-panel-hero rounded-3xl border p-6 shadow-xl">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Building Materials</p>
-          <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Product Catalog</h1>
-          <p className="mt-2 text-sm text-slate-600">
+        <div className="zdt-panel-hero rounded-3xl border p-6 text-slate-50 shadow-xl">
+          <p className="text-xs uppercase tracking-[0.18em] text-blue-100/90">Building Materials</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">Product Catalog</h1>
+          <p className="mt-2 text-sm text-blue-100/90">
             Product-only listing for construction and interior materials. Vendor details are hidden.
             Main Admin can add product photos.
           </p>
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <Badge variant="secondary">Total products: {summary.totalItems}</Badge>
-            <Badge variant="secondary">In stock: {summary.inStock}</Badge>
-            <Badge variant="secondary">Interior products: {summary.interiorProducts}</Badge>
-            <Badge variant="secondary">Photos added: {summary.withPhoto}</Badge>
-            <Badge variant="secondary">Last updated: {formatDateTime(payload?.lastUpdated)}</Badge>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-blue-100/90">
+            <Badge variant="secondary" className="border-white/25 bg-white/15 text-white">
+              Total products: {summary.totalItems}
+            </Badge>
+            <Badge variant="secondary" className="border-white/25 bg-white/15 text-white">
+              In stock: {summary.inStock}
+            </Badge>
+            <Badge variant="secondary" className="border-white/25 bg-white/15 text-white">
+              Interior products: {summary.interiorProducts}
+            </Badge>
+            <Badge variant="secondary" className="border-white/25 bg-white/15 text-white">
+              Photos added: {summary.withPhoto}
+            </Badge>
+            <Badge variant="secondary" className="border-white/25 bg-white/15 text-white">
+              Last updated: {formatDateTime(payload?.lastUpdated)}
+            </Badge>
           </div>
         </div>
 
         <div className="zdt-panel rounded-2xl border border-slate-200 bg-white p-5">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <div className="relative xl:col-span-2">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+                <Search className="h-4 w-4 text-slate-500" />
+              </div>
               <Input
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
                 placeholder="Search products"
-                className="h-11 bg-white pl-9"
+                className="h-11 bg-white pl-10 text-slate-900 placeholder:text-slate-500 caret-slate-900"
               />
             </div>
 

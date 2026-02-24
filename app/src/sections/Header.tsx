@@ -1,21 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  BarChart3,
   Bell,
   BriefcaseBusiness,
   Building2,
   Compass,
+  GitCompareArrows,
   Home,
   Heart,
   Landmark,
   LayoutDashboard,
   LogOut,
+  MapPin,
   Menu,
   MessageCircle,
+  MousePointerClick,
   Settings,
   ShieldCheck,
+  TrendingUp,
   UserRound,
   Users,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -34,6 +40,34 @@ import {
 } from '@/lib/notificationsStore';
 
 type HeaderUserRole = UserRole | 'owner' | 'agent' | 'builder';
+type StrategicModuleView =
+  | 'area-insights'
+  | 'affordability'
+  | 'buyer-journey'
+  | 'alerts'
+  | 'compare-plus'
+  | 'builder-trust'
+  | 'site-visits'
+  | 'legal-assist'
+  | 'investment-screener'
+  | 'referrals';
+
+const STRATEGIC_MODULE_LINKS: Array<{
+  view: StrategicModuleView;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { view: 'area-insights', label: 'Area Intelligence', icon: MapPin },
+  { view: 'affordability', label: 'Affordability Planner', icon: BarChart3 },
+  { view: 'buyer-journey', label: 'Buyer Journey', icon: MousePointerClick },
+  { view: 'alerts', label: 'Property Alerts', icon: Bell },
+  { view: 'compare-plus', label: 'Compare+', icon: GitCompareArrows },
+  { view: 'builder-trust', label: 'Builder Trust', icon: ShieldCheck },
+  { view: 'site-visits', label: 'Visit Scheduler', icon: Compass },
+  { view: 'legal-assist', label: 'Legal Assist', icon: Landmark },
+  { view: 'investment-screener', label: 'Investment Screener', icon: TrendingUp },
+  { view: 'referrals', label: 'Referral Rewards', icon: Users },
+];
 
 interface HeaderProps {
   onLogin: () => void;
@@ -47,6 +81,8 @@ interface HeaderProps {
   onPostProperty: () => void;
   onOwnerDashboard: () => void;
   onDealersBuilders: () => void;
+  onApartmentManagement?: () => void;
+  onOpenStrategicModule: (view: StrategicModuleView) => void;
   onMessages: () => void;
   onNotifications: () => void;
   onCompare: () => void;
@@ -83,6 +119,8 @@ export default function Header({
   onPostProperty,
   onOwnerDashboard,
   onDealersBuilders,
+  onApartmentManagement,
+  onOpenStrategicModule,
   onMessages,
   onNotifications,
   onCompare: _onCompare,
@@ -102,9 +140,11 @@ export default function Header({
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const lastScrollYRef = useRef(0);
 
-  const isTeamMemberOrAdmin = userRole === 'team_member' || userRole === 'admin';
-  const isAdmin = userRole === 'admin';
+  const canSeeTeamDesk = userRole === 'team_member' || (userRole === 'admin' && !isMainAdmin);
+  const canSeeAdminDesk = userRole === 'admin' && isMainAdmin;
   const showOwnerPanelEntry = isAuthenticated;
+  const mobileMainHubAction = canSeeAdminDesk ? onAdminDesk : canSeeTeamDesk ? onTeamDesk : onDashboard;
+  const mobileMainHubLabel = canSeeAdminDesk ? 'Admin Desk' : canSeeTeamDesk ? 'Team Desk' : 'My Dashboard';
 
   const closeTabletMenuAnd =
     (action: () => void) => () => {
@@ -219,27 +259,40 @@ export default function Header({
     { label: 'Group Deals', onClick: onGroupDeals },
   ];
   const desktopPillButtonClass =
-    'inline-flex h-11 shrink-0 items-center rounded-full border border-brand-gray2 bg-brand-gray1 px-5 text-sm font-semibold leading-none text-slate-700 transition hover:border-brand-primary/70 hover:text-brand-primary';
+    'inline-flex h-11 shrink-0 items-center rounded-full border border-brand-gray2 bg-white px-5 text-sm font-semibold leading-none text-slate-700 shadow-[0_10px_24px_-20px_rgba(11,31,59,0.5)] transition hover:-translate-y-0.5 hover:border-brand-secondary/55 hover:text-brand-primary';
   const mobileSheetSectionTitleClass =
-    'px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9AA4B2]';
+    'px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500';
   const mobileSheetItemBaseClass =
-    'flex w-full items-center gap-2 rounded-xl border border-[#243452] bg-[#111C33] px-3.5 py-2.5 text-left text-sm font-medium text-[#F8FAFC] transition hover:bg-[#162643]';
+    'flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-left text-sm font-medium text-slate-700 shadow-[0_10px_24px_-20px_rgba(11,31,59,0.45)] transition hover:border-brand-secondary/45 hover:bg-slate-50 hover:text-brand-primary';
+  const quickProfileAction = isAuthenticated ? onProfile : onLogin;
+  const quickProfileLabel = isAuthenticated ? 'Profile' : 'Login';
 
   return (
     <header
-      className={`fixed left-0 right-0 top-0 z-50 border-b border-brand-gray2/80 bg-white/95 backdrop-blur-lg transition-transform duration-300 will-change-transform ${
+      className={`fixed left-0 right-0 top-0 z-50 border-b border-slate-200/85 bg-white/88 shadow-[0_16px_36px_-28px_rgba(11,31,59,0.5)] backdrop-blur-xl transition-transform duration-300 will-change-transform ${
         isHidden ? '-translate-y-full' : 'translate-y-0'
       }`}
     >
       <div className="page-container py-2.5 sm:py-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:gap-3 xl:grid-cols-[minmax(260px,auto)_minmax(0,1fr)_auto]">
-          <button type="button" onClick={onHome} className="flex min-w-0 items-center text-left">
-            <img
-              src="/images/logo-wordmark.svg"
-              alt="ZDT Realty"
-              className="h-10 w-[150px] object-contain sm:h-11 sm:w-[170px] xl:h-14 xl:w-[230px]"
-            />
-          </button>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={quickProfileAction}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-brand-gray2 bg-white text-brand-primary shadow-[0_10px_24px_-20px_rgba(11,31,59,0.45)] transition hover:border-brand-secondary/50 hover:bg-slate-50 xl:hidden"
+              aria-label={isAuthenticated ? 'Open profile' : 'Login'}
+              title={quickProfileLabel}
+            >
+              <UserRound className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={onHome} className="flex min-w-0 items-center text-left">
+              <img
+                src="/images/logo-wordmark.svg"
+                alt="ZDT Realty"
+                className="h-10 w-[150px] object-contain sm:h-11 sm:w-[170px] xl:h-14 xl:w-[230px]"
+              />
+            </button>
+          </div>
 
           <div className="hidden min-w-0 xl:flex">
             {isAuthenticated ? (
@@ -272,7 +325,7 @@ export default function Header({
                   variant="ghost"
                   size="icon"
                   onClick={onNotifications}
-                  className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                  className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                   aria-label="Notifications"
                   title="Notifications"
                 >
@@ -289,7 +342,7 @@ export default function Header({
                   variant="ghost"
                   size="icon"
                   onClick={onMessages}
-                  className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                  className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                   aria-label="Messages"
                   title="Messages"
                 >
@@ -299,7 +352,7 @@ export default function Header({
                   variant="ghost"
                   size="icon"
                   onClick={onFavorites}
-                  className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                  className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                   aria-label="Favorites"
                   title="Favorites"
                 >
@@ -308,12 +361,12 @@ export default function Header({
                 <span className="inline-flex h-11 items-center rounded-full border border-brand-gray2 bg-brand-gray1 px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-primary">
                   {roleLabel(userRole, isMainAdmin)}
                 </span>
-                <div className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1.5">
+                <div className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_10px_24px_-20px_rgba(11,31,59,0.4)]">
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={onDashboard}
-                    className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                    className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                     aria-label="Dashboard"
                     title="Dashboard"
                   >
@@ -324,31 +377,31 @@ export default function Header({
                       variant="ghost"
                       size="icon"
                       onClick={onOwnerDashboard}
-                      className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                      className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                       aria-label="Owner Panel"
                       title="Owner Panel"
                     >
                       <Home className="h-5 w-5" />
                     </Button>
                   )}
-                  {isTeamMemberOrAdmin && (
+                  {canSeeTeamDesk && (
                     <Button
                     variant="ghost"
                     size="icon"
                     onClick={onTeamDesk}
-                    className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                    className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                     aria-label="Team Desk"
                     title="Team Desk"
                   >
                       <Users className="h-5 w-5" />
                     </Button>
                   )}
-                  {isAdmin && (
+                  {canSeeAdminDesk && (
                     <Button
                     variant="ghost"
                     size="icon"
                     onClick={onAdminDesk}
-                    className="h-11 w-11 rounded-xl text-slate-600 hover:text-brand-primary"
+                    className="h-11 w-11 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-brand-primary"
                     aria-label="Admin Desk"
                     title="Admin Desk"
                   >
@@ -379,13 +432,13 @@ export default function Header({
             )}
           </div>
 
-          <div className="flex items-center justify-end justify-self-end md:hidden">
+          <div className="flex items-center justify-end justify-self-end gap-2 md:hidden">
             <Drawer open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen} modal direction="bottom">
               <DrawerTrigger asChild>
                 <Button
                   variant="outline"
                   size="icon"
-                  className="h-10 w-10 rounded-xl border-slate-300 bg-white/95"
+                  className="h-10 w-10 rounded-xl border-slate-300 bg-white text-slate-700 hover:border-brand-secondary/50 hover:text-brand-primary"
                   aria-label="Open menu"
                 >
                   <Menu className="h-5 w-5" />
@@ -395,26 +448,26 @@ export default function Header({
                 role="dialog"
                 aria-modal="true"
                 aria-label="Mobile navigation menu"
-                className="[&>div:first-child]:hidden max-h-[85vh] rounded-t-2xl border-0 bg-[#0F172A] p-0 text-[#F8FAFC]"
+                className="[&>div:first-child]:hidden max-h-[85vh] rounded-t-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-100 p-0 text-slate-900 shadow-2xl"
               >
                 <DrawerTitle className="sr-only">Mobile Navigation</DrawerTitle>
                 <DrawerDescription className="sr-only">
                   Navigate across dashboard, listings, builder tools, personal pages, and settings.
                 </DrawerDescription>
 
-                <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-[#2A3959]" />
+                <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-slate-300" />
                 <div className="px-4 pb-4 pt-2">
                   <div className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1 rounded-2xl border border-[#243452] bg-[#111C33] px-3.5 py-3">
-                      <p className="truncate text-sm font-semibold text-[#F8FAFC]">{userName || 'Guest User'}</p>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[#9AA4B2]">
+                    <div className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm">
+                      <p className="truncate text-sm font-semibold text-slate-900">{userName || 'Guest User'}</p>
+                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-brand-primary">
                         {isAuthenticated ? roleLabel(userRole, isMainAdmin) : 'Visitor'}
                       </p>
                     </div>
                     <DrawerClose asChild>
                       <button
                         type="button"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#243452] bg-[#111C33] text-[#F8FAFC] hover:bg-[#162643]"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-brand-secondary/50 hover:bg-slate-100 hover:text-brand-primary"
                         aria-label="Close menu"
                       >
                         <X className="h-4 w-4" />
@@ -427,30 +480,30 @@ export default function Header({
                       <p className={mobileSheetSectionTitleClass}>Primary</p>
                       <button
                         type="button"
-                        onClick={closeMobileBottomSheetAnd(onDashboard)}
-                        className={`${mobileSheetItemBaseClass} border-l-2 border-l-[#B08D57] bg-[#152542]`}
+                        onClick={closeMobileBottomSheetAnd(mobileMainHubAction)}
+                        className={`${mobileSheetItemBaseClass} border-brand-primary/35 bg-brand-gray1 text-brand-primary`}
                       >
-                        <LayoutDashboard className="h-4 w-4 shrink-0 text-[#B08D57]" />
-                        <span>My Dashboard</span>
+                        <LayoutDashboard className="h-4 w-4 shrink-0 text-brand-primary" />
+                        <span>{mobileMainHubLabel}</span>
                       </button>
                       <button type="button" onClick={closeMobileBottomSheetAnd(onBuy)} className={mobileSheetItemBaseClass}>
-                        <Compass className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Compass className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Buy Property</span>
                       </button>
                       <button type="button" onClick={closeMobileBottomSheetAnd(onRent)} className={mobileSheetItemBaseClass}>
-                        <Building2 className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Building2 className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Rent Property</span>
                       </button>
                       <button type="button" onClick={closeMobileBottomSheetAnd(onProjects)} className={mobileSheetItemBaseClass}>
-                        <Landmark className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Landmark className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>New Launches</span>
                       </button>
                       <button
                         type="button"
                         onClick={closeMobileBottomSheetAnd(onGroupDeals)}
-                        className={`${mobileSheetItemBaseClass} border-[#B08D57] text-[#B08D57]`}
+                        className={`${mobileSheetItemBaseClass} border-brand-primary/35 bg-brand-gray1 text-brand-primary`}
                       >
-                        <Users className="h-4 w-4 shrink-0 text-[#B08D57]" />
+                        <Users className="h-4 w-4 shrink-0 text-brand-primary" />
                         <span>Group Deals</span>
                       </button>
                     </div>
@@ -460,9 +513,9 @@ export default function Header({
                       <button
                         type="button"
                         onClick={closeMobileBottomSheetAnd(onPostProperty)}
-                        className={`${mobileSheetItemBaseClass} border-[#B08D57] text-[#B08D57]`}
+                        className={`${mobileSheetItemBaseClass} border-brand-primary/35 bg-brand-gray1 text-brand-primary`}
                       >
-                        <Home className="h-4 w-4 shrink-0 text-[#B08D57]" />
+                        <Home className="h-4 w-4 shrink-0 text-brand-primary" />
                         <span>Post Property</span>
                       </button>
                       <button
@@ -470,7 +523,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onDealersBuilders)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <BriefcaseBusiness className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <BriefcaseBusiness className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Verified Builders</span>
                       </button>
                       <button
@@ -478,9 +531,34 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onInfrastructure)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <Landmark className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Landmark className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Infrastructure Tracker</span>
                       </button>
+                      {canSeeAdminDesk && onApartmentManagement && (
+                        <button
+                          type="button"
+                          onClick={closeMobileBottomSheetAnd(onApartmentManagement)}
+                          className={`${mobileSheetItemBaseClass} border-brand-primary/35 bg-brand-gray1 text-brand-primary`}
+                        >
+                          <Building2 className="h-4 w-4 shrink-0 text-brand-primary" />
+                          <span>Apartment &amp; Management</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className={mobileSheetSectionTitleClass}>Strategic Modules</p>
+                      {STRATEGIC_MODULE_LINKS.map((item) => (
+                        <button
+                          key={item.view}
+                          type="button"
+                          onClick={closeMobileBottomSheetAnd(() => onOpenStrategicModule(item.view))}
+                          className={mobileSheetItemBaseClass}
+                        >
+                          <item.icon className="h-4 w-4 shrink-0 text-brand-gray3" />
+                          <span>{item.label}</span>
+                        </button>
+                      ))}
                     </div>
 
                     <div className="space-y-2">
@@ -490,7 +568,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onMessages)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <MessageCircle className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <MessageCircle className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Messages</span>
                       </button>
                       <button
@@ -498,7 +576,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onNotifications)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <Bell className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Bell className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span className="inline-flex items-center gap-2">
                           Notifications
                           {unreadNotifications > 0 && (
@@ -513,7 +591,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onFavorites)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <Heart className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Heart className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Favorites</span>
                       </button>
                     </div>
@@ -525,7 +603,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onMessages)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <MessageCircle className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <MessageCircle className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Help &amp; Support</span>
                       </button>
                       <button
@@ -533,7 +611,7 @@ export default function Header({
                         onClick={closeMobileBottomSheetAnd(onProfile)}
                         className={mobileSheetItemBaseClass}
                       >
-                        <Settings className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <Settings className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Settings</span>
                       </button>
                       <button
@@ -541,7 +619,7 @@ export default function Header({
                         onClick={handleMobileLogout}
                         className={mobileSheetItemBaseClass}
                       >
-                        <LogOut className="h-4 w-4 shrink-0 text-[#9AA4B2]" />
+                        <LogOut className="h-4 w-4 shrink-0 text-brand-gray3" />
                         <span>Logout</span>
                       </button>
                     </div>
@@ -560,6 +638,16 @@ export default function Header({
                   className="h-10 rounded-xl"
                 >
                   Dashboard
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={onProfile}
+                  className="h-10 w-10 rounded-xl border-brand-gray2 text-brand-primary hover:border-brand-primary/60"
+                  aria-label="Profile"
+                  title="Profile"
+                >
+                  <UserRound className="h-4 w-4" />
                 </Button>
 
                 <Sheet open={isTabletMenuOpen} onOpenChange={setIsTabletMenuOpen}>
@@ -625,14 +713,41 @@ export default function Header({
                         <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onProfile)}>
                           Profile
                         </Button>
-                        {isTeamMemberOrAdmin && (
+                        <div className="pt-2">
+                          <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
+                            Strategic Modules
+                          </p>
+                          <div className="mt-2 grid gap-2">
+                            {STRATEGIC_MODULE_LINKS.map((item) => (
+                              <Button
+                                key={`tablet-${item.view}`}
+                                variant="outline"
+                                className="w-full justify-start"
+                                onClick={closeTabletMenuAnd(() => onOpenStrategicModule(item.view))}
+                              >
+                                <item.icon className="mr-2 h-4 w-4" />
+                                {item.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                        {canSeeTeamDesk && (
                           <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onTeamDesk)}>
                             Team Desk
                           </Button>
                         )}
-                        {isAdmin && (
+                        {canSeeAdminDesk && (
                           <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onAdminDesk)}>
                             Admin Desk
+                          </Button>
+                        )}
+                        {canSeeAdminDesk && onApartmentManagement && (
+                          <Button
+                            variant="outline"
+                            className="w-full justify-start"
+                            onClick={closeTabletMenuAnd(onApartmentManagement)}
+                          >
+                            Apartment &amp; Management
                           </Button>
                         )}
                       </div>

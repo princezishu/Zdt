@@ -338,6 +338,8 @@ function mapOwnerProperty(row) {
     city: row.city,
     locality: row.locality,
     address: row.address,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
     areaSqft: row.area_sqft === null ? null : Number(row.area_sqft),
     carpetArea: row.carpet_area === null ? null : Number(row.carpet_area),
     bedrooms: row.bedrooms,

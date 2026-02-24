@@ -129,6 +129,15 @@ const steps = [
   { id: 6, title: 'Preview' },
 ];
 
+function parseCoordinate(value: string, min: number, max: number): number | null {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric < min || numeric > max) return null;
+  return Number(numeric.toFixed(7));
+}
+
 export default function OwnerPropertyForm({
   mode,
   initialState,
@@ -138,6 +147,7 @@ export default function OwnerPropertyForm({
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<OwnerPropertyFormState>({ ...defaultState, ...initialState });
   const [submitting, setSubmitting] = useState(false);
+  const [validationError, setValidationError] = useState('');
 
   const parsedImages = useMemo(
     () =>
@@ -152,9 +162,22 @@ export default function OwnerPropertyForm({
   const prevStep = () => setStep((prev) => Math.max(1, prev - 1));
 
   const handleSubmit = async () => {
+    const latitude = parseCoordinate(form.latitude, -90, 90);
+    const longitude = parseCoordinate(form.longitude, -180, 180);
+    if (latitude === null || longitude === null) {
+      setStep(2);
+      setValidationError('Add valid latitude and longitude to publish with exact map location.');
+      return;
+    }
+    setValidationError('');
+
     setSubmitting(true);
     try {
-      await onSubmit(form);
+      await onSubmit({
+        ...form,
+        latitude: String(latitude),
+        longitude: String(longitude),
+      });
       toast.success(mode === 'create' ? 'Listing published' : 'Listing updated');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to save listing');
@@ -164,6 +187,9 @@ export default function OwnerPropertyForm({
   };
 
   const updateField = <K extends keyof OwnerPropertyFormState>(key: K, value: OwnerPropertyFormState[K]) => {
+    if (validationError) {
+      setValidationError('');
+    }
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -310,18 +336,33 @@ export default function OwnerPropertyForm({
             </div>
             <div>
               <label className="text-xs font-semibold uppercase text-slate-500">Latitude</label>
-              <Input value={form.latitude} onChange={(event) => updateField('latitude', event.target.value)} className="mt-2 h-10" placeholder="19.0760" />
+              <Input
+                value={form.latitude}
+                onChange={(event) => updateField('latitude', event.target.value.replace(/[^0-9+.-]/g, ''))}
+                className="mt-2 h-10"
+                placeholder="19.0760"
+              />
             </div>
             <div>
               <label className="text-xs font-semibold uppercase text-slate-500">Longitude</label>
-              <Input value={form.longitude} onChange={(event) => updateField('longitude', event.target.value)} className="mt-2 h-10" placeholder="72.8777" />
+              <Input
+                value={form.longitude}
+                onChange={(event) => updateField('longitude', event.target.value.replace(/[^0-9+.-]/g, ''))}
+                className="mt-2 h-10"
+                placeholder="72.8777"
+              />
             </div>
             <div className="lg:col-span-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              Map picker placeholder for precise location.
+              Add exact coordinates to pin this listing correctly in map mode.
             </div>
             <div className="lg:col-span-2">
               <LgdLocationAccuracyNote />
             </div>
+            {validationError ? (
+              <p className="lg:col-span-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                {validationError}
+              </p>
+            ) : null}
           </div>
         )}
 

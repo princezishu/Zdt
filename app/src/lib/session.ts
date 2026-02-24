@@ -1,4 +1,4 @@
-export type UserRole = 'user' | 'team_member' | 'admin';
+export type UserRole = 'user' | 'team_member' | 'admin' | 'owner' | 'agent' | 'builder';
 
 export interface AuthUser {
   id: number;
@@ -14,10 +14,33 @@ const TOKEN_KEY = 'authToken';
 const USER_KEY = 'authUser';
 const DEVICE_KEY = 'deviceId';
 
-function toUserRole(value: unknown): UserRole {
-  if (value === 'admin' || value === 'team_member') {
+function toUserRole(
+  value: unknown,
+  accountTypeValue?: unknown,
+  companyRoleValue?: unknown
+): UserRole {
+  if (
+    value === 'admin' ||
+    value === 'team_member' ||
+    value === 'owner' ||
+    value === 'agent' ||
+    value === 'builder'
+  ) {
     return value;
   }
+
+  const accountType =
+    typeof accountTypeValue === 'string' ? accountTypeValue.trim().toLowerCase() : '';
+  if (accountType === 'dealer' || accountType === 'builder') {
+    return 'builder';
+  }
+
+  const companyRole =
+    typeof companyRoleValue === 'string' ? companyRoleValue.trim().toLowerCase() : '';
+  if (companyRole === 'owner' || companyRole === 'member') {
+    return 'builder';
+  }
+
   return 'user';
 }
 
@@ -43,7 +66,11 @@ export function parseApiUser(raw: unknown): AuthUser | null {
     id,
     name,
     email,
-    role: toUserRole(data.role),
+    role: toUserRole(
+      data.role,
+      data.accountType ?? data.account_type,
+      data.companyRole ?? data.company_role
+    ),
     isMainAdmin,
     phone: typeof data.phone === 'string' ? data.phone : undefined,
     forcePasswordReset:

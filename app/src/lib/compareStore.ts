@@ -1,3 +1,5 @@
+import { trackFeatureUsage } from './featureUsageApi';
+
 export interface ComparedListing {
   id: string;
   referenceId: string;
@@ -112,6 +114,12 @@ export function upsertComparedListing(listing: ComparedListing): ComparedListing
   const withoutCurrent = existing.filter((item) => item.referenceId !== normalized.referenceId);
   const next = [normalized, ...withoutCurrent].slice(0, MAX_COMPARED);
   writeComparedListings(next);
+  void trackFeatureUsage({
+    featureKey: 'compare_listing_added',
+    context: 'compare_store',
+    view: 'compare',
+    detail: `ref=${normalized.referenceId}`,
+  });
   return next;
 }
 
@@ -120,11 +128,24 @@ export function removeComparedListing(referenceId: string): ComparedListing[] {
   if (!key) return readComparedListings();
   const next = readComparedListings().filter((item) => item.referenceId !== key);
   writeComparedListings(next);
+  void trackFeatureUsage({
+    featureKey: 'compare_listing_removed',
+    context: 'compare_store',
+    view: 'compare',
+    detail: `ref=${key}`,
+  });
   return next;
 }
 
 export function clearComparedListings() {
   if (!canUseStorage()) return;
+  const existingCount = readComparedListings().length;
   window.localStorage.removeItem(COMPARE_KEY);
   emitCompareChanged([]);
+  void trackFeatureUsage({
+    featureKey: 'compare_cleared',
+    context: 'compare_store',
+    view: 'compare',
+    detail: `count=${existingCount}`,
+  });
 }

@@ -170,6 +170,57 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
     [analytics.monthlyListingStats]
   );
 
+  const userWorkspaceModules = [
+    {
+      title: 'Saved Properties',
+      value: buyer.savedProperties,
+      detail: 'Your shortlisted buy and rent properties.',
+      icon: Heart,
+      cta: 'Open Saved',
+      onClick: onOpenFavorites,
+    },
+    {
+      title: 'Inquiries & Messages',
+      value: buyer.inquiryHistory + seller.totalChatInquiries,
+      detail: 'Conversation history and enquiry follow-ups.',
+      icon: MessageCircle,
+      cta: 'Open Messages',
+      onClick: onOpenMessages,
+    },
+    {
+      title: 'My Listings',
+      value: seller.totalPropertiesAdded,
+      detail: 'Listings you posted or currently manage.',
+      icon: Home,
+      cta: isOwnerRole ? 'Open Owner Panel' : 'Back Home',
+      onClick: isOwnerRole ? onOpenOwnerPanel : onBackHome,
+    },
+    {
+      title: 'Joined Group Deals',
+      value: buyer.purchaseRequestsStatus,
+      detail: 'Group purchase requests and status updates.',
+      icon: ClipboardList,
+      cta: 'Track Requests',
+      onClick: onOpenMessages,
+    },
+    {
+      title: 'Profile Settings',
+      value: 1,
+      detail: 'Keep profile, phone, and KYC details up to date.',
+      icon: ShieldCheck,
+      cta: 'Go Home',
+      onClick: onBackHome,
+    },
+    {
+      title: 'Notifications',
+      value: buyer.propertyVisitRequests + seller.totalVisitRequests,
+      detail: 'Visit alerts and listing response updates.',
+      icon: Activity,
+      cta: 'Open Inbox',
+      onClick: onOpenMessages,
+    },
+  ];
+
   return (
     <section className="relative min-h-screen w-full overflow-hidden bg-white pt-24">
       <div className="absolute inset-0 section-glow opacity-95" />
@@ -424,6 +475,30 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
                 <p className="mt-1 text-xl font-semibold text-brand-black">{buyer.purchaseRequestsStatus}</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-brand-gray2 bg-white/90 p-6 shadow-card">
+          <h2 className="text-lg font-semibold text-brand-black">User Workspace</h2>
+          <p className="mt-1 text-sm text-brand-gray3">
+            Core modules for saved properties, messages, listings, group deals, settings, and notifications.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {userWorkspaceModules.map((module) => (
+              <article key={module.title} className="rounded-xl border border-brand-gray2/70 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.14em] text-brand-gray3">{module.title}</p>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-primary/10 text-brand-primary">
+                    <module.icon className="h-4 w-4" />
+                  </div>
+                </div>
+                <p className="mt-2 text-2xl font-semibold text-brand-black">{module.value}</p>
+                <p className="mt-1 text-xs text-brand-gray3">{module.detail}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={module.onClick}>
+                  {module.cta}
+                </Button>
+              </article>
+            ))}
           </div>
         </div>
 

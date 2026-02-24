@@ -1,3 +1,5 @@
+import { trackFeatureUsage } from './featureUsageApi';
+
 export type NotificationKind = 'info' | 'success' | 'warning' | 'error';
 
 export interface NotificationItem {
@@ -203,6 +205,12 @@ export function markNotificationRead(id: string): NotificationItem[] {
     .map((item) => (item.id === key ? { ...item, isRead: true } : item))
     .filter((item) => !(item.id === key && item.autoDeleteOnRead));
   writeNotifications(next);
+  void trackFeatureUsage({
+    featureKey: 'notification_marked_read',
+    context: 'notifications_store',
+    view: 'notifications',
+    detail: `id=${key}`,
+  });
   return next;
 }
 
@@ -212,13 +220,26 @@ export function markAllNotificationsRead(): NotificationItem[] {
     .map((item) => (item.isRead ? item : { ...item, isRead: true }))
     .filter((item) => !item.autoDeleteOnRead);
   writeNotifications(next);
+  void trackFeatureUsage({
+    featureKey: 'notifications_mark_all_read',
+    context: 'notifications_store',
+    view: 'notifications',
+    detail: `count=${existing.length}`,
+  });
   return next;
 }
 
 export function clearNotifications() {
   if (!canUseStorage()) return;
+  const existingCount = readNotifications().length;
   window.localStorage.removeItem(NOTIFICATIONS_KEY);
   emitNotificationsChanged([]);
+  void trackFeatureUsage({
+    featureKey: 'notifications_cleared',
+    context: 'notifications_store',
+    view: 'notifications',
+    detail: `count=${existingCount}`,
+  });
 }
 
 export function getUnreadNotificationCount(): number {

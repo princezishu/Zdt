@@ -1,5 +1,4 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
 import { apiRequest } from './lib/http';
 import {
   clearSession,
@@ -19,7 +18,6 @@ import InfrastructureTrackerPage from './sections/InfrastructureTrackerPage';
 import MarketplaceListingsPage from './sections/portal/MarketplaceListingsPage';
 import PortalPropertyDetailsPage from './sections/portal/PortalPropertyDetailsPage';
 import DeveloperPage from './sections/DeveloperPage';
-import BuyPage from './sections/BuyPage';
 import SellPage from './sections/SellPage';
 import RentPage from './sections/RentPage';
 import AddProperty from './sections/AddProperty';
@@ -60,9 +58,10 @@ import DealersDirectoryPage from './sections/dealers/DealersDirectoryPage';
 import CompanyProfilePage from './sections/dealers/CompanyProfilePage';
 import NewProjectPage from './sections/dealers/NewProjectPage';
 import ProjectDetailsPage from './sections/dealers/ProjectDetailsPage';
-import BuyMapPage from './sections/buy/BuyMapPage';
+import DealersBuildersPage from './sections/DealersBuildersPage';
+import BuyMarketplacePage from './sections/buy/BuyMarketplacePage';
 import BuyPropertyDetailsPage from './sections/buy/BuyPropertyDetailsPage';
-import RentMapPage from './sections/rent/RentMapPage';
+import RentMarketplacePage from './sections/rent/RentMarketplacePage';
 import RentDetailsPage from './sections/rent/RentDetailsPage';
 import RentShortTermPage from './sections/rent/RentShortTermPage';
 import RentCoLivingPage from './sections/rent/RentCoLivingPage';
@@ -76,6 +75,8 @@ import InsightsMarketPage from './sections/insights/InsightsMarketPage';
 import InsightsProjectsPage from './sections/insights/InsightsProjectsPage';
 import InsightsComparePage from './sections/insights/InsightsComparePage';
 import EarlySupportersPage from './sections/portal/EarlySupportersPage';
+import InvestPage from './sections/portal/InvestPage';
+import StrategicModulesPage from './sections/StrategicModulesPage';
 import OwnerDashboardPage from './sections/owner/OwnerDashboardPage';
 import OwnerAddPropertyPage from './sections/owner/OwnerAddPropertyPage';
 import OwnerEditPropertyPage from './sections/owner/OwnerEditPropertyPage';
@@ -131,7 +132,7 @@ function decodeRouteSegment(value: string): string {
 
 function getDefaultPrivateView(user: AuthUser): AppView {
   if (user.role === 'admin') {
-    return 'admin-desk';
+    return user.isMainAdmin ? 'admin-desk' : 'team-desk';
   }
   if (user.role === 'team_member') {
     return 'team-desk';
@@ -171,7 +172,7 @@ function canAccessView(view: AppView, user: AuthUser | null): boolean {
     return Boolean(user);
   }
   if (view === 'team-desk') {
-    return Boolean(user && (user.role === 'team_member' || user.role === 'admin'));
+    return Boolean(user && (user.role === 'team_member' || (user.role === 'admin' && !user.isMainAdmin)));
   }
   const adminViews: AppView[] = [
     'admin-desk',
@@ -189,7 +190,7 @@ function canAccessView(view: AppView, user: AuthUser | null): boolean {
   if (
     adminViews.includes(view)
   ) {
-    return Boolean(user && user.role === 'admin');
+    return Boolean(user && user.role === 'admin' && user.isMainAdmin);
   }
   return true;
 }
@@ -259,11 +260,62 @@ function viewFromPathname(pathname: string): AppRouteResult {
   if (normalized === '/dealers-builders') {
     return { view: 'dealers-builders', ...EMPTY_ROUTE_PARAMS };
   }
+  if (normalized === '/company/login') {
+    return { view: 'company-login', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/company/register') {
+    return { view: 'company-register', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/company-portal' || normalized === '/dealers-builders/portal') {
+    return { view: 'company-login', ...EMPTY_ROUTE_PARAMS };
+  }
   if (normalized === '/builder/projects/new') {
     return { view: 'builder-project-new', ...EMPTY_ROUTE_PARAMS };
   }
   if (normalized === '/projects') {
     return { view: 'projects', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/invest') {
+    return { view: 'invest', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/dashboard') {
+    return { view: 'dashboard', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/team') {
+    return { view: 'team-desk', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/admin') {
+    return { view: 'admin-desk', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/area-insights') {
+    return { view: 'area-insights', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/affordability') {
+    return { view: 'affordability', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/buyer-journey') {
+    return { view: 'buyer-journey', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/alerts') {
+    return { view: 'alerts', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/compare-plus') {
+    return { view: 'compare-plus', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/builder-trust') {
+    return { view: 'builder-trust', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/site-visits') {
+    return { view: 'site-visits', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/legal-assist') {
+    return { view: 'legal-assist', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/investment-screener') {
+    return { view: 'investment-screener', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/referrals') {
+    return { view: 'referrals', ...EMPTY_ROUTE_PARAMS };
   }
   if (normalized === '/construct-with-us') {
     return { view: 'construct-with-us', ...EMPTY_ROUTE_PARAMS };
@@ -354,6 +406,9 @@ function viewFromPathname(pathname: string): AppRouteResult {
   }
   if (normalized === '/security') {
     return { view: 'security', ...EMPTY_ROUTE_PARAMS };
+  }
+  if (normalized === '/career') {
+    return { view: 'career', ...EMPTY_ROUTE_PARAMS };
   }
   if (normalized === '/unsubscribe') {
     return { view: 'unsubscribe', ...EMPTY_ROUTE_PARAMS };
@@ -474,6 +529,9 @@ function hrefForView(
   if (view === 'security') {
     return '/security';
   }
+  if (view === 'career') {
+    return '/career';
+  }
   if (view === 'unsubscribe') {
     return '/unsubscribe';
   }
@@ -588,6 +646,15 @@ function hrefForView(
   if (view === 'dealers-builders') {
     return '/dealers-builders';
   }
+  if (view === 'company-login') {
+    return '/company/login';
+  }
+  if (view === 'company-register') {
+    return '/company/register';
+  }
+  if (view === 'company-portal') {
+    return '/company/login';
+  }
   if (view === 'dealers-builders-company') {
     const companyId = Number(options?.companyId || 0);
     return companyId > 0 ? `/dealers-builders/${companyId}` : '/dealers-builders';
@@ -601,6 +668,39 @@ function hrefForView(
   }
   if (view === 'projects') {
     return '/projects';
+  }
+  if (view === 'invest') {
+    return '/invest';
+  }
+  if (view === 'area-insights') {
+    return '/area-insights';
+  }
+  if (view === 'affordability') {
+    return '/affordability';
+  }
+  if (view === 'buyer-journey') {
+    return '/buyer-journey';
+  }
+  if (view === 'alerts') {
+    return '/alerts';
+  }
+  if (view === 'compare-plus') {
+    return '/compare-plus';
+  }
+  if (view === 'builder-trust') {
+    return '/builder-trust';
+  }
+  if (view === 'site-visits') {
+    return '/site-visits';
+  }
+  if (view === 'legal-assist') {
+    return '/legal-assist';
+  }
+  if (view === 'investment-screener') {
+    return '/investment-screener';
+  }
+  if (view === 'referrals') {
+    return '/referrals';
   }
   if (view === 'construct-with-us') {
     return '/construct-with-us';
@@ -644,6 +744,15 @@ function hrefForView(
   if (view === 'rent-property') {
     return '/rent/add';
   }
+  if (view === 'dashboard') {
+    return '/dashboard';
+  }
+  if (view === 'team-desk') {
+    return '/team';
+  }
+  if (view === 'admin-desk') {
+    return '/admin';
+  }
   return '/';
 }
 
@@ -664,18 +773,19 @@ function App() {
       if (token && storedUser) {
         return getDefaultPrivateView(storedUser);
       }
-      return token ? 'home' : 'login';
+      return 'home';
     }
 
-    return token ? 'home' : 'login';
+    return 'home';
   })();
 
   const [currentView, setCurrentView] = useState<AppView>(initialView);
   const [isLoaded, setIsLoaded] = useState(false);
   const [authToken, setAuthToken] = useState('');
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [backMessage, setBackMessage] = useState('');
   const [messagePageReferenceSeed, setMessagePageReferenceSeed] = useState('');
+  const [messagePageCompanySeed, setMessagePageCompanySeed] = useState<number | null>(null);
+  const [messagePageDraftSeed, setMessagePageDraftSeed] = useState('');
   const [propertyDetailReference, setPropertyDetailReference] = useState('');
   const [dealerCompanyId, setDealerCompanyId] = useState<number | null>(initialRoute.companyId);
   const [projectPageId, setProjectPageId] = useState<number | null>(initialRoute.projectId);
@@ -701,9 +811,6 @@ function App() {
   const ownerEditPropertyIdRef = useRef<string | null>(initialRoute.ownerPropertyId);
   const infraPreviewIdRef = useRef<string | null>(initialRoute.infraPreviewId);
   const currentUserRef = useRef<AuthUser | null>(null);
-  const backMessageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const exitArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isExitArmedRef = useRef(false);
 
   const isAuthenticated = Boolean(authToken && currentUser);
   const showHeader = !(
@@ -713,17 +820,61 @@ function App() {
     currentView === 'team-login' ||
     currentView === 'forgot-password'
   );
-  const hideFloatingBack =
-    currentView === 'login' ||
-    currentView === 'register' ||
-    currentView === 'admin-login' ||
-    currentView === 'team-login';
   const hideAiChatbot =
     currentView === 'login' ||
     currentView === 'register' ||
     currentView === 'admin-login' ||
     currentView === 'team-login' ||
     currentView === 'forgot-password';
+  const publicFooterViews: AppView[] = [
+    'home',
+    'about',
+    'blog',
+    'press',
+    'help-center',
+    'contact',
+    'faq',
+    'privacy',
+    'terms',
+    'cookies',
+    'security',
+    'career',
+    'e-auction',
+    'buy',
+    'buy-details',
+    'rent',
+    'rent-details',
+    'rent-short-term',
+    'rent-co-living',
+    'sell-property',
+    'rent-property',
+    'new-launch',
+    'commercial',
+    'building-materials',
+    'infrastructure',
+    'group-deals',
+    'group-deal-details',
+    'plots-land',
+    'projects',
+    'invest',
+    'area-insights',
+    'affordability',
+    'buyer-journey',
+    'alerts',
+    'compare-plus',
+    'builder-trust',
+    'site-visits',
+    'legal-assist',
+    'investment-screener',
+    'referrals',
+    'construct-with-us',
+    'early-supporters',
+    'add-property',
+    'property-details',
+    'dealers-builders',
+    'dealers-builders-company',
+  ];
+  const showPublicFooter = showHeader && publicFooterViews.includes(currentView);
 
   useEffect(() => {
     let active = true;
@@ -737,7 +888,7 @@ function App() {
         if (active) {
           setAuthToken('');
           setCurrentUser(null);
-          setCurrentView('login');
+          setCurrentView((previousView) => (canAccessView(previousView, null) ? previousView : 'home'));
         }
         return;
       }
@@ -767,7 +918,7 @@ function App() {
         clearSession();
         setAuthToken('');
         setCurrentUser(null);
-        setCurrentView('login');
+        setCurrentView((previousView) => (canAccessView(previousView, null) ? previousView : 'home'));
       }
     };
 
@@ -812,16 +963,6 @@ function App() {
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
-
-  const showBackMessage = (message: string) => {
-    setBackMessage(message);
-    if (backMessageTimeoutRef.current) {
-      window.clearTimeout(backMessageTimeoutRef.current);
-    }
-    backMessageTimeoutRef.current = window.setTimeout(() => {
-      setBackMessage('');
-    }, 2200);
-  };
 
   const goToView = (
     view: AppView,
@@ -971,8 +1112,9 @@ function App() {
     goToView(view, { pushHistory: true, smoothScroll: true, ...options });
   };
 
-  const openMessagesView = (propertyReference?: string) => {
+  const openMessagesView = (propertyReference?: string, draftMessage?: string) => {
     const reference = propertyReference?.trim() || '';
+    const draft = draftMessage?.trim() || '';
     if (reference) {
       void trackPropertyInteraction({
         referenceId: reference,
@@ -981,6 +1123,21 @@ function App() {
       });
     }
     setMessagePageReferenceSeed(reference);
+    setMessagePageCompanySeed(null);
+    setMessagePageDraftSeed(draft);
+    navigateTo('messages');
+  };
+
+  const openCompanyMessagesView = (companyId?: number | null, draftMessage?: string) => {
+    const candidateId = Number(companyId);
+    const draft = draftMessage?.trim() || '';
+    setMessagePageReferenceSeed('');
+    if (Number.isInteger(candidateId) && candidateId > 0) {
+      setMessagePageCompanySeed(candidateId);
+    } else {
+      setMessagePageCompanySeed(null);
+    }
+    setMessagePageDraftSeed(draft);
     navigateTo('messages');
   };
 
@@ -1154,30 +1311,6 @@ function App() {
         })
       );
     }
-    window.history.pushState(
-      {
-        __zdtSpa: true,
-        view: currentViewRef.current,
-        companyId: dealerCompanyIdRef.current,
-        projectId: projectPageIdRef.current,
-        buyPropertyId: buyDetailsPropertyIdRef.current,
-        rentalId: rentDetailsRentalIdRef.current,
-        groupDealCode: groupDealCodeRef.current,
-        ownerPropertyId: ownerEditPropertyIdRef.current,
-        infraPreviewId: infraPreviewIdRef.current,
-      },
-      '',
-      hrefForView(currentViewRef.current, {
-        companyId: dealerCompanyIdRef.current,
-        projectId: projectPageIdRef.current,
-        buyPropertyId: buyDetailsPropertyIdRef.current,
-        rentalId: rentDetailsRentalIdRef.current,
-        groupDealCode: groupDealCodeRef.current,
-        ownerPropertyId: ownerEditPropertyIdRef.current,
-        infraPreviewId: infraPreviewIdRef.current,
-      })
-    );
-
     const handlePopState = (event: PopStateEvent) => {
       const nextState = event.state as
         | {
@@ -1209,64 +1342,12 @@ function App() {
 
       if (currentViewRef.current !== 'home') {
         goToView('home', { pushHistory: false, smoothScroll: true });
-        window.history.pushState(
-          {
-            __zdtSpa: true,
-            view: 'home',
-            companyId: null,
-            projectId: null,
-            buyPropertyId: null,
-            rentalId: null,
-            groupDealCode: null,
-            ownerPropertyId: null,
-            infraPreviewId: null,
-          },
-          '',
-          hrefForView('home')
-        );
-        return;
       }
-
-      if (!isExitArmedRef.current) {
-        isExitArmedRef.current = true;
-        showBackMessage('Press back again to close the website.');
-        if (exitArmTimeoutRef.current) {
-          window.clearTimeout(exitArmTimeoutRef.current);
-        }
-        exitArmTimeoutRef.current = window.setTimeout(() => {
-          isExitArmedRef.current = false;
-        }, 2000);
-        window.history.pushState(
-          {
-            __zdtSpa: true,
-            view: 'home',
-            companyId: null,
-            projectId: null,
-            buyPropertyId: null,
-            rentalId: null,
-            groupDealCode: null,
-            ownerPropertyId: null,
-            infraPreviewId: null,
-          },
-          '',
-          hrefForView('home')
-        );
-        return;
-      }
-
-      window.removeEventListener('popstate', handlePopState);
-      window.history.back();
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      if (backMessageTimeoutRef.current) {
-        window.clearTimeout(backMessageTimeoutRef.current);
-      }
-      if (exitArmTimeoutRef.current) {
-        window.clearTimeout(exitArmTimeoutRef.current);
-      }
     };
   }, []);
 
@@ -1299,6 +1380,12 @@ function App() {
       });
   };
 
+  const handleCompanyPortalAuthSuccess = (payload: { token: string; user: AuthUser }) => {
+    saveSession(payload.token, payload.user);
+    setAuthToken(payload.token);
+    setCurrentUser(payload.user);
+  };
+
   const handleLogout = async () => {
     const token = authToken;
     try {
@@ -1321,24 +1408,16 @@ function App() {
 
   return (
     <div
-      className={`sci-fi min-h-screen font-sans text-slate-900 transition-opacity duration-700 selection:bg-blue-200 selection:text-slate-900 ${
+      className={`unicorn-shell sci-fi min-h-screen font-sans text-slate-900 transition-opacity duration-700 selection:bg-brand-secondary/20 selection:text-slate-900 ${
         isLoaded ? 'opacity-100' : 'opacity-0'
       }`}
     >
+      <div className="unicorn-bg" aria-hidden="true">
+        <div className="unicorn-orb unicorn-orb-a" />
+        <div className="unicorn-orb unicorn-orb-b" />
+        <div className="unicorn-orb unicorn-orb-c" />
+      </div>
       <div className="relative z-10 flex min-h-screen flex-col">
-        {currentView !== 'home' && !hideFloatingBack && (
-          <button
-            type="button"
-            onClick={() => navigateTo('home')}
-            className={`fixed left-4 z-50 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/95 px-4 py-2 text-sm font-semibold text-slate-700 shadow-md backdrop-blur-md transition hover:bg-white ${
-              showHeader ? 'top-32 xl:top-36' : 'top-4'
-            }`}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </button>
-        )}
-
         {showHeader && (
           <Header
             onLogin={() => navigateTo('login')}
@@ -1352,6 +1431,8 @@ function App() {
             onPostProperty={() => navigateTo('add-property')}
             onOwnerDashboard={() => navigateTo('owner-dashboard')}
             onDealersBuilders={() => navigateTo('dealers-builders')}
+            onApartmentManagement={() => navigateTo('apartment-complex')}
+            onOpenStrategicModule={(view) => navigateTo(view)}
             onMessages={() => openMessagesView()}
             onNotifications={() => navigateTo('notifications')}
             onCompare={() => navigateTo('compare')}
@@ -1381,6 +1462,8 @@ function App() {
                 onOpenBuildingMaterials={openBuildingMaterials}
                 onOpenPlotsLand={() => navigateTo('plots-land')}
                 onOpenProjects={() => navigateTo('projects')}
+                onOpenInvest={() => navigateTo('invest')}
+                onOpenAreaInsights={() => navigateTo('area-insights')}
                 onOpenInfrastructure={() => navigateTo('infrastructure')}
                 onOpenPostProperty={() => navigateTo('add-property')}
                 onOpenConstructWithUs={openConstructWithUs}
@@ -1407,14 +1490,6 @@ function App() {
                 userRole={currentUser?.role}
               />
             </Suspense>
-            {isAuthenticated ? (
-              <Footer
-                onOpenAdminLogin={() => navigateTo('admin-login')}
-                onOpenAdminRegister={() => navigateTo('admin-register')}
-                onOpenTeamLogin={() => navigateTo('team-login')}
-                onOpenTeamRegister={() => navigateTo('team-register')}
-              />
-            ) : null}
           </div>
         )}
 
@@ -1490,23 +1565,46 @@ function App() {
           </Suspense>
         )}
 
-        {currentView === 'buy' && (
+        {currentView === 'invest' && (
           <Suspense fallback={viewLoader}>
-            <BuyPage
-              onViewDetails={(referenceId) => openPropertyDetails(referenceId)}
-              onOpenFavorites={() => navigateTo('favorites')}
-              onOpenMessages={(referenceId) => openMessagesView(referenceId)}
+            <InvestPage
+              onOpenProjects={() => navigateTo('projects')}
+              onOpenProjectDetails={(projectId) => openProjectDetailsPage(projectId)}
+              onOpenVoluntarySupport={() => navigateTo('early-supporters')}
+              onOpenMessages={openMessagesView}
+              onOpenCompanyMessages={openCompanyMessagesView}
+              isAuthenticated={isAuthenticated}
+              userName={currentUser?.name}
+              userRole={currentUser?.role}
+              isMainAdmin={currentUser?.isMainAdmin || false}
             />
           </Suspense>
         )}
 
-        {currentView === 'buy-map' && (
+        {(currentView === 'area-insights' ||
+          currentView === 'affordability' ||
+          currentView === 'buyer-journey' ||
+          currentView === 'alerts' ||
+          currentView === 'compare-plus' ||
+          currentView === 'builder-trust' ||
+          currentView === 'site-visits' ||
+          currentView === 'legal-assist' ||
+          currentView === 'investment-screener' ||
+          currentView === 'referrals') && (
           <Suspense fallback={viewLoader}>
-            <BuyMapPage
+            <StrategicModulesPage view={currentView} onNavigate={navigateTo} />
+          </Suspense>
+        )}
+
+        {(currentView === 'buy' || currentView === 'buy-map') && (
+          <Suspense fallback={viewLoader}>
+            <BuyMarketplacePage
               onOpenDetails={(propertyId) => openBuyDetailsPage(propertyId)}
-              onOpenCompare={() => navigateTo('compare')}
               onOpenSaved={() => navigateTo('favorites')}
-              onOpenList={() => navigateTo('buy')}
+              onOpenMessages={(referenceId) => openMessagesView(referenceId)}
+              onOpenCompare={() => navigateTo('compare')}
+              onOpenSavedSearches={() => navigateTo('saved-searches')}
+              initialViewMode={currentView === 'buy-map' ? 'map' : 'list'}
             />
           </Suspense>
         )}
@@ -1547,8 +1645,7 @@ function App() {
           </Suspense>
         )}
 
-        {(currentView === 'rent' ||
-          currentView === 'new-launch' ||
+        {(currentView === 'new-launch' ||
           currentView === 'commercial' ||
           currentView === 'plots-land' ||
           currentView === 'projects') && (
@@ -1562,12 +1659,16 @@ function App() {
           </Suspense>
         )}
 
-        {currentView === 'rent-map' && (
+        {(currentView === 'rent' || currentView === 'rent-map') && (
           <Suspense fallback={viewLoader}>
-            <RentMapPage
+            <RentMarketplacePage
               onOpenDetails={(rentalId) => openRentDetailsPage(rentalId)}
               onOpenSaved={() => navigateTo('saved-rentals')}
-              onOpenList={() => navigateTo('rent')}
+              onOpenMessages={openMessagesView}
+              onOpenListProperty={() => navigateTo('rent-property')}
+              onOpenCompare={() => navigateTo('compare')}
+              onOpenSavedSearches={() => navigateTo('saved-searches')}
+              initialViewMode={currentView === 'rent-map' ? 'map' : 'list'}
             />
           </Suspense>
         )}
@@ -1579,8 +1680,7 @@ function App() {
               onBackToRent={() => navigateTo('rent')}
               onOpenSimilar={(rentalId) => openRentDetailsPage(rentalId)}
               onOpenSaved={() => navigateTo('saved-rentals')}
-              onOpenShortTerm={() => navigateTo('rent-short-term')}
-              onOpenCoLiving={() => navigateTo('rent-co-living')}
+              onOpenCompare={() => navigateTo('compare')}
               onOpenMessages={openMessagesView}
             />
           </Suspense>
@@ -1628,7 +1728,13 @@ function App() {
 
         {currentView === 'sell-property' && (
           <Suspense fallback={viewLoader}>
-            <SellPage />
+            <SellPage
+              onManageListings={() => navigateTo('owner-listings')}
+              onOpenDashboard={() => navigateTo('owner-dashboard')}
+              onOpenLeads={() => navigateTo('owner-leads')}
+              onOpenAnalytics={() => navigateTo('owner-analytics')}
+              onOpenBuilderPlans={() => navigateTo('owner-subscription')}
+            />
           </Suspense>
         )}
 
@@ -1670,6 +1776,34 @@ function App() {
           </Suspense>
         )}
 
+        {(currentView === 'company-login' || currentView === 'company-portal') && (
+          <Suspense fallback={viewLoader}>
+            <DealersBuildersPage
+              token={authToken}
+              user={currentUser}
+              onAuthSuccess={handleCompanyPortalAuthSuccess}
+              onLogout={handleLogout}
+              initialAuthMode="login"
+              onOpenCompanyLogin={() => navigateTo('company-login')}
+              onOpenCompanyRegister={() => navigateTo('company-register')}
+            />
+          </Suspense>
+        )}
+
+        {currentView === 'company-register' && (
+          <Suspense fallback={viewLoader}>
+            <DealersBuildersPage
+              token={authToken}
+              user={currentUser}
+              onAuthSuccess={handleCompanyPortalAuthSuccess}
+              onLogout={handleLogout}
+              initialAuthMode="register"
+              onOpenCompanyLogin={() => navigateTo('company-login')}
+              onOpenCompanyRegister={() => navigateTo('company-register')}
+            />
+          </Suspense>
+        )}
+
         {currentView === 'dealers-builders-company' && dealerCompanyId ? (
           <Suspense fallback={viewLoader}>
             <CompanyProfilePage
@@ -1678,7 +1812,7 @@ function App() {
               user={currentUser}
               onBackDirectory={() => navigateTo('dealers-builders')}
               onOpenProject={(projectId) => openProjectDetailsPage(projectId, dealerCompanyId)}
-              onOpenMessages={() => openMessagesView()}
+              onOpenMessages={openCompanyMessagesView}
               onOpenNewProject={openNewProjectPage}
             />
           </Suspense>
@@ -1745,6 +1879,8 @@ function App() {
               <Login
                 onBack={() => navigateTo('home')}
                 onSwitchToRegister={() => navigateTo('register')}
+                onOpenCompanyLogin={() => navigateTo('company-login')}
+                onOpenCompanyRegister={() => navigateTo('company-register')}
                 onLoginSuccess={handleLoginSuccess}
               />
             </Suspense>
@@ -1757,6 +1893,8 @@ function App() {
               <Login
                 onBack={() => navigateTo('home')}
                 onSwitchToRegister={() => navigateTo('register')}
+                onOpenCompanyLogin={() => navigateTo('company-login')}
+                onOpenCompanyRegister={() => navigateTo('company-register')}
                 onLoginSuccess={handleLoginSuccess}
               />
             </Suspense>
@@ -1769,6 +1907,8 @@ function App() {
               <Login
                 onBack={() => navigateTo('home')}
                 onSwitchToRegister={() => navigateTo('register')}
+                onOpenCompanyLogin={() => navigateTo('company-login')}
+                onOpenCompanyRegister={() => navigateTo('company-register')}
                 onLoginSuccess={handleLoginSuccess}
               />
             </Suspense>
@@ -1778,7 +1918,11 @@ function App() {
         {currentView === 'register' && (
           <div className="animate-in fade-in slide-in-from-bottom-8 min-h-screen duration-500 ease-out">
             <Suspense fallback={viewLoader}>
-              <Register onSwitchToLogin={() => navigateTo('login')} />
+              <Register
+                onSwitchToLogin={() => navigateTo('login')}
+                onOpenCompanyLogin={() => navigateTo('company-login')}
+                onOpenCompanyRegister={() => navigateTo('company-register')}
+              />
             </Suspense>
           </div>
         )}
@@ -1936,7 +2080,11 @@ function App() {
                 token={authToken}
                 user={currentUser}
                 initialPropertyReference={messagePageReferenceSeed}
+                initialCompanyId={messagePageCompanySeed}
+                initialDraftMessage={messagePageDraftSeed}
                 onConsumeInitialPropertyReference={() => setMessagePageReferenceSeed('')}
+                onConsumeInitialCompanyId={() => setMessagePageCompanySeed(null)}
+                onConsumeInitialDraftMessage={() => setMessagePageDraftSeed('')}
               />
             </Suspense>
           </div>
@@ -2012,7 +2160,7 @@ function App() {
         {currentView === 'e-auction' && (
           <div className="animate-in fade-in slide-in-from-bottom-8 min-h-screen duration-500 ease-out">
             <Suspense fallback={viewLoader}>
-              <EAuctionPage />
+              <EAuctionPage token={authToken} user={currentUser} />
             </Suspense>
           </div>
         )}
@@ -2173,11 +2321,26 @@ function App() {
           </div>
         )}
 
-        {backMessage && (
-          <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-slate-300 bg-white/95 px-4 py-2 text-sm text-slate-700 shadow-xl backdrop-blur-md">
-            {backMessage}
-          </div>
-        )}
+        {showPublicFooter ? (
+          <Footer
+            onOpenHome={() => navigateTo('home')}
+            onOpenAbout={() => navigateTo('about')}
+            onOpenBlog={() => navigateTo('blog')}
+            onOpenPress={() => navigateTo('press')}
+            onOpenCareer={() => navigateTo('career')}
+            onOpenHelpCenter={() => navigateTo('help-center')}
+            onOpenContact={() => navigateTo('contact')}
+            onOpenFaq={() => navigateTo('faq')}
+            onOpenPrivacy={() => navigateTo('privacy')}
+            onOpenTerms={() => navigateTo('terms')}
+            onOpenCookies={() => navigateTo('cookies')}
+            onOpenSecurity={() => navigateTo('security')}
+            onOpenBuy={() => navigateTo('buy')}
+            onOpenSell={() => navigateTo('sell-property')}
+            onOpenRent={() => navigateTo('rent')}
+            onOpenInvest={() => navigateTo('invest')}
+          />
+        ) : null}
 
         {!hideAiChatbot ? <AIChatbotWidget /> : null}
       </div>
