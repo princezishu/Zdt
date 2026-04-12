@@ -73,7 +73,6 @@ function accessLabel(view: AppView): { label: string; className: string } {
     'layout-units-floor-detail',
     'layout-units-builder',
     'layout-units-list',
-    'apartment-complex',
   ];
   if (adminViews.includes(view)) {
     return { label: 'Admin', className: 'border-amber-200 bg-amber-50 text-amber-700' };

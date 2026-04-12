@@ -4,6 +4,7 @@ import {
   Bath,
   BedDouble,
   CarFront,
+  GitCompareArrows,
   Heart,
   MapPin,
   MessageCircle,
@@ -11,7 +12,16 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { PortalProperty } from '@/lib/portalData';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { buildHrefForView } from '@/lib/appRoutes';
+import { getPortalPropertyContact, type PortalProperty } from '@/lib/portalData';
 import { toast } from 'sonner';
 import {
   FAVORITES_CHANGED_EVENT,
@@ -20,34 +30,21 @@ import {
   upsertFavoriteListing,
   type FavoriteListing,
 } from '@/lib/favoritesStore';
+import {
+  COMPARE_CHANGED_EVENT,
+  isCompared,
+  removeComparedListing,
+  upsertComparedListing,
+} from '@/lib/compareStore';
 import { addNotification } from '@/lib/notificationsStore';
 import { trackPropertyInteraction } from '@/lib/propertyAnalyticsApi';
+import { openPhoneDialer } from '@/lib/phone';
+import { readStoredUser } from '@/lib/session';
 
 interface PropertyListingCardProps {
   property: PortalProperty;
   onOpenDetails?: (referenceId?: string) => void;
   onOpenMessages?: (referenceId?: string) => void;
-}
-
-function resolveContact(property: PortalProperty): { role: 'Owner' | 'Dealer' | 'Builder'; phone: string } {
-  const role =
-    property.category === 'commercial'
-      ? 'Dealer'
-      : property.category === 'projects' || property.category === 'new-launch'
-        ? 'Builder'
-        : 'Owner';
-
-  if (role === 'Dealer') {
-    return { role, phone: '+91 90000 20002' };
-  }
-  if (role === 'Builder') {
-    return { role, phone: '+91 90000 30003' };
-  }
-  return { role, phone: '+91 90000 10001' };
-}
-
-function toDialNumber(phone: string): string {
-  return phone.replace(/[^\d+]/g, '');
 }
 
 function formatDateLabel(value: string | null | undefined): string {
@@ -61,13 +58,20 @@ function formatDateLabel(value: string | null | undefined): string {
   });
 }
 
+function getLockedPhoneLabel(role: string): string {
+  return `${role} contact hidden until login`;
+}
+
 export default function PropertyListingCard({
   property,
   onOpenDetails,
   onOpenMessages,
 }: PropertyListingCardProps) {
   const [saved, setSaved] = useState(() => isFavorite(property.referenceId));
-  const contact = useMemo(() => resolveContact(property), [property]);
+  const [compared, setCompared] = useState(() => isCompared(property.referenceId));
+  const [contactUnlocked, setContactUnlocked] = useState(false);
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
+  const contact = useMemo(() => getPortalPropertyContact(property), [property]);
   const showConstructionProgress =
     (property.category === 'projects' || property.category === 'new-launch') &&
     typeof property.constructionCompletionPercent === 'number';
@@ -110,6 +114,33 @@ export default function PropertyListingCard({
     };
   }, [property.referenceId]);
 
+  useEffect(() => {
+    const sync = () => {
+      setCompared(isCompared(property.referenceId));
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'zdt_compared_listings') {
+        return;
+      }
+      sync();
+    };
+
+    sync();
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(COMPARE_CHANGED_EVENT, sync);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(COMPARE_CHANGED_EVENT, sync);
+    };
+  }, [property.referenceId]);
+
+  useEffect(() => {
+    setContactUnlocked(false);
+    setLoginPromptOpen(false);
+  }, [property.referenceId]);
+
   const portalFavoriteSnapshot: FavoriteListing = {
     id: property.id,
     referenceId: property.referenceId,
@@ -129,8 +160,67 @@ export default function PropertyListingCard({
     updatedAt: '',
   };
 
+  const handleCompare = () => {
+    if (compared) {
+      removeComparedListing(property.referenceId);
+      setCompared(false);
+      toast.success('Removed from compare');
+      return;
+    }
+
+    upsertComparedListing({
+      id: String(property.id),
+      referenceId: property.referenceId,
+      title: property.title,
+      image: property.image,
+      city: property.city,
+      area: property.location,
+      priceLabel: property.priceLabel,
+      areaLabel: property.areaLabel,
+      propertyType: property.category,
+      bhk: property.bhk,
+      mainDoorFacing: property.facing,
+      vastuScore: property.readyToMove ? 84 : 79,
+      verified: property.verified,
+      ownerPhone: contact.phone,
+      updatedAt: new Date().toISOString(),
+    });
+    setCompared(true);
+    toast.success('Added to compare');
+  };
+
+  const handleCallContact = () => {
+    if (!contactUnlocked) {
+      const currentUser = readStoredUser();
+      if (!currentUser) {
+        setLoginPromptOpen(true);
+        return;
+      }
+
+      setContactUnlocked(true);
+      void trackPropertyInteraction({
+        referenceId: property.referenceId,
+        action: 'unlock_phone',
+        context: 'portal_listing_card',
+      });
+      toast.success('Phone number unlocked');
+      return;
+    }
+
+    void trackPropertyInteraction({
+      referenceId: property.referenceId,
+      action: 'call_click',
+      context: 'portal_listing_card',
+    });
+    const opened = openPhoneDialer(contact.phone);
+    if (!opened) {
+      onOpenMessages?.(property.referenceId);
+      toast.info('Phone number unavailable. Opened in-app chat.');
+    }
+  };
+
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+    <article className="portal-mobile-card group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
       <div className="relative">
         <img
           src={property.image}
@@ -199,7 +289,7 @@ export default function PropertyListingCard({
           {tags.map((tag) => (
             <span
               key={tag}
-              className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600"
+              className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600"
             >
               {tag}
             </span>
@@ -255,34 +345,89 @@ export default function PropertyListingCard({
         </div>
 
         <p className="text-xs text-slate-600">
-          Contact {contact.role}: <span className="font-semibold text-slate-900">{contact.phone}</span>
+          Contact {contact.role}:{' '}
+          <span className="font-semibold text-slate-900">
+            {contactUnlocked ? contact.phone : getLockedPhoneLabel(contact.role)}
+          </span>
         </p>
 
-        <div className="grid grid-cols-3 gap-2 pt-1">
+        <div className="grid grid-cols-2 gap-2 pt-1">
           <Button
             type="button"
-            className="h-10 rounded-xl bg-blue-700 text-white hover:bg-blue-800"
+            className="h-11 rounded-xl bg-blue-700 text-white hover:bg-blue-800"
             onClick={() => onOpenDetails?.(property.referenceId)}
           >
             View Details
           </Button>
-          <Button asChild type="button" variant="outline" className="h-10 rounded-xl border-slate-300">
-            <a href={`tel:${toDialNumber(contact.phone)}`}>
-              <PhoneCall className="mr-1 h-3.5 w-3.5" />
-              Call
-            </a>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-xl border-slate-300"
+            onClick={handleCallContact}
+          >
+            <PhoneCall className="mr-1 h-3.5 w-3.5" />
+            {contactUnlocked ? 'Call' : 'Show Number'}
           </Button>
           <Button
             type="button"
             variant="outline"
-            className="h-10 rounded-xl border-slate-300"
+            className="h-11 rounded-xl border-slate-300"
             onClick={() => onOpenMessages?.(property.referenceId)}
           >
             <MessageCircle className="mr-1 h-3.5 w-3.5" />
             Message
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-11 rounded-xl border-slate-300 ${compared ? 'text-blue-700' : ''}`}
+            onClick={handleCompare}
+          >
+            <GitCompareArrows className="mr-1 h-3.5 w-3.5" />
+            {compared ? 'Compared' : 'Compare'}
+          </Button>
         </div>
       </div>
+
+      <Dialog open={loginPromptOpen} onOpenChange={setLoginPromptOpen}>
+        <DialogContent className="max-w-md border border-slate-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900">Login to unlock the contact</DialogTitle>
+            <DialogDescription className="text-sm text-slate-600">
+              Sign in to reveal the {contact.role.toLowerCase()} phone number and convert this
+              enquiry into a verified lead.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-3 text-sm text-blue-900">
+            <p className="font-semibold">{property.title}</p>
+            <p className="mt-1 text-xs text-blue-900/80">
+              {property.location}, {property.city}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-xl border-slate-300"
+              onClick={() => {
+                setLoginPromptOpen(false);
+                onOpenMessages?.(property.referenceId);
+              }}
+            >
+              Continue In Chat
+            </Button>
+            <Button
+              type="button"
+              className="rounded-xl bg-blue-700 text-white hover:bg-blue-800"
+              onClick={() => {
+                window.location.assign(buildHrefForView('login'));
+              }}
+            >
+              Login To Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </article>
   );
 }

@@ -478,10 +478,10 @@ function buildPlanConfig(subscriptionTier) {
       listingQuota: 1000,
       boostCredits: 200,
       features: {
-        crmTools: true,
-        analyticsAccess: 'advanced',
-        verifiedBadgeEligible: true,
-        prioritySupport: true,
+        crm_access: true,
+        analytics_access: true,
+        verified_eligibility: true,
+        priority_support: true,
       },
     };
   }
@@ -492,9 +492,9 @@ function buildPlanConfig(subscriptionTier) {
       listingQuota: 200,
       boostCredits: 60,
       features: {
-        crmTools: true,
-        analyticsAccess: 'full',
-        verifiedBadgeEligible: true,
+        crm_access: true,
+        analytics_access: true,
+        verified_eligibility: true,
       },
     };
   }
@@ -505,9 +505,9 @@ function buildPlanConfig(subscriptionTier) {
       listingQuota: 50,
       boostCredits: 20,
       features: {
-        crmTools: true,
-        analyticsAccess: 'standard',
-        verifiedBadgeEligible: false,
+        crm_access: true,
+        analytics_access: true,
+        verified_eligibility: false,
       },
     };
   }
@@ -517,9 +517,9 @@ function buildPlanConfig(subscriptionTier) {
     listingQuota: 10,
     boostCredits: 3,
     features: {
-      crmTools: false,
-      analyticsAccess: 'basic',
-      verifiedBadgeEligible: false,
+      crm_access: false,
+      analytics_access: false,
+      verified_eligibility: false,
     },
   };
 }

@@ -46,7 +46,9 @@ export const APP_VIEWS = [
   'site-visits',
   'legal-assist',
   'investment-screener',
+  'wallet',
   'referrals',
+  'checkout',
   'construct-with-us',
   'early-supporters',
   'add-property',
@@ -71,7 +73,6 @@ export const APP_VIEWS = [
   'layout-units-floor-detail',
   'layout-units-builder',
   'layout-units-list',
-  'apartment-complex',
   'dealers-builders',
   'company-login',
   'company-register',
@@ -96,6 +97,8 @@ export const APP_VIEWS = [
   'career',
   'admin-register',
   'team-register',
+  'pricing',
+  'collaborations',
 ] as const;
 
 export type AppView = (typeof APP_VIEWS)[number];

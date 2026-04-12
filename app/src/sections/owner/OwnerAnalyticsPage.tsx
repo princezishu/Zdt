@@ -19,16 +19,23 @@ import {
   IndianRupee,
   LineChart as LineChartIcon,
   PieChart as PieChartIcon,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 import { apiRequest } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { OwnerLockedPageState } from './OwnerAccessStates';
+import {
+  isOwnerSubscriptionAccessError,
+  useOwnerSubscriptionAccess,
+} from './OwnerSubscriptionAccess';
 
 interface OwnerAnalyticsPageProps {
   onOpenDashboard: () => void;
   onOpenPayments: () => void;
+  onOpenSubscription: () => void;
 }
 
 interface ConversionMonthlyPoint {
@@ -63,6 +70,57 @@ interface RevenueYearlyPoint {
 interface LeadSourcePoint {
   source: string;
   count: number;
+}
+
+interface InteractionTotals {
+  views: number;
+  saves: number;
+  contactClicks: number;
+  phoneUnlocks: number;
+  callClicks: number;
+  visitRequests: number;
+  premiumCtas: number;
+  brochureRequests: number;
+  priceSheetRequests: number;
+  loanHelpRequests: number;
+  conversions: number;
+}
+
+interface InteractionMonthlyPoint {
+  month: string;
+  monthStart: string;
+  views: number;
+  phoneUnlocks: number;
+  callClicks: number;
+  visitRequests: number;
+  premiumCtas: number;
+}
+
+interface PremiumCtaBreakdownRow {
+  assistType: 'brochure' | 'price_sheet' | 'loan_help' | string;
+  totalRequests: number;
+  openRequests: number;
+  closedRequests: number;
+}
+
+interface ListingInteractionPerformanceRow {
+  listingId: number;
+  referenceId: string;
+  title: string;
+  requestType: string;
+  city: string;
+  locality: string;
+  propertyType: string;
+  rankingScore: number;
+  boostWeight: number;
+  views: number;
+  phoneUnlocks: number;
+  callClicks: number;
+  visitRequests: number;
+  premiumCtas: number;
+  brochureRequests: number;
+  priceSheetRequests: number;
+  loanHelpRequests: number;
 }
 
 interface PropertyPerformanceRow {
@@ -130,6 +188,24 @@ interface AnalyticsResponse {
   revenueMonthly: RevenueMonthlyPoint[];
   revenueYearly: RevenueYearlyPoint[];
   leadSourceBreakdown: LeadSourcePoint[];
+  interactionTotals: InteractionTotals;
+  interactionMonthly: InteractionMonthlyPoint[];
+  premiumCtaBreakdown: PremiumCtaBreakdownRow[];
+  listingInteractionPerformance: ListingInteractionPerformanceRow[];
+  visibilityPerformance: {
+    liveListings: number;
+    boostedListings: number;
+    activeSponsoredListings: number;
+    averageRankingScore: number;
+    topOrganicListing: {
+      referenceId: string;
+      requestType: string;
+      city: string;
+      locality: string;
+      propertyType: string;
+      rankingScore: number;
+    } | null;
+  };
   propertyPerformance: PropertyPerformanceRow[];
   performanceHighlights: {
     mostViewedProperty: PropertyPerformanceRow | null;
@@ -186,10 +262,25 @@ function parseDateEnd(value: string): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
+function formatAssistTypeLabel(value: string): string {
+  if (value === 'price_sheet') return 'Price Sheet';
+  if (value === 'loan_help') return 'Loan Help';
+  if (value === 'brochure') return 'Brochure';
+  return value.replace(/_/g, ' ');
+}
+
 export default function OwnerAnalyticsPage({
   onOpenDashboard,
   onOpenPayments,
+  onOpenSubscription,
 }: OwnerAnalyticsPageProps) {
+  const {
+    access,
+    currentSubscription,
+    usage,
+    loading: accessLoading,
+    refreshAccess,
+  } = useOwnerSubscriptionAccess();
   const [stats, setStats] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -200,6 +291,17 @@ export default function OwnerAnalyticsPage({
   const [commissionPropertyType, setCommissionPropertyType] = useState('all');
 
   useEffect(() => {
+    if (accessLoading) {
+      return;
+    }
+
+    if (!access?.analytics.enabled) {
+      setStats(null);
+      setError('');
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     setLoading(true);
     setError('');
@@ -210,6 +312,12 @@ export default function OwnerAnalyticsPage({
       })
       .catch((loadError) => {
         if (!active) return;
+        if (isOwnerSubscriptionAccessError(loadError)) {
+          void refreshAccess();
+          setStats(null);
+          setError('');
+          return;
+        }
         setStats(null);
         setError(loadError instanceof Error ? loadError.message : 'Unable to load analytics.');
       })
@@ -220,7 +328,7 @@ export default function OwnerAnalyticsPage({
     return () => {
       active = false;
     };
-  }, []);
+  }, [access?.analytics.enabled, accessLoading, refreshAccess]);
 
   const sourceData = useMemo(() => {
     const base = stats?.leadSourceBreakdown || [];
@@ -233,6 +341,10 @@ export default function OwnerAnalyticsPage({
       { source: 'Direct calls', count: 0 },
     ];
   }, [stats]);
+  const premiumBreakdown = useMemo(
+    () => stats?.premiumCtaBreakdown || [],
+    [stats]
+  );
 
   const commissionRows = useMemo(() => stats?.commissionReport?.rows || [], [stats]);
   const commissionAgentOptions = useMemo(() => {
@@ -303,6 +415,49 @@ export default function OwnerAnalyticsPage({
     return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
   }, [filteredCommissionRows]);
 
+  if (!accessLoading && access && !access.analytics.enabled) {
+    return (
+      <section className="min-h-screen pb-16 pt-28 text-slate-900">
+        <div className="page-container space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">CRM Analytics</p>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-900 sm:text-3xl">
+                Revenue, conversion, and performance dashboard
+              </h1>
+              <p className="mt-2 text-sm text-slate-600">
+                Full analytics view for lead pipeline, growth, source quality, and commission.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={onOpenDashboard}>
+                Back to Dashboard
+              </Button>
+              <Button className="bg-blue-700 text-white hover:bg-blue-800" onClick={onOpenSubscription}>
+                View Plans
+              </Button>
+            </div>
+          </div>
+
+          <OwnerLockedPageState
+            eyebrow="Analytics Access"
+            title="Analytics is locked for this plan"
+            description="This dashboard becomes available when the active owner subscription includes analytics access."
+            message={access.analytics.message}
+            meta={[
+              `Current plan: ${currentSubscription?.planName || 'Free'}`,
+              `Active listings: ${usage?.activeListings || 0}`,
+              `Remaining slots: ${access.listingQuota.remaining}`,
+              `Boost credits: ${access.boosts.remainingCredits}`,
+            ]}
+            onOpenSubscription={onOpenSubscription}
+            actionLabel="Upgrade Plan"
+          />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="min-h-screen pb-16 pt-28 text-slate-900">
       <div className="page-container space-y-6">
@@ -324,6 +479,13 @@ export default function OwnerAnalyticsPage({
               View Payments
             </Button>
           </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <KpiTile label="Current Plan" value={currentSubscription?.planName || 'Free'} hint="Controls analytics and CRM access" />
+          <KpiTile label="Active Listings" value={formatNumber(usage?.activeListings || 0)} hint="Portfolio currently in market" />
+          <KpiTile label="Remaining Slots" value={formatNumber(access?.listingQuota.remaining || 0)} hint="Additional capacity before upgrade" />
+          <KpiTile label="Boost Credits" value={formatNumber(access?.boosts.remainingCredits || 0)} hint="Priority visibility inventory" />
         </div>
 
         {error ? (
@@ -354,6 +516,147 @@ export default function OwnerAnalyticsPage({
               <KpiTile label="Total Revenue" value={formatCurrency(stats.totalRevenue)} hint="Paid commission + bookings" />
               <KpiTile label="This Month Revenue" value={formatCurrency(stats.thisMonthRevenue)} hint="Current month performance" />
               <KpiTile label="Conversion Rate %" value={`${stats.conversionRate.toFixed(1)}%`} hint="Closed / total leads" />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+              <SectionCard
+                title="Seller Interaction Funnel"
+                subtitle="Event-driven unlocks, calls, visits, and premium CTA demand from workflow listings."
+                icon={<Users className="h-5 w-5 text-blue-600" />}
+              >
+                <div className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <KpiTile
+                      label="Phone Unlocks"
+                      value={formatNumber(stats.interactionTotals.phoneUnlocks)}
+                      hint="Unique unlock events captured from listing detail interactions."
+                    />
+                    <KpiTile
+                      label="Call Clicks"
+                      value={formatNumber(stats.interactionTotals.callClicks)}
+                      hint="Direct call attempts after number reveal."
+                    />
+                    <KpiTile
+                      label="Visit Requests"
+                      value={formatNumber(stats.interactionTotals.visitRequests)}
+                      hint="Scheduled site visit requests tied to workflow inventory."
+                    />
+                    <KpiTile
+                      label="Premium CTAs"
+                      value={formatNumber(stats.interactionTotals.premiumCtas)}
+                      hint="Brochure, price sheet, and loan-help requests."
+                    />
+                  </div>
+
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={stats.interactionMonthly} margin={{ top: 10, right: 20, left: 0, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="month" stroke="#64748b" />
+                        <YAxis stroke="#64748b" />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="phoneUnlocks"
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="Phone Unlocks"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="callClicks"
+                          stroke="#10b981"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="Call Clicks"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="visitRequests"
+                          stroke="#f59e0b"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="Visit Requests"
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="premiumCtas"
+                          stroke="#7c3aed"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          name="Premium CTAs"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </SectionCard>
+
+              <SectionCard
+                title="Visibility & Premium Demand"
+                subtitle="Organic ranking health and request mix for brochure, pricing, and finance support."
+                icon={<TrendingUp className="h-5 w-5 text-blue-600" />}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Live Workflow Listings</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
+                      {formatNumber(stats.visibilityPerformance.liveListings)}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-600">
+                      Boosted: {formatNumber(stats.visibilityPerformance.boostedListings)} | Sponsored:{' '}
+                      {formatNumber(stats.visibilityPerformance.activeSponsoredListings)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Average Ranking Score</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
+                      {stats.visibilityPerformance.averageRankingScore.toFixed(2)}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-600">
+                      Organic ranking combines boost weight and engagement momentum.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Top Organic Listing</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {stats.visibilityPerformance.topOrganicListing?.referenceId || 'No ranked listing yet'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {stats.visibilityPerformance.topOrganicListing
+                      ? `${stats.visibilityPerformance.topOrganicListing.propertyType} | ${stats.visibilityPerformance.topOrganicListing.locality || stats.visibilityPerformance.topOrganicListing.city} | Score ${stats.visibilityPerformance.topOrganicListing.rankingScore.toFixed(2)}`
+                      : 'Sponsored cards stay separate from this organic ranking score.'}
+                  </p>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {premiumBreakdown.map((row) => (
+                    <div
+                      key={row.assistType}
+                      className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm"
+                    >
+                      <div>
+                        <p className="font-semibold text-slate-900">{formatAssistTypeLabel(row.assistType)}</p>
+                        <p className="text-xs text-slate-500">
+                          Open: {formatNumber(row.openRequests)} | Closed: {formatNumber(row.closedRequests)}
+                        </p>
+                      </div>
+                      <span className="text-base font-semibold text-slate-900">
+                        {formatNumber(row.totalRequests)}
+                      </span>
+                    </div>
+                  ))}
+                  {premiumBreakdown.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                      No premium CTA requests recorded yet.
+                    </div>
+                  ) : null}
+                </div>
+              </SectionCard>
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
@@ -517,6 +820,60 @@ export default function OwnerAnalyticsPage({
                     </div>
                   ))}
                 </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title="Workflow Listing Performance"
+              subtitle="Interaction depth by ranked workflow listing."
+              icon={<BarChart3 className="h-5 w-5 text-blue-600" />}
+            >
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">Listing</th>
+                      <th className="px-3 py-2">Rank</th>
+                      <th className="px-3 py-2">Unlocks</th>
+                      <th className="px-3 py-2">Calls</th>
+                      <th className="px-3 py-2">Visits</th>
+                      <th className="px-3 py-2">Premium CTAs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.listingInteractionPerformance.slice(0, 12).map((row) => (
+                      <tr key={row.referenceId} className="border-b border-slate-100">
+                        <td className="px-3 py-2">
+                          <p className="font-medium text-slate-900">{row.title}</p>
+                          <p className="text-xs text-slate-500">
+                            {row.referenceId} | {row.locality || row.city}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">
+                          {row.rankingScore.toFixed(2)}
+                          <p className="text-xs text-slate-500">Boost {row.boostWeight.toFixed(2)}</p>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">{formatNumber(row.phoneUnlocks)}</td>
+                        <td className="px-3 py-2 text-slate-700">{formatNumber(row.callClicks)}</td>
+                        <td className="px-3 py-2 text-slate-700">{formatNumber(row.visitRequests)}</td>
+                        <td className="px-3 py-2 text-slate-700">
+                          {formatNumber(row.premiumCtas)}
+                          <p className="text-xs text-slate-500">
+                            B {formatNumber(row.brochureRequests)} | P {formatNumber(row.priceSheetRequests)} | L{' '}
+                            {formatNumber(row.loanHelpRequests)}
+                          </p>
+                        </td>
+                      </tr>
+                    ))}
+                    {stats.listingInteractionPerformance.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-4 text-slate-500" colSpan={6}>
+                          No workflow interaction data available yet.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
               </div>
             </SectionCard>
 

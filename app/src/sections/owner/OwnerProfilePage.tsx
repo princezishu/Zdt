@@ -5,9 +5,11 @@ import { apiRequest } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { useOwnerSubscriptionAccess } from './OwnerSubscriptionAccess';
 
 interface OwnerProfilePageProps {
   onOpenDashboard: () => void;
+  onOpenSubscription: () => void;
 }
 
 interface OwnerProfileResponse {
@@ -15,6 +17,7 @@ interface OwnerProfileResponse {
     displayName: string;
     profilePhotoUrl: string;
     kycDocumentUrl: string;
+    kycDocumentStorageRef?: string;
     about: string;
     bankName: string;
     bankAccount: string;
@@ -27,7 +30,11 @@ interface OwnerProfileResponse {
   };
 }
 
-export default function OwnerProfilePage({ onOpenDashboard }: OwnerProfilePageProps) {
+export default function OwnerProfilePage({
+  onOpenDashboard,
+  onOpenSubscription,
+}: OwnerProfilePageProps) {
+  const { access, currentSubscription } = useOwnerSubscriptionAccess();
   const [profile, setProfile] = useState<OwnerProfileResponse['profile'] | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -46,7 +53,7 @@ export default function OwnerProfilePage({ onOpenDashboard }: OwnerProfilePagePr
         body: JSON.stringify({
           displayName: profile.displayName,
           profilePhotoUrl: profile.profilePhotoUrl,
-          kycDocumentUrl: profile.kycDocumentUrl,
+          kycDocumentUrl: profile.kycDocumentStorageRef || profile.kycDocumentUrl,
           about: profile.about,
           bankName: profile.bankName,
           bankAccount: profile.bankAccount,
@@ -65,11 +72,19 @@ export default function OwnerProfilePage({ onOpenDashboard }: OwnerProfilePagePr
     const formData = new FormData();
     formData.append('purpose', 'owner_kyc');
     formData.append('file', file);
-    const response = await apiRequest<{ imageUrl: string }>('/auth/media/upload-image', {
+    const response = await apiRequest<{ imageUrl: string; storageRef?: string }>('/auth/media/upload-image', {
       method: 'POST',
       body: formData,
     });
-    setProfile((prev) => (prev ? { ...prev, kycDocumentUrl: response.imageUrl } : prev));
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            kycDocumentUrl: response.imageUrl,
+            kycDocumentStorageRef: response.storageRef || response.imageUrl,
+          }
+        : prev
+    );
     toast.success('KYC document uploaded');
   };
 
@@ -153,8 +168,36 @@ export default function OwnerProfilePage({ onOpenDashboard }: OwnerProfilePagePr
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-base font-semibold text-slate-900">Bank Details for Payouts</h3>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-900">Plan Status</h3>
+              <p className="mt-1 text-sm text-slate-500">Verified badge eligibility follows the active subscription.</p>
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Current Plan</p>
+                <p className="mt-2 text-lg font-semibold text-slate-900">
+                  {currentSubscription?.planName || profile.subscriptionPlan || 'Free'}
+                </p>
+                <div
+                  className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                    access?.verifiedEligibility.enabled
+                      ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border border-amber-200 bg-amber-50 text-amber-700'
+                  }`}
+                >
+                  {access?.verifiedEligibility.enabled ? 'Verified eligibility included' : 'Verified eligibility locked'}
+                </div>
+                <p className="mt-3 text-sm text-slate-600">
+                  {access?.verifiedEligibility.message ||
+                    'Upgrade to Premium or above to unlock verified badge eligibility.'}
+                </p>
+                <Button variant="outline" className="mt-4" onClick={onOpenSubscription}>
+                  Manage Subscription
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-900">Bank Details for Payouts</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs font-semibold uppercase text-slate-500">Bank Name</label>
@@ -205,6 +248,7 @@ export default function OwnerProfilePage({ onOpenDashboard }: OwnerProfilePagePr
                 )}
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>

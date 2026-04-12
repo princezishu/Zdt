@@ -3,11 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "nodemon src/index.js",
+    "dev": "node --watch src/index.js",
+    "dev:nodemon": "nodemon src/index.js",
     "start": "node src/index.js",
     "prepare:india-villages": "node scripts/prepare-india-village-data.js",
     "seed:demo": "node scripts/seed-demo-accounts-and-listings.js",
     "seed:owner-panel": "node scripts/seed-owner-panel-demo.js",
+    "cleanup:demo:keep-main-admin": "node scripts/cleanup-demo-data-keep-main-admin.js",
     "fix:chat-sender-names": "node scripts/backfill-chat-sender-names.js",
     "sql:run": "node scripts/run-sql-file.js",
     "migrate:rbac:phase1": "node scripts/run-sql-file.js sql/migrations/20260218_rbac_user_roles_phase1.sql",
@@ -17,15 +19,21 @@
     "migrate:uuid:contract": "node scripts/run-sql-file.js sql/migrations/20260218_uuid_phase3_contract_core.sql --uuid-cutover-confirm"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.103.0",
     "bcryptjs": "^2.4.3",
     "bullmq": "^3.16.2",
+    "cloudinary": "^2.9.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
-    "fast-xml-parser": "^5.3.6",
+    "fast-xml-parser": "^5.4.2",
+    "helmet": "^8.1.0",
     "ioredis": "^5.9.3",
+    "jose": "^5.10.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "pg": "^8.18.0",
@@ -33,6 +41,10 @@
     "socket.io": "^4.8.3",
     "undici": "^7.22.0",
     "zod": "^4.3.5"
+  },
+  "overrides": {
+    "minimatch": "^5.1.8",
+    "qs": "^6.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"

@@ -23,7 +23,7 @@ function formatDateTime(value: string): string {
 }
 
 export default function AdminInfraSubscribersPage() {
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState('session');
   const [stateName, setStateName] = useState('');
   const [district, setDistrict] = useState('');
   const [city, setCity] = useState('');
@@ -95,10 +95,7 @@ export default function AdminInfraSubscribersPage() {
     setError('');
     setMessage('');
 
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
 
     const confirmed = window.confirm('Delete this subscriber? This cannot be undone.');
     if (!confirmed) return;
@@ -126,13 +123,13 @@ export default function AdminInfraSubscribersPage() {
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <label className="space-y-1 xl:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Admin Token (required)
+                Admin Session
               </p>
               <Input
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 type="password"
-                placeholder="Enter ADMIN_TOKEN"
+                placeholder="Admin session is active"
                 className="h-11 bg-white"
               />
             </label>
@@ -304,3 +301,4 @@ export default function AdminInfraSubscribersPage() {
     </section>
   );
 }
+

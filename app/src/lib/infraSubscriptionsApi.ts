@@ -51,7 +51,7 @@ export async function getInfraSubscriptions(
     q?: string;
     includeInactive?: boolean;
   },
-  adminToken: string
+  _adminToken: string
 ) {
   const query = new URLSearchParams();
   if (params.state?.trim()) query.set('state', params.state.trim());
@@ -62,18 +62,11 @@ export async function getInfraSubscriptions(
   if (params.includeInactive) query.set('include_inactive', 'true');
 
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return apiRequest<{ items: InfraSubscriptionItem[] }>(`/api/infra-subscriptions${suffix}`, {
-    headers: {
-      'x-admin-token': adminToken,
-    },
-  });
+  return apiRequest<{ items: InfraSubscriptionItem[] }>(`/api/infra-subscriptions${suffix}`);
 }
 
-export async function deleteInfraSubscription(id: number, adminToken: string) {
+export async function deleteInfraSubscription(id: number, _adminToken: string) {
   return apiRequest<{ ok: boolean }>(`/api/infra-subscriptions/${id}`, {
     method: 'DELETE',
-    headers: {
-      'x-admin-token': adminToken,
-    },
   });
 }

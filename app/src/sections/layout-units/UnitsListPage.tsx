@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Filter, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -190,7 +190,7 @@ export default function UnitsListPage({
     };
   }, [token, selectedBuildingId, selectedFloorId, user?.role, onSelectionChange]);
 
-  const refreshUnits = async () => {
+  const refreshUnits = useCallback(async () => {
     try {
       setLoadingUnits(true);
       setError('');
@@ -217,14 +217,27 @@ export default function UnitsListPage({
     } finally {
       setLoadingUnits(false);
     }
-  };
+  }, [
+    areaMax,
+    areaMin,
+    categoryFilter,
+    listingTypeFilter,
+    priceMax,
+    priceMin,
+    search,
+    selectedBuildingId,
+    selectedFloorId,
+    statusFilter,
+    token,
+    unitTypeFilter,
+  ]);
 
   useEffect(() => {
     if (!token || user?.role !== 'admin') {
       return;
     }
     void refreshUnits();
-  }, [token, user?.role, selectedBuildingId, selectedFloorId, statusFilter, unitTypeFilter, categoryFilter, listingTypeFilter]);
+  }, [token, user?.role, refreshUnits]);
 
   if (!user || user.role !== 'admin') {
     return (

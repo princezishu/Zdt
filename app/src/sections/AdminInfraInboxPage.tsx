@@ -239,7 +239,7 @@ function parseCitiesText(value: string): string[] {
 }
 
 export default function AdminInfraInboxPage() {
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState('session');
   const [status, setStatus] = useState<InfraIngestStatus>('NEW');
   const [q, setQ] = useState('');
 
@@ -459,11 +459,6 @@ export default function AdminInfraInboxPage() {
     setError('');
     setMessage('');
 
-    if (!adminToken.trim()) {
-      setError('Admin token required.');
-      return;
-    }
-
     const reason = window.prompt('Ignore reason (optional):') || '';
     try {
       await ignoreInfraIngestItem(id, reason, adminToken.trim());
@@ -477,11 +472,6 @@ export default function AdminInfraInboxPage() {
   const publishNow = async (force = false) => {
     setError('');
     setMessage('');
-
-    if (!adminToken.trim()) {
-      setError('Admin token required.');
-      return;
-    }
     if (!publishId) return;
 
     const cities = parseCitiesText(form.citiesText);
@@ -554,7 +544,7 @@ export default function AdminInfraInboxPage() {
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 type="password"
-                placeholder="Enter ADMIN_TOKEN"
+                placeholder="Admin session is active"
                 className="h-11 bg-white"
               />
             </label>
@@ -961,3 +951,4 @@ export default function AdminInfraInboxPage() {
     </section>
   );
 }
+

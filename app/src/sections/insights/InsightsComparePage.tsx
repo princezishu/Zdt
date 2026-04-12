@@ -46,7 +46,7 @@ function formatDateTime(value?: string | null) {
 
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
-  return `?${Number(value).toLocaleString('en-IN')}`;
+  return `INR ${Number(value).toLocaleString('en-IN')}`;
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -142,7 +142,7 @@ export default function InsightsComparePage({ token: _token, user: _user }: Insi
   return (
     <section className="min-h-screen pb-16 pt-28 text-slate-900">
       <div className="page-container zdt-page-stack">
-        <div className="zdt-panel-hero rounded-3xl border p-6 shadow-xl">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">News & Insights</p>
           <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">City Price Compare</h1>
           <p className="mt-2 text-sm text-slate-600">
@@ -225,10 +225,10 @@ export default function InsightsComparePage({ token: _token, user: _user }: Insi
                       <BarChart data={latestBarData} margin={{ top: 10, right: 12, left: 0, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="city" tick={{ fontSize: 11 }} />
-                        <YAxis tickFormatter={(value) => `?${Number(value).toLocaleString('en-IN')}`} tick={{ fontSize: 11 }} />
+                        <YAxis tickFormatter={(value) => `INR ${Number(value).toLocaleString('en-IN')}`} tick={{ fontSize: 11 }} />
                         <Tooltip formatter={(value: number) => formatMoney(Number(value))} />
                         <Legend />
-                        <Bar dataKey="avgPriceSqft" name="Avg ?/sqft" fill="#8A7435" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="avgPriceSqft" name="Avg INR/sqft" fill="#8A7435" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -245,7 +245,7 @@ export default function InsightsComparePage({ token: _token, user: _user }: Insi
                       <LineChart data={seriesData} margin={{ top: 10, right: 12, left: 0, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                        <YAxis tickFormatter={(value) => `?${Number(value).toLocaleString('en-IN')}`} tick={{ fontSize: 11 }} />
+                        <YAxis tickFormatter={(value) => `INR ${Number(value).toLocaleString('en-IN')}`} tick={{ fontSize: 11 }} />
                         <Tooltip formatter={(value: number) => formatMoney(Number(value))} />
                         <Legend />
                         {selectedCities.map((cityName, index) => (
@@ -297,7 +297,7 @@ export default function InsightsComparePage({ token: _token, user: _user }: Insi
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">City</th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Avg ?/sqft</th>
+                      <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Avg INR/sqft</th>
                       <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">MoM %</th>
                       <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">YoY %</th>
                       <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Period</th>

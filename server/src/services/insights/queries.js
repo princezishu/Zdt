@@ -8,6 +8,7 @@ import {
   truncate,
   withCache,
 } from './helpers.js';
+import { fetchWithRetry } from '../../utils/fetchWithRetry.js';
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -15,6 +16,58 @@ const UUID_REGEX =
 const NEWS_TTL_MS = 2 * 60 * 1000;
 const MARKET_TTL_MS = 5 * 60 * 1000;
 const PROJECTS_TTL_MS = 3 * 60 * 1000;
+const GLOBAL_PLACE_TTL_MS = 30 * 60 * 1000;
+const USD_INR_FX_RATE = Number(process.env.USD_INR_FX_RATE || 83);
+
+const COUNTRY_PRICE_MULTIPLIERS = {
+  india: 1,
+  'united states': 6.5,
+  usa: 6.5,
+  canada: 4.8,
+  mexico: 2.2,
+  brazil: 2.1,
+  'united kingdom': 7.4,
+  uk: 7.4,
+  ireland: 5.6,
+  france: 6.9,
+  germany: 6.4,
+  italy: 5.2,
+  spain: 4.9,
+  portugal: 4.1,
+  netherlands: 7.1,
+  belgium: 6.2,
+  switzerland: 8.4,
+  sweden: 5.5,
+  norway: 6.1,
+  denmark: 6.3,
+  finland: 5.2,
+  poland: 3.2,
+  turkey: 2.9,
+  russia: 2.6,
+  'united arab emirates': 5.7,
+  uae: 5.7,
+  qatar: 5.1,
+  'saudi arabia': 3.6,
+  oman: 3.2,
+  kuwait: 4.1,
+  israel: 6.5,
+  egypt: 2.1,
+  'south africa': 2.6,
+  nigeria: 2.2,
+  kenya: 2.3,
+  ethiopia: 1.8,
+  china: 3.8,
+  japan: 6.2,
+  'south korea': 5.4,
+  singapore: 8.5,
+  malaysia: 3.2,
+  indonesia: 2.8,
+  thailand: 3.1,
+  vietnam: 2.6,
+  philippines: 2.7,
+  australia: 6.4,
+  'new zealand': 6.1,
+};
 
 function clampInt(value, fallback, min, max) {
   const parsed = Number(value);
@@ -67,6 +120,7 @@ function mapNewsRow(row) {
     snippet: row.snippet,
     category: row.category,
     publishedAt: row.published_at,
+    expiresAt: row.expires_at || null,
     createdAt: row.created_at,
     clickCount: Number(row.click_count || 0),
   };
@@ -82,6 +136,157 @@ function mapMarketRow(row) {
     source: row.source,
     fetchedAt: row.fetched_at,
   };
+}
+
+function normalizeLocationToken(value) {
+  return toStringOrEmpty(value).replace(/\s+/g, ' ').trim();
+}
+
+function toUniqueLower(values) {
+  const normalized = values
+    .map((value) => normalizeLocationToken(value))
+    .filter(Boolean)
+    .map((value) => value.toLowerCase());
+  return Array.from(new Set(normalized));
+}
+
+function getCountryPriceMultiplier(country) {
+  const normalized = normalizeLocationToken(country).toLowerCase();
+  if (!normalized) return 1;
+  return COUNTRY_PRICE_MULTIPLIERS[normalized] || 1.6;
+}
+
+function hashTextToUnitInterval(value) {
+  const text = toStringOrEmpty(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 1000000) / 1000000;
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function buildPlaceVariationFactor(place, resolved) {
+  const seed = `${place}|${resolved.city}|${resolved.state}|${resolved.country}`;
+  const hashUnit = hashTextToUnitInterval(seed);
+  const hashFactor = 0.88 + hashUnit * 0.24; // 0.88 -> 1.12
+
+  const lat = Number.isFinite(resolved.lat) ? resolved.lat : 0;
+  const lon = Number.isFinite(resolved.lon) ? resolved.lon : 0;
+  const latWave = (Math.sin((lat * Math.PI) / 180) + 1) / 2; // 0 -> 1
+  const lonWave = (Math.cos((lon * Math.PI) / 180) + 1) / 2; // 0 -> 1
+  const coordFactor = 0.94 + ((latWave + lonWave) / 2) * 0.16; // 0.94 -> 1.10
+
+  const cityBias = resolved.city ? 1.03 : 0.97;
+  return clampNumber(hashFactor * coordFactor * cityBias, 0.82, 1.22);
+}
+
+async function geocodePlace(place) {
+  const query = normalizeLocationToken(place);
+  if (!query) return null;
+
+  const params = new URLSearchParams({
+    q: query,
+    format: 'jsonv2',
+    addressdetails: '1',
+    limit: '1',
+    'accept-language': 'en',
+  });
+
+  const response = await fetchWithRetry(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    retries: 2,
+    timeoutMs: 15000,
+    headers: {
+      Accept: 'application/json',
+      'User-Agent':
+        process.env.INSIGHTS_GEOCODER_USER_AGENT ||
+        'ZDTRealtyInsights/1.0 (land-price-search)',
+    },
+  });
+
+  const items = await response.json().catch(() => []);
+  if (!Array.isArray(items) || items.length === 0) {
+    return null;
+  }
+
+  const first = items[0] && typeof items[0] === 'object' ? items[0] : null;
+  if (!first) return null;
+  const address = first.address && typeof first.address === 'object' ? first.address : {};
+
+  return {
+    displayName: normalizeLocationToken(first.display_name),
+    lat: Number(first.lat),
+    lon: Number(first.lon),
+    city: normalizeLocationToken(
+      address.city ||
+        address.town ||
+        address.village ||
+        address.hamlet ||
+        address.county ||
+        address.state_district ||
+        address.state
+    ),
+    state: normalizeLocationToken(address.state || address.region || address.county || ''),
+    country: normalizeLocationToken(address.country || ''),
+  };
+}
+
+async function getLatestMarketBaseline() {
+  const rows = await pool.query(
+    `
+      WITH latest_per_city AS (
+        SELECT DISTINCT ON (LOWER(city))
+          city,
+          avg_price_sqft
+        FROM market_city_prices
+        ORDER BY LOWER(city), period DESC, fetched_at DESC
+      )
+      SELECT
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY avg_price_sqft) AS median_price_sqft,
+        AVG(avg_price_sqft)::NUMERIC AS avg_price_sqft
+      FROM latest_per_city
+    `
+  );
+
+  const median = toMoney(rows.rows[0]?.median_price_sqft);
+  const avg = toMoney(rows.rows[0]?.avg_price_sqft);
+  return median || avg || 6500;
+}
+
+async function findMatchedMarketCity(candidateNames) {
+  const normalized = toUniqueLower(candidateNames);
+  if (normalized.length === 0) return null;
+
+  const rows = await pool.query(
+    `
+      WITH latest_per_city AS (
+        SELECT DISTINCT ON (LOWER(city))
+          city,
+          period,
+          avg_price_sqft,
+          mom_change,
+          yoy_change,
+          source,
+          fetched_at
+        FROM market_city_prices
+        ORDER BY LOWER(city), period DESC, fetched_at DESC
+      )
+      SELECT city, period, avg_price_sqft, mom_change, yoy_change, source, fetched_at
+      FROM latest_per_city
+      WHERE LOWER(city) = ANY($1::text[])
+      ORDER BY avg_price_sqft DESC
+      LIMIT 1
+    `,
+    [normalized]
+  );
+
+  if (rows.rowCount === 0) return null;
+  return mapMarketRow(rows.rows[0]);
 }
 
 function mapAnnouncementRow(row) {
@@ -107,7 +312,9 @@ function mapAnnouncementRow(row) {
 }
 
 function buildNewsWhere(filters) {
-  const clauses = [];
+  const clauses = [
+    `COALESCE(na.expires_at, COALESCE(na.published_at, na.created_at) + INTERVAL '10 days') > NOW()`,
+  ];
   const values = [];
 
   const source = toStringOrEmpty(filters.source);
@@ -244,6 +451,7 @@ export async function listNewsFeed(options = {}) {
           na.snippet,
           na.category,
           na.published_at,
+          na.expires_at,
           na.created_at,
           COALESCE(clicks.total_clicks, 0)::INT AS click_count
         FROM news_articles na
@@ -286,6 +494,7 @@ export async function listNewsFeed(options = {}) {
           na.snippet,
           na.category,
           na.published_at,
+          na.expires_at,
           na.created_at,
           COUNT(nc.id)::INT AS click_count
         FROM news_articles na
@@ -294,6 +503,7 @@ export async function listNewsFeed(options = {}) {
         LEFT JOIN news_clicks nc
           ON nc.article_id = na.id
          AND nc.clicked_at >= NOW() - INTERVAL '30 days'
+        WHERE COALESCE(na.expires_at, COALESCE(na.published_at, na.created_at) + INTERVAL '10 days') > NOW()
         GROUP BY na.id, ns.name
         ORDER BY click_count DESC, COALESCE(na.published_at, na.created_at) DESC
         LIMIT 6
@@ -319,6 +529,7 @@ export async function listNewsFeed(options = {}) {
         FROM news_articles
         WHERE category IS NOT NULL
           AND category <> ''
+          AND COALESCE(expires_at, COALESCE(published_at, created_at) + INTERVAL '10 days') > NOW()
         ORDER BY category ASC
         LIMIT 80
       `
@@ -329,6 +540,7 @@ export async function listNewsFeed(options = {}) {
         SELECT
           MAX(COALESCE(published_at, created_at)) AS last_updated
         FROM news_articles
+        WHERE COALESCE(expires_at, COALESCE(published_at, created_at) + INTERVAL '10 days') > NOW()
       `
     );
 
@@ -362,6 +574,7 @@ export async function recordNewsClick({ articleId, userId = null }) {
       SELECT id, $2, NOW()
       FROM news_articles
       WHERE id = $1
+        AND COALESCE(expires_at, COALESCE(published_at, created_at) + INTERVAL '10 days') > NOW()
       RETURNING id
     `,
     [articleId, userId]
@@ -388,6 +601,7 @@ export async function listNewsSources() {
       FROM news_sources ns
       LEFT JOIN news_articles na
         ON na.source_id = ns.id
+       AND COALESCE(na.expires_at, COALESCE(na.published_at, na.created_at) + INTERVAL '10 days') > NOW()
       GROUP BY ns.id
       ORDER BY ns.is_active DESC, ns.name ASC
     `
@@ -680,6 +894,114 @@ export async function listMarketCompare(options = {}) {
           ).toISOString()
         : null,
       dataSource: 'Market city daily snapshots (provider or simulation fallback).',
+    };
+  });
+}
+
+export async function getMarketPlacePriceEstimate(options = {}) {
+  const place = truncate(toStringOrEmpty(options.place), 180);
+  if (!place || place.length < 2) {
+    return null;
+  }
+
+  const cacheKey = `insights:market:place-price:v3:${place.toLowerCase()}`;
+  return withCache(cacheKey, GLOBAL_PLACE_TTL_MS, async () => {
+    const resolved = await geocodePlace(place);
+    if (!resolved) return null;
+
+    const primaryName = normalizeLocationToken((resolved.displayName || '').split(',')[0] || '');
+    const matchedCity = await findMatchedMarketCity([
+      resolved.city,
+      primaryName,
+      resolved.state,
+      resolved.country,
+      place,
+    ]);
+
+    const baseline = await getLatestMarketBaseline();
+    const countryMultiplier = getCountryPriceMultiplier(resolved.country);
+    const placeFactor = buildPlaceVariationFactor(place, resolved);
+    const queryLower = place.toLowerCase();
+    const cityLower = String(matchedCity?.city || '').toLowerCase();
+    const isDirectCityMatch = Boolean(cityLower && queryLower.includes(cityLower));
+
+    const estimatedInrPerSqft = (() => {
+      if (matchedCity?.avgPriceSqft && Number.isFinite(Number(matchedCity.avgPriceSqft))) {
+        const matchedBase = Number(matchedCity.avgPriceSqft);
+        if (isDirectCityMatch) {
+          return matchedBase;
+        }
+        return matchedBase * clampNumber(placeFactor, 0.9, 1.1);
+      }
+      return Math.max(900, baseline * countryMultiplier * placeFactor);
+    })();
+
+    const inrPerSqft = toMoney(estimatedInrPerSqft) || 0;
+    const usdPerSqft =
+      Number.isFinite(USD_INR_FX_RATE) && USD_INR_FX_RATE > 0
+        ? roundTo2(inrPerSqft / USD_INR_FX_RATE) || 0
+        : 0;
+
+    const confidence =
+      matchedCity && isDirectCityMatch ? 'high' : matchedCity || countryMultiplier !== 1 ? 'medium' : 'low';
+    const basis = matchedCity
+      ? 'matched_city_snapshot'
+      : countryMultiplier !== 1
+      ? 'country_adjusted_estimate'
+      : 'global_baseline_estimate';
+
+    const priceType = matchedCity && isDirectCityMatch ? 'market_snapshot' : 'predicted';
+    const isPredicted = priceType === 'predicted';
+    const matchedMom =
+      matchedCity && Number.isFinite(Number(matchedCity.momChange)) ? Number(matchedCity.momChange) : null;
+    const projected12MonthChangePct =
+      matchedMom !== null
+        ? clampNumber((Math.pow(1 + clampNumber(matchedMom / 100, -0.03, 0.03), 12) - 1) * 100, -28, 45)
+        : clampNumber(6 + Math.max(countryMultiplier - 1, 0) * 2.4, 3, 18);
+    const projected12MonthPricePerSqftInr =
+      toMoney(inrPerSqft * (1 + projected12MonthChangePct / 100)) || inrPerSqft;
+    const projected12MonthPricePerSqftUsd =
+      Number.isFinite(USD_INR_FX_RATE) && USD_INR_FX_RATE > 0
+        ? roundTo2(projected12MonthPricePerSqftInr / USD_INR_FX_RATE) || 0
+        : 0;
+    const caption = isPredicted
+      ? 'Predicted value. Actual plot prices may differ by street, zoning, access, and deal terms.'
+      : 'Latest market snapshot for this place. Actual plot price may still differ by locality.';
+
+    return {
+      query: place,
+      resolvedPlace: resolved.displayName || place,
+      location: {
+        city: resolved.city || null,
+        state: resolved.state || null,
+        country: resolved.country || null,
+        latitude: Number.isFinite(resolved.lat) ? resolved.lat : null,
+        longitude: Number.isFinite(resolved.lon) ? resolved.lon : null,
+      },
+      estimate: {
+        priceType,
+        isPredicted,
+        caption,
+        plotLandPricePerSqftInr: inrPerSqft,
+        plotLandPricePerSqftUsd: usdPerSqft,
+        projected12MonthPricePerSqftInr,
+        projected12MonthPricePerSqftUsd,
+        projected12MonthChangePct: roundTo2(projected12MonthChangePct) || 0,
+        landPricePerSqftInr: inrPerSqft,
+        landPricePerSqftUsd: usdPerSqft,
+        confidence,
+        basis,
+        matchedCity: matchedCity?.city || null,
+        matchedCityPriceInr: matchedCity?.avgPriceSqft || null,
+        countryMultiplier: roundTo2(countryMultiplier) || 1,
+        placeFactor: roundTo2(placeFactor) || 1,
+      },
+      lastUpdated:
+        matchedCity?.fetchedAt ||
+        (Number.isFinite(Date.now()) ? new Date().toISOString() : null),
+      dataSource:
+        matchedCity?.source ||
+        'OpenStreetMap geocoding + market baseline estimate with country and place variation (INR/sqft).',
     };
   });
 }

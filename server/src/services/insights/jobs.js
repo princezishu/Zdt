@@ -267,9 +267,10 @@ export async function runNewsIngestJob(options = {}) {
                 snippet,
                 category,
                 published_at,
+                expires_at,
                 created_at
               )
-              VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+              VALUES ($1, $2, $3, $4, $5, $6, $7, ($7::timestamptz + INTERVAL '10 days'), NOW())
               ON CONFLICT (url) DO NOTHING
               RETURNING id
             `,
@@ -335,6 +336,61 @@ export async function runNewsIngestJob(options = {}) {
       startedAt,
       finishedAt,
     };
+  }
+}
+
+export async function runNewsExpiryCleanupJob(options = {}) {
+  const startedAt = new Date();
+  let itemsFetched = 0;
+  let itemsInserted = 0;
+
+  try {
+    const deleted = await pool.query(
+      `
+        DELETE FROM news_articles
+        WHERE expires_at <= NOW()
+        RETURNING id
+      `
+    );
+
+    itemsFetched = Number(deleted.rowCount || 0);
+    itemsInserted = itemsFetched;
+    const finishedAt = new Date();
+
+    await logJobRun({
+      jobName: options.jobName || 'news_expiry_cleanup_job',
+      status: 'success',
+      startedAt,
+      finishedAt,
+      itemsFetched,
+      itemsInserted,
+      error: null,
+    });
+
+    if (itemsFetched > 0) {
+      clearInsightsCache('insights:news');
+    }
+
+    return {
+      status: 'success',
+      itemsFetched,
+      itemsInserted,
+      startedAt,
+      finishedAt,
+    };
+  } catch (error) {
+    const finishedAt = new Date();
+    await logJobRun({
+      jobName: options.jobName || 'news_expiry_cleanup_job',
+      status: 'fail',
+      startedAt,
+      finishedAt,
+      itemsFetched,
+      itemsInserted,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    throw error;
   }
 }
 
@@ -564,6 +620,7 @@ export function startInsightsScheduler() {
   };
 
   schedule('news_ingest_job', '0 */2 * * *', runNewsIngestJob);
+  schedule('news_expiry_cleanup_job', '30 2 * * *', runNewsExpiryCleanupJob);
   schedule('market_data_job', '0 3 * * *', runMarketDataJob);
   schedule('upcoming_projects_job', '0 4 * * *', runUpcomingProjectsJob);
 
@@ -571,13 +628,16 @@ export function startInsightsScheduler() {
     void runNewsIngestJob({ jobName: 'news_ingest_job_startup' });
   }, 4000);
   setTimeout(() => {
+    void runNewsExpiryCleanupJob({ jobName: 'news_expiry_cleanup_job_startup' });
+  }, 7000);
+  setTimeout(() => {
     void runMarketDataJob({ jobName: 'market_data_job_startup' });
   }, 10000);
   setTimeout(() => {
     void runUpcomingProjectsJob({ jobName: 'upcoming_projects_job_startup' });
   }, 16000);
 
-  console.log('[Insights] Scheduler started (news every 2h, market 03:00 IST, projects 04:00 IST).');
+  console.log('[Insights] Scheduler started (news every 2h, expiry cleanup 02:30 IST, market 03:00 IST, projects 04:00 IST).');
 }
 
 export function stopInsightsScheduler() {
@@ -587,4 +647,3 @@ export function stopInsightsScheduler() {
   schedulerTasks.length = 0;
   schedulerStarted = false;
 }
-

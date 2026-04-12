@@ -63,7 +63,7 @@ interface EditableDealState {
 }
 
 export default function AdminGroupDealsPage() {
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState('session');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchText, setSearchText] = useState('');
   const [requestStatusFilter, setRequestStatusFilter] = useState<RequestStatusFilter>('NEW');
@@ -144,10 +144,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const loadDeals = async () => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       setLoading(true);
       setError('');
@@ -169,10 +166,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const loadRequests = async () => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       setLoadingRequests(true);
       setError('');
@@ -197,10 +191,7 @@ export default function AdminGroupDealsPage() {
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     if (!createPayload.projectName.trim()) {
       setError('Project name is required.');
       return;
@@ -250,10 +241,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const handleSaveRow = async (deal: GroupDealItem) => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
 
     const editing = editableRows[deal.dealCode];
     if (!editing) return;
@@ -281,10 +269,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const handleLoadJoins = async (dealCode: string) => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       setLoadingJoins(true);
       setError('');
@@ -299,10 +284,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const handleExportJoins = async (dealCode: string) => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       const blob = await adminDownloadGroupDealJoinsCsv(adminToken.trim(), dealCode);
       const url = URL.createObjectURL(blob);
@@ -320,10 +302,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const handleApproveCreateRequest = async (requestItem: GroupDealRequestItem) => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       setRequestActionId(requestItem.id);
       setError('');
@@ -342,10 +321,7 @@ export default function AdminGroupDealsPage() {
   };
 
   const handleRejectRequest = async (requestItem: GroupDealRequestItem) => {
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     try {
       setRequestActionId(requestItem.id);
       setError('');
@@ -395,7 +371,7 @@ export default function AdminGroupDealsPage() {
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 type="password"
-                placeholder="Enter ADMIN_TOKEN"
+                placeholder="Admin session is active"
                 className="h-11 bg-white"
               />
             </label>
@@ -1008,3 +984,4 @@ export default function AdminGroupDealsPage() {
     </section>
   );
 }
+

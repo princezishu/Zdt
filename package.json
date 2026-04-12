@@ -1,0 +1,7 @@
+{
+  "name": "zdt-realty-workspace",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix server start"
+  }
+}

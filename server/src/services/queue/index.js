@@ -8,6 +8,17 @@ const queueRuntime = {
   workers: {},
 };
 
+const MINIMUM_BULLMQ_REDIS_VERSION = '5.0.0';
+
+function setQueueUnavailable(reason) {
+  queueRuntime.enabled = false;
+  queueRuntime.reason = String(reason || 'Queue system not initialized').trim();
+  queueRuntime.connection = null;
+  queueRuntime.queues = {};
+  queueRuntime.workers = {};
+  return { ...queueRuntime };
+}
+
 function formatQueueError(error) {
   const message = String(error?.message || error || 'Unknown queue error').trim();
   const code = String(error?.code || '').trim();
@@ -15,6 +26,57 @@ function formatQueueError(error) {
     return `${code} ${message}`;
   }
   return message;
+}
+
+function normalizeVersionParts(value) {
+  const version = String(value || '').trim();
+  if (!version) return null;
+  const rawParts = version.split('.');
+  const numericParts = rawParts.map((part) => Number.parseInt(part, 10));
+  if (numericParts.some((part) => Number.isNaN(part) || part < 0)) {
+    return null;
+  }
+  while (numericParts.length < 3) {
+    numericParts.push(0);
+  }
+  return numericParts.slice(0, 3);
+}
+
+function isVersionGte(currentVersion, minimumVersion) {
+  const current = normalizeVersionParts(currentVersion);
+  const minimum = normalizeVersionParts(minimumVersion);
+  if (!current || !minimum) return false;
+
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (current[index] > minimum[index]) return true;
+    if (current[index] < minimum[index]) return false;
+  }
+  return true;
+}
+
+function parseRedisVersionFromInfo(infoText) {
+  const text = String(infoText || '');
+  const match = text.match(/^redis_version:([^\r\n]+)/m);
+  return match ? String(match[1] || '').trim() : '';
+}
+
+async function fetchRedisVersion(connection) {
+  const info = await connection.info('server');
+  return parseRedisVersionFromInfo(info);
+}
+
+async function teardownQueueRuntime() {
+  const workers = Object.values(queueRuntime.workers || {});
+  const closeWorkerTasks = workers.map((worker) => worker?.close?.().catch?.(() => undefined));
+  await Promise.all(closeWorkerTasks);
+
+  if (queueRuntime.connection?.disconnect) {
+    queueRuntime.connection.disconnect();
+  }
+
+  queueRuntime.connection = null;
+  queueRuntime.queues = {};
+  queueRuntime.workers = {};
 }
 
 async function pingRedisWithTimeout(connection, timeoutMs) {
@@ -40,9 +102,7 @@ async function pingRedisWithTimeout(connection, timeoutMs) {
 export async function initializeQueueSystem() {
   const redisUrl = (process.env.REDIS_URL || '').trim();
   if (!redisUrl) {
-    queueRuntime.enabled = false;
-    queueRuntime.reason = 'REDIS_URL not configured';
-    return { ...queueRuntime };
+    return setQueueUnavailable('REDIS_URL not configured');
   }
 
   let Queue;
@@ -52,10 +112,7 @@ export async function initializeQueueSystem() {
     ({ Queue, Worker } = await import('bullmq'));
     ({ default: IORedis } = await import('ioredis'));
   } catch (error) {
-    queueRuntime.enabled = false;
-    queueRuntime.reason = 'bullmq/ioredis modules not installed';
-    console.warn('[QUEUE] Redis queue disabled:', queueRuntime.reason);
-    return { ...queueRuntime };
+    return setQueueUnavailable('bullmq/ioredis modules not installed');
   }
 
   const connection = new IORedis(redisUrl, {
@@ -79,14 +136,23 @@ export async function initializeQueueSystem() {
   try {
     await pingRedisWithTimeout(connection, pingTimeoutMs);
   } catch (error) {
-    queueRuntime.enabled = false;
-    queueRuntime.reason = `Redis connection failed (${formatQueueError(error)})`;
-    queueRuntime.connection = null;
-    queueRuntime.queues = {};
-    queueRuntime.workers = {};
     connection.disconnect();
-    console.warn('[QUEUE] Redis queue disabled:', queueRuntime.reason);
-    return { ...queueRuntime };
+    return setQueueUnavailable(`Redis connection failed (${formatQueueError(error)})`);
+  }
+
+  let redisVersion = '';
+  try {
+    redisVersion = await fetchRedisVersion(connection);
+  } catch (error) {
+    connection.disconnect();
+    return setQueueUnavailable(`Redis INFO failed (${formatQueueError(error)})`);
+  }
+
+  if (!isVersionGte(redisVersion, MINIMUM_BULLMQ_REDIS_VERSION)) {
+    connection.disconnect();
+    return setQueueUnavailable(
+      `Redis ${redisVersion || 'unknown'} is incompatible with BullMQ (requires >= ${MINIMUM_BULLMQ_REDIS_VERSION})`
+    );
   }
 
   const queueNames = {
@@ -97,37 +163,44 @@ export async function initializeQueueSystem() {
     aiTasks: 'ai_async_tasks',
   };
 
-  const queues = {};
-  for (const [key, name] of Object.entries(queueNames)) {
-    queues[key] = new Queue(name, { connection });
-  }
-
-  const analyticsWorker = new Worker(
-    queueNames.analytics,
-    async (job) => runAnalyticsAggregationJob(job?.data?.dayDate || null),
-    { connection }
-  );
-
-  analyticsWorker.on('failed', (job, error) => {
-    console.error(`[QUEUE] Analytics job failed (id=${job?.id || 'n/a'}):`, error);
-  });
-
-  analyticsWorker.on('completed', (job) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[QUEUE] Analytics job completed (id=${job?.id || 'n/a'})`);
+  try {
+    const queues = {};
+    for (const [key, name] of Object.entries(queueNames)) {
+      queues[key] = new Queue(name, { connection });
     }
-  });
 
-  queueRuntime.enabled = true;
-  queueRuntime.reason = '';
-  queueRuntime.connection = connection;
-  queueRuntime.queues = queues;
-  queueRuntime.workers = {
-    analytics: analyticsWorker,
-  };
+    const analyticsWorker = new Worker(
+      queueNames.analytics,
+      async (job) => runAnalyticsAggregationJob(job?.data?.dayDate || null),
+      { connection }
+    );
 
-  console.log('[QUEUE] Redis + BullMQ initialized');
+    analyticsWorker.on('failed', (job, error) => {
+      console.error(`[QUEUE] Analytics job failed (id=${job?.id || 'n/a'}):`, error);
+    });
+
+    analyticsWorker.on('completed', (job) => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[QUEUE] Analytics job completed (id=${job?.id || 'n/a'})`);
+      }
+    });
+
+    queueRuntime.enabled = true;
+    queueRuntime.reason = '';
+    queueRuntime.connection = connection;
+    queueRuntime.queues = queues;
+    queueRuntime.workers = {
+      analytics: analyticsWorker,
+    };
+  } catch (error) {
+    connection.disconnect();
+    return setQueueUnavailable(`BullMQ setup failed (${formatQueueError(error)})`);
+  }
   return { ...queueRuntime };
+}
+
+export function markQueueSystemDisabled(reason) {
+  return setQueueUnavailable(reason);
 }
 
 export async function enqueueAnalyticsAggregation(dayDate = null) {
@@ -135,19 +208,28 @@ export async function enqueueAnalyticsAggregation(dayDate = null) {
     return runAnalyticsAggregationJob(dayDate);
   }
 
-  const job = await queueRuntime.queues.analytics.add(
-    'aggregate_daily_listing_analytics',
-    { dayDate },
-    {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 3000,
-      },
-      removeOnComplete: 50,
-      removeOnFail: 100,
-    }
-  );
+  let job;
+  try {
+    job = await queueRuntime.queues.analytics.add(
+      'aggregate_daily_listing_analytics',
+      { dayDate },
+      {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 3000,
+        },
+        removeOnComplete: 50,
+        removeOnFail: 100,
+      }
+    );
+  } catch (error) {
+    queueRuntime.enabled = false;
+    queueRuntime.reason = `Queue enqueue failed (${formatQueueError(error)})`;
+    await teardownQueueRuntime();
+    console.warn('[QUEUE] Falling back to direct analytics execution:', queueRuntime.reason);
+    return runAnalyticsAggregationJob(dayDate);
+  }
 
   return { queued: true, jobId: job.id };
 }

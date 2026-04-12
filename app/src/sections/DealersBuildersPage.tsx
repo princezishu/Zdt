@@ -39,10 +39,43 @@ import { parseApiUser, readOrCreateDeviceId, type AuthUser } from '@/lib/session
 type CompanyType = 'dealer' | 'builder';
 type CompanyRole = 'owner' | 'member';
 type ProjectStatus = 'pending' | 'approved';
+type PortalSection = 'overview' | 'branding' | 'projects' | 'team';
 
 const COMPANY_USER_LIMIT = 10;
 
 type FeatureStatus = 'live' | 'coming-soon';
+
+const PORTAL_NAV_ITEMS: Array<{
+  id: PortalSection;
+  label: string;
+  description: string;
+  icon: typeof BarChart3;
+}> = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    description: 'Company snapshot, live modules, and quick actions.',
+    icon: BarChart3,
+  },
+  {
+    id: 'branding',
+    label: 'Branding',
+    description: 'Logo, banners, and company presentation assets.',
+    icon: Megaphone,
+  },
+  {
+    id: 'projects',
+    label: 'Projects',
+    description: 'Create projects and track approvals from one place.',
+    icon: Building2,
+  },
+  {
+    id: 'team',
+    label: 'Team',
+    description: 'Invite staff, manage seats, and control access.',
+    icon: Users,
+  },
+];
 
 const DASHBOARD_MODULES: Array<{
   title: string;
@@ -253,6 +286,7 @@ interface DealersBuildersPageProps {
   onAuthSuccess: (payload: { token: string; user: AuthUser }) => void;
   onLogout: () => void;
   initialAuthMode?: 'login' | 'register';
+  workspaceMode?: boolean;
   onOpenCompanyLogin?: () => void;
   onOpenCompanyRegister?: () => void;
 }
@@ -263,6 +297,7 @@ export default function DealersBuildersPage({
   onAuthSuccess,
   onLogout,
   initialAuthMode = 'login',
+  workspaceMode = false,
   onOpenCompanyLogin,
   onOpenCompanyRegister,
 }: DealersBuildersPageProps) {
@@ -285,6 +320,7 @@ export default function DealersBuildersPage({
   const [bannerCropOpen, setBannerCropOpen] = useState(false);
   const [bannerCropSrc, setBannerCropSrc] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>(initialAuthMode);
+  const [portalSection, setPortalSection] = useState<PortalSection>('overview');
 
   const company = me?.company ?? null;
   const membership = me?.membership ?? null;
@@ -292,8 +328,8 @@ export default function DealersBuildersPage({
 
   const title = useMemo(() => {
     if (!company) return 'Dealer/Builder Portal';
-    return `${company.name} Portal`;
-  }, [company]);
+    return workspaceMode ? `${company.name} Workspace` : `${company.name} Portal`;
+  }, [company, workspaceMode]);
 
   const clearBannerAfterDelay = () => {
     window.setTimeout(() => setMessage(''), 2500);
@@ -367,6 +403,10 @@ export default function DealersBuildersPage({
   useEffect(() => {
     setAuthMode(initialAuthMode);
   }, [initialAuthMode]);
+
+  useEffect(() => {
+    setPortalSection('overview');
+  }, [company?.id]);
 
   const uploadCompanyLogo = async () => {
     if (!token || !pendingLogoDataUrl) return;
@@ -898,6 +938,55 @@ export default function DealersBuildersPage({
     return `${count}/${max} users`;
   }, [me]);
 
+  const approvedProjectCount = useMemo(
+    () => projects.filter((project) => project.status === 'approved').length,
+    [projects]
+  );
+  const pendingProjectCount = useMemo(
+    () => projects.filter((project) => project.status === 'pending').length,
+    [projects]
+  );
+  const activeBannerCount = useMemo(
+    () => banners.filter((banner) => banner.isActive).length,
+    [banners]
+  );
+  const liveModuleCount = useMemo(
+    () => DASHBOARD_MODULES.filter((module) => module.status === 'live').length,
+    []
+  );
+  const maxUserSeats = me?.maxUsers ?? COMPANY_USER_LIMIT;
+  const showBrandingSection = portalSection === 'overview' || portalSection === 'branding';
+  const showProjectsSection = portalSection === 'overview' || portalSection === 'projects';
+  const showTeamSection = portalSection === 'overview' || portalSection === 'team';
+
+  const portalHeading = useMemo(() => {
+    switch (portalSection) {
+      case 'branding':
+        return 'Branding & company profile';
+      case 'projects':
+        return 'Project publishing workspace';
+      case 'team':
+        return 'Team access & user seats';
+      default:
+        return 'Company overview';
+    }
+  }, [portalSection]);
+
+  const portalDescription = useMemo(() => {
+    switch (portalSection) {
+      case 'branding':
+        return 'Keep your logo, banners, and public presentation assets up to date.';
+      case 'projects':
+        return 'Add new launches, track approvals, and keep project content ready for publishing.';
+      case 'team':
+        return isOwner
+          ? 'Invite company members, manage access, and keep the right people in the portal.'
+          : 'View your company access details. Only owners can add or remove team members.';
+      default:
+        return 'Track projects, branding, modules, and team activity from one builder/company dashboard.';
+    }
+  }, [isOwner, portalSection]);
+
   const openLoginAuthView = () => {
     closeOtpRecoveryMode();
     if (onOpenCompanyLogin) {
@@ -924,14 +1013,829 @@ export default function DealersBuildersPage({
     window.location.href = 'mailto:sales@zdtrealty.com?subject=ZDT%20Realty%20Developer%20Partnership';
   };
 
+  const renderCompanyWorkspace = () => {
+    if (!company || !membership) {
+      return null;
+    }
+
+    return (
+      <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="space-y-4">
+          <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-white/10">
+                {company.logoUrl ? (
+                  <img
+                    src={company.logoUrl}
+                    alt={`${company.name} logo`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <BriefcaseBusiness className="h-7 w-7 text-white/75" aria-hidden="true" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">{company.type}</p>
+                <p className="mt-1 truncate text-lg font-semibold">{company.name}</p>
+                <p className="mt-1 text-xs text-white/70">Code {company.code}</p>
+                <p className="mt-2 text-sm text-white/80">
+                  Role: <span className="font-semibold capitalize text-white">{membership.role}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-white/55">Seats</p>
+                <p className="mt-1 text-sm font-semibold text-white">{userLimitText}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-white/55">Status</p>
+                <p className="mt-1 text-sm font-semibold text-white">
+                  {pendingProjectCount > 0 ? `${pendingProjectCount} pending approvals` : 'All caught up'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+            <p className="px-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Portal Navigation
+            </p>
+            <div className="mt-3 grid gap-2">
+              {PORTAL_NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const isActive = portalSection === item.id;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setPortalSection(item.id)}
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${
+                      isActive
+                        ? 'border-blue-200 bg-blue-50 shadow-sm'
+                        : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${
+                          isActive ? 'bg-blue-700 text-white' : 'bg-white text-slate-600'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                        <p className="mt-1 text-xs text-slate-600">{item.description}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Projects</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{projects.length}</p>
+              <p className="mt-1 text-xs text-slate-500">{approvedProjectCount} approved</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Banners</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{activeBannerCount}</p>
+              <p className="mt-1 text-xs text-slate-500">Active on home page</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Modules</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {liveModuleCount}/{DASHBOARD_MODULES.length}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">Already available</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Team Seats</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{me?.userCount ?? 0}</p>
+              <p className="mt-1 text-xs text-slate-500">Of {maxUserSeats} seats used</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={loadAll} disabled={loading}>
+              {loading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+            <Button variant="outline" onClick={onLogout}>
+              Logout
+            </Button>
+          </div>
+        </aside>
+
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
+              Dedicated Company Portal
+            </p>
+            <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-900">{portalHeading}</h2>
+                <p className="mt-2 max-w-2xl text-sm text-slate-600">{portalDescription}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="bg-blue-700 text-white hover:bg-blue-800"
+                  onClick={() => setPortalSection('projects')}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Project
+                </Button>
+                <Button variant="outline" onClick={() => setPortalSection('branding')}>
+                  <Megaphone className="mr-2 h-4 w-4" />
+                  Branding
+                </Button>
+                {isOwner ? (
+                  <Button variant="outline" onClick={() => setPortalSection('team')}>
+                    <Users className="mr-2 h-4 w-4" />
+                    Team
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Approved Projects
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-slate-900">{approvedProjectCount}</p>
+              <p className="mt-2 text-sm text-slate-600">Published-ready company inventory.</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Pending Review
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-slate-900">{pendingProjectCount}</p>
+              <p className="mt-2 text-sm text-slate-600">
+                {isOwner ? 'Needs your approval.' : 'Waiting for owner approval.'}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Active Banners
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-slate-900">{activeBannerCount}</p>
+              <p className="mt-2 text-sm text-slate-600">Visible promotional creatives.</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Live Modules
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-slate-900">{liveModuleCount}</p>
+              <p className="mt-2 text-sm text-slate-600">Current tools ready for your team.</p>
+            </div>
+          </div>
+
+          {showBrandingSection ? (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                      {company.logoUrl ? (
+                        <img
+                          src={company.logoUrl}
+                          alt={`${company.name} logo`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <BriefcaseBusiness className="h-7 w-7 text-slate-500" aria-hidden="true" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Company Profile
+                      </p>
+                      <p className="mt-1 text-xl font-semibold text-slate-900">{company.name}</p>
+                      <p className="mt-2 text-sm text-slate-600">
+                        Company Code: <span className="font-semibold text-slate-900">{company.code}</span>
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Role: <span className="font-semibold capitalize text-slate-900">{membership.role}</span>
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Type: <span className="font-semibold capitalize text-slate-900">{company.type}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                    {userLimitText}
+                  </span>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">Company Logo</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {isOwner
+                      ? 'Upload or replace your logo. This appears across developer/company listings.'
+                      : 'Your company owner can update the public logo for this workspace.'}
+                  </p>
+
+                  {isOwner ? (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        className="h-11 bg-white"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          event.target.value = '';
+                          if (!file) {
+                            return;
+                          }
+
+                          if (!file.type.startsWith('image/')) {
+                            setError('Please select an image file.');
+                            return;
+                          }
+
+                          setError('');
+                          setMessage('');
+                          setPendingLogoDataUrl('');
+                          setPendingLogoBytes(0);
+                          setLogoCropSrc(URL.createObjectURL(file));
+                          setLogoCropOpen(true);
+                        }}
+                      />
+                      {pendingLogoDataUrl ? (
+                        <Button
+                          variant="outline"
+                          onClick={uploadCompanyLogo}
+                          disabled={loading}
+                          className="h-11"
+                        >
+                          {loading ? 'Uploading...' : company.logoUrl ? 'Replace Logo' : 'Upload Logo'}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {pendingLogoDataUrl ? (
+                    <div className="mt-3 flex items-center gap-3">
+                      <img
+                        src={pendingLogoDataUrl}
+                        alt="New company logo preview"
+                        className="h-16 w-16 rounded-2xl border border-slate-200 object-cover"
+                      />
+                      <p className="text-xs text-slate-500">Preview only. Click upload to save.</p>
+                    </div>
+                  ) : null}
+
+                  <ImageCropDialog
+                    open={logoCropOpen}
+                    title="Crop Company Logo"
+                    description="Drag to position and zoom to fit (square)."
+                    src={logoCropSrc}
+                    aspect={1}
+                    outputOptions={{ maxSide: 640, mimeType: 'image/webp', quality: 0.9 }}
+                    maxBytes={600 * 1024}
+                    onCancel={() => {
+                      setLogoCropOpen(false);
+                      setLogoCropSrc('');
+                    }}
+                    onCropped={(result) => {
+                      setPendingLogoDataUrl(result.dataUrl);
+                      setPendingLogoBytes(result.bytes);
+                      setLogoCropOpen(false);
+                      setLogoCropSrc('');
+                    }}
+                  />
+                </div>
+                
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  {DASHBOARD_MODULES.map((module) => {
+                    const Icon = module.icon;
+                    return (
+                      <div key={module.title} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+                              <Icon className="h-5 w-5" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{module.title}</p>
+                              <p className="mt-1 text-xs text-slate-600">{module.description}</p>
+                            </div>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                              module.status === 'live'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : 'border-slate-200 bg-slate-50 text-slate-600'
+                            }`}
+                          >
+                            {module.status === 'live' ? 'Live' : 'Soon'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <Megaphone className="h-4 w-4 text-blue-700" />
+                      Company Banners
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Upload banner ads for your company. Active banners will appear on the Portal Home page.
+                    </p>
+                  </div>
+                  <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                    Home Page
+                  </span>
+                </div>
+
+                {isOwner ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Add Banner</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Recommended: wide image (e.g. 1600x900, 16:9). We auto-compress on upload.
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                        Enable banners to publish them on the portal home page.
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        className="h-11 bg-white"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          event.target.value = '';
+                          if (!file) {
+                            return;
+                          }
+                          if (!file.type.startsWith('image/')) {
+                            setError('Please select an image file.');
+                            return;
+                          }
+                          setError('');
+                          setMessage('');
+                          setPendingBannerDataUrl('');
+                          setPendingBannerBytes(0);
+                          setBannerCropSrc(URL.createObjectURL(file));
+                          setBannerCropOpen(true);
+                        }}
+                      />
+
+                      {pendingBannerDataUrl ? (
+                        <div
+                          className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
+                          style={{ aspectRatio: '16 / 9' }}
+                        >
+                          <img
+                            src={pendingBannerDataUrl}
+                            alt="New banner preview"
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        </div>
+                      ) : null}
+
+                      <ImageCropDialog
+                        open={bannerCropOpen}
+                        title="Crop Banner"
+                        description="Drag to position and zoom to fit (16:9)."
+                        src={bannerCropSrc}
+                        aspect={16 / 9}
+                        outputOptions={{ maxSide: 1600, mimeType: 'image/webp', quality: 0.9 }}
+                        maxBytes={900 * 1024}
+                        onCancel={() => {
+                          setBannerCropOpen(false);
+                          setBannerCropSrc('');
+                        }}
+                        onCropped={(result) => {
+                          setPendingBannerDataUrl(result.dataUrl);
+                          setPendingBannerBytes(result.bytes);
+                          setBannerCropOpen(false);
+                          setBannerCropSrc('');
+                        }}
+                      />
+
+                      <Input
+                        value={bannerTitle}
+                        onChange={(event) => setBannerTitle(event.target.value)}
+                        placeholder="Banner title (optional)"
+                        className="h-11 bg-white"
+                      />
+                      <Input
+                        value={bannerSubtitle}
+                        onChange={(event) => setBannerSubtitle(event.target.value)}
+                        placeholder="Banner subtitle (optional)"
+                        className="h-11 bg-white"
+                      />
+                      <Input
+                        value={bannerLinkUrl}
+                        onChange={(event) => setBannerLinkUrl(event.target.value)}
+                        placeholder="Banner link URL (optional)"
+                        className="h-11 bg-white"
+                      />
+                      <Input
+                        type="number"
+                        value={String(bannerSortOrder)}
+                        onChange={(event) => setBannerSortOrder(Number(event.target.value || 100))}
+                        placeholder="Sort order"
+                        className="h-11 bg-white"
+                      />
+
+                      {pendingBannerDataUrl ? (
+                        <div className="flex justify-end">
+                          <Button
+                            onClick={handleAddBanner}
+                            disabled={bannerSubmitting}
+                            className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                          >
+                            {bannerSubmitting ? 'Uploading...' : 'Add Banner'}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    Only company owners can add or remove banners.
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  {banners.length === 0 ? (
+                    <p className="text-sm text-slate-600">No banners yet.</p>
+                  ) : (
+                    banners.map((banner) => (
+                      <div key={banner.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                        <div className="relative w-full bg-slate-100" style={{ aspectRatio: '16 / 9' }}>
+                          <img
+                            src={banner.imageUrl}
+                            alt={banner.title || 'Company banner'}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/65 via-slate-950/10 to-transparent" />
+                          <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
+                            <div>
+                              {banner.title ? (
+                                <p className="text-sm font-semibold text-white">{banner.title}</p>
+                              ) : null}
+                              {banner.subtitle ? (
+                                <p className="mt-0.5 text-xs text-white/85">{banner.subtitle}</p>
+                              ) : null}
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                                banner.isActive
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700'
+                              }`}
+                            >
+                              {banner.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-4">
+                          {banner.linkUrl ? (
+                            <p className="break-all text-xs text-slate-500">
+                              Link: <span className="font-semibold text-slate-700">{banner.linkUrl}</span>
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-500">No link attached.</p>
+                          )}
+
+                          {isOwner ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                className="rounded-xl"
+                                onClick={() => toggleBannerActive(banner.id, !banner.isActive)}
+                                disabled={bannerActionId === banner.id}
+                              >
+                                {banner.isActive ? 'Disable' : 'Enable'}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                className="rounded-xl text-red-700 hover:text-red-800"
+                                onClick={() => deleteBanner(banner.id)}
+                                disabled={bannerActionId === banner.id}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Remove
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showProjectsSection ? (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Plus className="h-4 w-4 text-blue-700" />
+                  Add New Project
+                </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  {isOwner
+                    ? 'Owner projects are added as approved.'
+                    : 'Projects you add will be pending until the owner approves.'}
+                </p>
+                <div className="mt-4 grid gap-3">
+                  <Input
+                    value={projectTitle}
+                    onChange={(event) => setProjectTitle(event.target.value)}
+                    placeholder="Project Title"
+                    className="h-11"
+                  />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input
+                      value={projectCity}
+                      onChange={(event) => setProjectCity(event.target.value)}
+                      placeholder="City (optional)"
+                      className="h-11"
+                    />
+                    <Input
+                      value={projectLocation}
+                      onChange={(event) => setProjectLocation(event.target.value)}
+                      placeholder="Locality/Area (optional)"
+                      className="h-11"
+                    />
+                  </div>
+                  <Input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      event.target.value = '';
+                      void handleProjectImageSelection(file);
+                    }}
+                    className="h-11"
+                  />
+                  {projectImageUrl ? (
+                    <div
+                      className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
+                      style={{ aspectRatio: '16 / 9' }}
+                    >
+                      <img
+                        src={projectImageUrl}
+                        alt="Project preview"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                      <div className="absolute bottom-2 right-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setProjectImageUrl('')}
+                        >
+                          Remove Image
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <Textarea
+                    value={projectDescription}
+                    onChange={(event) => setProjectDescription(event.target.value)}
+                    placeholder="Project Details (optional)"
+                    className="min-h-28"
+                  />
+                  <Button
+                    onClick={handleCreateProject}
+                    disabled={projectSubmitting || projectImageUploading}
+                    className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                  >
+                    {projectImageUploading
+                      ? 'Uploading image...'
+                      : projectSubmitting
+                        ? 'Submitting...'
+                        : 'Submit Project'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <CheckCircle2 className="h-4 w-4 text-blue-700" />
+                      Company Projects
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {isOwner ? 'Approve or remove pending projects.' : 'Track project approval status.'}
+                    </p>
+                  </div>
+                  <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                    {projects.length} total
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {projects.length === 0 ? (
+                    <p className="text-sm text-slate-600">No projects yet.</p>
+                  ) : (
+                    projects.map((project) => (
+                      <div
+                        key={project.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold text-slate-900">{project.title}</p>
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                                  project.status === 'approved'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                                }`}
+                              >
+                                {project.status === 'approved' ? 'Approved' : 'Pending'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                              {project.createdBy ? `Added by ${project.createdBy.name}` : 'Created in portal'}
+                            </p>
+                            {(project.city || project.location) && (
+                              <p className="mt-2 text-sm text-slate-600">
+                                {[project.city, project.location].filter(Boolean).join(', ')}
+                              </p>
+                            )}
+                            {project.description ? (
+                              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                                {project.description}
+                              </p>
+                            ) : null}
+                          </div>
+                          {isOwner ? (
+                            <div className="flex flex-wrap gap-2 lg:flex-col">
+                              {project.status === 'pending' ? (
+                                <Button
+                                  variant="outline"
+                                  className="justify-start"
+                                  onClick={() => handleApproveProject(project.id)}
+                                >
+                                  Approve
+                                </Button>
+                              ) : null}
+                              <Button
+                                variant="outline"
+                                className="justify-start text-red-700 hover:text-red-800"
+                                onClick={() => handleDeleteProject(project.id)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Remove
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showTeamSection ? (
+            isOwner ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <UserPlus className="h-4 w-4 text-blue-700" />
+                      Add Company User
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Add worker accounts. You can remove workers anytime.
+                    </p>
+                  </div>
+                  <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                    Max {maxUserSeats} users
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <Input
+                    value={workerName}
+                    onChange={(event) => setWorkerName(event.target.value)}
+                    placeholder="Worker Name"
+                    className="h-11"
+                  />
+                  <Input
+                    value={workerPhone}
+                    onChange={(event) => setWorkerPhone(event.target.value)}
+                    placeholder="Worker Phone (optional)"
+                    className="h-11"
+                  />
+                  <Input
+                    value={workerEmail}
+                    onChange={(event) => setWorkerEmail(event.target.value)}
+                    placeholder="Worker Email"
+                    className="h-11 md:col-span-2"
+                  />
+                  <Input
+                    value={workerPassword}
+                    onChange={(event) => setWorkerPassword(event.target.value)}
+                    placeholder="Worker Password"
+                    type="password"
+                    className="h-11 md:col-span-2"
+                  />
+                  <div className="flex justify-end md:col-span-2">
+                    <Button
+                      onClick={handleAddWorker}
+                      disabled={workerSubmitting}
+                      className="h-11 bg-blue-700 text-white hover:bg-blue-800"
+                    >
+                      {workerSubmitting ? 'Adding...' : 'Add Worker'}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  <p className="text-sm font-semibold text-slate-900">Company Users</p>
+                  {users.length === 0 ? (
+                    <p className="text-sm text-slate-600">No users loaded yet.</p>
+                  ) : (
+                    users.map((companyUser) => (
+                      <div
+                        key={companyUser.id}
+                        className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {companyUser.name}{' '}
+                            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                              ({companyUser.companyRole})
+                            </span>
+                          </p>
+                          <p className="text-sm text-slate-600">{companyUser.email}</p>
+                          {companyUser.phone ? (
+                            <p className="text-xs text-slate-500">{companyUser.phone}</p>
+                          ) : null}
+                        </div>
+                        {companyUser.companyRole === 'member' ? (
+                          <Button
+                            variant="outline"
+                            className="justify-start text-red-700 hover:text-red-800"
+                            onClick={() => handleRemoveWorker(companyUser.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove Worker
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm font-semibold text-slate-900">Team access</p>
+                <p className="mt-2 text-sm text-slate-600">
+                  You are signed in as a company member. Owners manage team seats, invitations, and user removal.
+                </p>
+              </div>
+            )
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <section className="min-h-screen pt-28 pb-16 text-slate-900">
+    <section className={`min-h-screen pb-16 text-slate-900 ${workspaceMode ? 'pt-10' : 'pt-28'}`}>
       <div className="page-container space-y-6">
         <div className="rounded-3xl border border-white/20 bg-gradient-to-r from-slate-900 via-blue-900 to-indigo-900 p-6 text-white shadow-2xl">
-          <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">ZDT Realty</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-cyan-200">
+            {workspaceMode && company ? `${company.type} workspace` : 'ZDT Realty'}
+          </p>
           <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">{title}</h1>
           <p className="mt-2 max-w-2xl text-sm text-white/85">
-            Register your company, add up to {COMPANY_USER_LIMIT} users, and manage projects with owner approval.
+            {workspaceMode && company
+              ? 'A dedicated company dashboard for branding, project publishing, and team access.'
+              : `Register your company, add up to ${COMPANY_USER_LIMIT} users, and manage projects with owner approval.`}
           </p>
         </div>
 
@@ -1578,6 +2482,9 @@ export default function DealersBuildersPage({
                 </div>
               </div>
             ) : (
+              workspaceMode ? (
+                renderCompanyWorkspace()
+              ) : (
               <div className="space-y-6">
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -2136,6 +3043,7 @@ export default function DealersBuildersPage({
                   </div>
                 ) : null}
               </div>
+              )
             )}
           </>
         )}

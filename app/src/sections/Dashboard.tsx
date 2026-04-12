@@ -2,16 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   BarChart3,
+  Bell,
+  Calculator,
   ClipboardList,
+  Coins,
   Eye,
+  Gift,
+  GitCompareArrows,
   Heart,
   Home,
   MapPin,
   MessageCircle,
   MousePointerClick,
+  Plus,
   Search,
   ShieldCheck,
   TrendingUp,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/http';
@@ -22,6 +29,13 @@ interface DashboardProps {
   onOpenMessages: () => void;
   onOpenFavorites: () => void;
   onOpenOwnerPanel: () => void;
+  onOpenPostProperty?: () => void;
+  onOpenCompare?: () => void;
+  onOpenSavedSearches?: () => void;
+  onOpenProfile?: () => void;
+  onOpenNotifications?: () => void;
+  onOpenWallet?: () => void;
+  onOpenReferrals?: () => void;
   user: AuthUser | null;
 }
 
@@ -84,7 +98,20 @@ function roleLabel(user: AuthUser | null): string {
   return 'User';
 }
 
-export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites, onOpenOwnerPanel, user }: DashboardProps) {
+export default function Dashboard({
+  onBackHome,
+  onOpenMessages,
+  onOpenFavorites,
+  onOpenOwnerPanel,
+  onOpenPostProperty,
+  onOpenCompare,
+  onOpenSavedSearches,
+  onOpenProfile,
+  onOpenNotifications,
+  onOpenWallet,
+  onOpenReferrals,
+  user,
+}: DashboardProps) {
   const userDisplayName = user?.name || 'User';
   const accessLabel = roleLabel(user);
   const isOwnerRole = Boolean(user && ['owner', 'agent', 'builder', 'admin'].includes(user.role));
@@ -219,6 +246,30 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
       cta: 'Open Inbox',
       onClick: onOpenMessages,
     },
+    ...(onOpenWallet
+      ? [
+          {
+            title: 'Dalal Coin Wallet',
+            value: 1,
+            detail: 'Track spendable coins, pending unlocks, and expiry buckets.',
+            icon: Coins,
+            cta: 'Open Wallet',
+            onClick: onOpenWallet,
+          },
+        ]
+      : []),
+    ...(onOpenReferrals
+      ? [
+          {
+            title: 'Referral Rewards',
+            value: 1,
+            detail: 'Share your code and monitor phone-verification and first-order unlocks.',
+            icon: Gift,
+            cta: 'Open Referrals',
+            onClick: onOpenReferrals,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -246,7 +297,16 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {onOpenPostProperty && (
+              <Button
+                onClick={onOpenPostProperty}
+                className="bg-brand-primary hover:bg-brand-primary-dark text-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Post Property
+              </Button>
+            )}
             <Button
               variant="ghost"
               className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
@@ -270,6 +330,66 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
               <Heart className="mr-2 h-4 w-4" />
               Favorites
             </Button>
+            {onOpenCompare && (
+              <Button
+                variant="ghost"
+                onClick={onOpenCompare}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <GitCompareArrows className="mr-2 h-4 w-4" />
+                Compare
+              </Button>
+            )}
+            {onOpenSavedSearches && (
+              <Button
+                variant="ghost"
+                onClick={onOpenSavedSearches}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <Search className="mr-2 h-4 w-4" />
+                Saved Searches
+              </Button>
+            )}
+            {onOpenNotifications && (
+              <Button
+                variant="ghost"
+                onClick={onOpenNotifications}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <Bell className="mr-2 h-4 w-4" />
+                Notifications
+              </Button>
+            )}
+            {onOpenProfile && (
+              <Button
+                variant="ghost"
+                onClick={onOpenProfile}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </Button>
+            )}
+            {onOpenWallet && (
+              <Button
+                variant="ghost"
+                onClick={onOpenWallet}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <Coins className="mr-2 h-4 w-4" />
+                Wallet
+              </Button>
+            )}
+            {onOpenReferrals && (
+              <Button
+                variant="ghost"
+                onClick={onOpenReferrals}
+                className="border border-brand-gray2 text-brand-gray3 hover:text-brand-primary hover:border-brand-primary"
+              >
+                <Gift className="mr-2 h-4 w-4" />
+                Referrals
+              </Button>
+            )}
             {isOwnerRole && (
               <Button
                 variant="ghost"
@@ -527,7 +647,130 @@ export default function Dashboard({ onBackHome, onOpenMessages, onOpenFavorites,
             </div>
           </div>
         </div>
+
+        {/* EMI Calculator */}
+        <EMICalculator />
       </div>
     </section>
+  );
+}
+
+function EMICalculator() {
+  const [loanAmount, setLoanAmount] = useState(5000000);
+  const [interestRate, setInterestRate] = useState(8.5);
+  const [tenure, setTenure] = useState(20);
+
+  const emi = useMemo(() => {
+    const monthlyRate = interestRate / 12 / 100;
+    const months = tenure * 12;
+    if (monthlyRate === 0) return loanAmount / months;
+    const factor = Math.pow(1 + monthlyRate, months);
+    return (loanAmount * monthlyRate * factor) / (factor - 1);
+  }, [loanAmount, interestRate, tenure]);
+
+  const totalPayment = emi * tenure * 12;
+  const totalInterest = totalPayment - loanAmount;
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(value);
+
+  return (
+    <div className="mt-6 rounded-2xl border border-brand-gray2 bg-white/90 p-6 shadow-card">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-primary/10 text-brand-primary">
+          <Calculator className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-brand-black">EMI Calculator</h2>
+          <p className="text-xs text-brand-gray3">Estimate your monthly mortgage payment</p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-5">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-brand-black">Loan Amount</label>
+              <span className="text-sm font-semibold text-brand-primary">{formatCurrency(loanAmount)}</span>
+            </div>
+            <input
+              type="range"
+              min={500000}
+              max={50000000}
+              step={100000}
+              value={loanAmount}
+              onChange={(e) => setLoanAmount(Number(e.target.value))}
+              className="w-full h-2 rounded-full bg-brand-gray2 appearance-none cursor-pointer accent-brand-primary"
+            />
+            <div className="flex justify-between text-[11px] text-brand-gray3 mt-1">
+              <span>₹5L</span>
+              <span>₹5Cr</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-brand-black">Interest Rate</label>
+              <span className="text-sm font-semibold text-brand-primary">{interestRate}%</span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={20}
+              step={0.1}
+              value={interestRate}
+              onChange={(e) => setInterestRate(Number(e.target.value))}
+              className="w-full h-2 rounded-full bg-brand-gray2 appearance-none cursor-pointer accent-brand-primary"
+            />
+            <div className="flex justify-between text-[11px] text-brand-gray3 mt-1">
+              <span>5%</span>
+              <span>20%</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-brand-black">Loan Tenure</label>
+              <span className="text-sm font-semibold text-brand-primary">{tenure} years</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={30}
+              step={1}
+              value={tenure}
+              onChange={(e) => setTenure(Number(e.target.value))}
+              className="w-full h-2 rounded-full bg-brand-gray2 appearance-none cursor-pointer accent-brand-primary"
+            />
+            <div className="flex justify-between text-[11px] text-brand-gray3 mt-1">
+              <span>1 yr</span>
+              <span>30 yrs</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col justify-center">
+          <div className="rounded-2xl border border-brand-primary/15 bg-gradient-to-br from-brand-primary/5 to-transparent p-6 text-center">
+            <p className="text-xs uppercase tracking-[0.14em] text-brand-gray3 mb-2">Monthly EMI</p>
+            <p className="text-3xl font-bold text-brand-primary stat-counter">{formatCurrency(Math.round(emi))}</p>
+            <div className="futuristic-divider my-4" />
+            <div className="grid grid-cols-2 gap-4 text-left">
+              <div>
+                <p className="text-[11px] text-brand-gray3 uppercase tracking-wider">Total Payment</p>
+                <p className="text-sm font-semibold text-brand-black mt-1">{formatCurrency(Math.round(totalPayment))}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-brand-gray3 uppercase tracking-wider">Total Interest</p>
+                <p className="text-sm font-semibold text-brand-black mt-1">{formatCurrency(Math.round(totalInterest))}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

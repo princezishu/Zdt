@@ -35,6 +35,36 @@ export interface InfraUpdateItem {
   createdAt: string;
 }
 
+export type InfraSourceCheckStatus =
+  | 'likely_correct'
+  | 'needs_review'
+  | 'weak_match'
+  | 'unreachable'
+  | 'invalid_url'
+  | 'blocked_private_host';
+
+export interface InfraSourceCheckResult {
+  id: number;
+  status: InfraSourceCheckStatus;
+  label: string;
+  note: string;
+  checkedAt: string;
+  sourceUrl: string;
+  finalUrl: string | null;
+  host: string | null;
+  httpStatus: number | null;
+  contentType: string | null;
+  pageTitle: string | null;
+  signals: {
+    officialDomain: boolean;
+    hostMatchesAuthority: boolean;
+    hostMatchesSourceRef: boolean;
+    authorityTokenHits: number;
+    sourceRefTokenHits: number;
+    projectTokenHits: number;
+  };
+}
+
 export interface InfraUpdatesResponse {
   items: InfraUpdateItem[];
   page: number;
@@ -120,12 +150,8 @@ export async function getInfraUpdatesMeta(params?: {
   );
 }
 
-export async function getInfraUpdatesMetaAll(adminToken: string) {
-  return apiRequest<InfraUpdatesMetaResponse>('/api/infra-updates/meta-all', {
-    headers: {
-      'x-admin-token': adminToken.trim(),
-    },
-  });
+export async function getInfraUpdatesMetaAll(_adminToken: string) {
+  return apiRequest<InfraUpdatesMetaResponse>('/api/infra-updates/meta-all');
 }
 
 export async function getRecentVerifiedUpdates(params?: {
@@ -146,6 +172,10 @@ export async function getRecentVerifiedUpdates(params?: {
 
 export async function getInfraUpdateById(id: number) {
   return apiRequest<{ item: InfraUpdateItem }>(`/api/infra-updates/by-id/${id}`);
+}
+
+export async function getInfraUpdateSourceCheck(id: number) {
+  return apiRequest<InfraSourceCheckResult>(`/api/infra-updates/${id}/source-check`);
 }
 
 export interface InfraUpdateWritePayload {
@@ -180,12 +210,9 @@ export interface InfraUpdatePatchPayload {
   lastUpdated?: string | null;
 }
 
-export async function createInfraUpdate(payload: InfraUpdateWritePayload, adminToken: string) {
+export async function createInfraUpdate(payload: InfraUpdateWritePayload, _adminToken: string) {
   return apiRequest<{ item: InfraUpdateItem }>('/api/infra-updates', {
     method: 'POST',
-    headers: {
-      'x-admin-token': adminToken,
-    },
     body: JSON.stringify({
       state: payload.state.trim(),
       district: payload.district.trim(),
@@ -207,7 +234,7 @@ export async function createInfraUpdate(payload: InfraUpdateWritePayload, adminT
 export async function updateInfraUpdate(
   id: number,
   payload: InfraUpdatePatchPayload,
-  adminToken: string
+  _adminToken: string
 ) {
   const body: Record<string, unknown> = {};
 
@@ -229,18 +256,12 @@ export async function updateInfraUpdate(
 
   return apiRequest<{ item: InfraUpdateItem }>(`/api/infra-updates/${id}`, {
     method: 'PUT',
-    headers: {
-      'x-admin-token': adminToken,
-    },
     body: JSON.stringify(body),
   });
 }
 
-export async function deleteInfraUpdate(id: number, adminToken: string) {
+export async function deleteInfraUpdate(id: number, _adminToken: string) {
   return apiRequest<{ ok: boolean }>(`/api/infra-updates/${id}`, {
     method: 'DELETE',
-    headers: {
-      'x-admin-token': adminToken,
-    },
   });
 }

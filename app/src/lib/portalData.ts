@@ -45,6 +45,13 @@ export interface PortalProperty {
   constructionLastUpdatedAt?: string | null;
 }
 
+export type PortalContactRole = 'Owner' | 'Dealer' | 'Builder';
+
+export interface PortalPropertyContact {
+  role: PortalContactRole;
+  phone: string;
+}
+
 export const portalHeroSlides: PortalHeroSlide[] = [
   {
     id: 'hero-1',
@@ -76,6 +83,75 @@ export const continueBrowsingPills = [
   'Buy in Bangalore East',
   'Buy in Belgaum',
   'Explore New City',
+];
+
+export interface PortalTrendLocality {
+  id: string;
+  locality: string;
+  city: string;
+  demandLabel: string;
+  averageTicket: string;
+  momentum: string;
+  trustNote: string;
+  filters: {
+    city: string;
+    locality: string;
+  };
+}
+
+export const portalTrendLocalities: PortalTrendLocality[] = [
+  {
+    id: 'trend-whitefield',
+    locality: 'Whitefield',
+    city: 'Bangalore',
+    demandLabel: 'High buyer demand',
+    averageTicket: 'INR 1.25 Cr - 1.9 Cr',
+    momentum: 'Metro-led upgrade demand and ready inventory movement remain strong.',
+    trustNote: 'Verified apartments and township stock are concentrated here.',
+    filters: {
+      city: 'Bangalore',
+      locality: 'Whitefield',
+    },
+  },
+  {
+    id: 'trend-sarjapur',
+    locality: 'Sarjapur Road',
+    city: 'Bangalore',
+    demandLabel: 'Fast moving family zone',
+    averageTicket: 'INR 92 Lakh - 2.4 Cr',
+    momentum: 'Villa and large-format home searches are consistently rising.',
+    trustNote: 'Strong mix of ready-to-move and under-construction communities.',
+    filters: {
+      city: 'Bangalore',
+      locality: 'Sarjapur Road',
+    },
+  },
+  {
+    id: 'trend-hebbal',
+    locality: 'Hebbal',
+    city: 'Bangalore',
+    demandLabel: 'Premium corridor',
+    averageTicket: 'INR 1.4 Cr - 2.2 Cr',
+    momentum: 'Lake-view inventory and airport connectivity keep premium demand healthy.',
+    trustNote: 'Higher share of verified premium towers and investor interest.',
+    filters: {
+      city: 'Bangalore',
+      locality: 'Hebbal',
+    },
+  },
+  {
+    id: 'trend-devanahalli',
+    locality: 'Devanahalli',
+    city: 'Bangalore',
+    demandLabel: 'Growth-corridor watch',
+    averageTicket: 'INR 98 Lakh - 2.8 Cr',
+    momentum: 'New launch and plotted development momentum remains one of the strongest.',
+    trustNote: 'Project-led supply is expanding fastest in this micro-market.',
+    filters: {
+      city: 'Bangalore',
+      locality: 'Devanahalli',
+    },
+  },
 ];
 
 export const portalProperties: PortalProperty[] = [
@@ -311,4 +387,32 @@ export function findPropertyByReference(referenceId: string): PortalProperty | n
   return (
     portalProperties.find((item) => item.referenceId.toLowerCase() === key.toLowerCase()) || null
   );
+}
+
+function resolvePortalContactRole(category?: PortalCategory): PortalContactRole {
+  if (category === 'commercial') {
+    return 'Dealer';
+  }
+  if (category === 'projects' || category === 'new-launch') {
+    return 'Builder';
+  }
+  return 'Owner';
+}
+
+export function getPortalPropertyContact(
+  propertyOrReference?: PortalProperty | string | null
+): PortalPropertyContact {
+  const property =
+    typeof propertyOrReference === 'string'
+      ? findPropertyByReference(propertyOrReference)
+      : propertyOrReference || null;
+  const role = resolvePortalContactRole(property?.category);
+
+  if (role === 'Dealer') {
+    return { role, phone: '+91 90000 20002' };
+  }
+  if (role === 'Builder') {
+    return { role, phone: '+91 90000 30003' };
+  }
+  return { role, phone: '+91 90000 10001' };
 }

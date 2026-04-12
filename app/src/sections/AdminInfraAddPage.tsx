@@ -55,7 +55,7 @@ function formatEnumLabel(value: string): string {
 }
 
 export default function AdminInfraAddPage() {
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState('session');
   const [stateName, setStateName] = useState('');
   const [district, setDistrict] = useState('');
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
@@ -104,10 +104,7 @@ export default function AdminInfraAddPage() {
     setError('');
     setMessage('');
 
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     if (!projectName.trim()) {
       setError('Project name is required.');
       return;
@@ -181,13 +178,13 @@ export default function AdminInfraAddPage() {
           <div className="grid gap-4">
             <label className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Admin Token (required)
+                Admin Session
               </p>
               <Input
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 type="password"
-                placeholder="Enter ADMIN_TOKEN"
+                placeholder="Admin session is active"
                 className="h-11 bg-white"
               />
             </label>
@@ -426,3 +423,4 @@ export default function AdminInfraAddPage() {
     </section>
   );
 }
+

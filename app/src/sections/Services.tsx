@@ -5,59 +5,70 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 gsap.registerPlugin(ScrollTrigger);
 
-const services = [
+type ServiceKey = 'location' | 'materials' | 'analytics' | 'news' | 'apartments' | 'subscription';
+
+interface ServicesProps {
+  onServiceClick?: (serviceKey: ServiceKey) => void;
+}
+
+const services: Array<{
+  key: ServiceKey;
+  icon: typeof MapPin;
+  title: string;
+  description: string;
+  image: string;
+}> = [
   {
+    key: 'location',
     icon: MapPin,
     title: 'Location Services',
     description: 'Get comprehensive area insights including nearby amenities, schools, hospitals, and transportation options.',
     image: '/images/service-location.jpg',
-    size: 'large',
   },
   {
+    key: 'materials',
     icon: Package,
-    title: 'Building Materials',
-    description: 'Explore and purchase quality construction materials from verified suppliers.',
+    title: 'ZDT Circular Build',
+    description: 'Submit reusable demolition materials and let ZDT handle verification, pickup, and reuse.',
     image: '/images/service-materials.jpg',
-    size: 'small',
   },
   {
+    key: 'analytics',
     icon: BarChart3,
     title: 'Analytics',
     description: 'Track price trends, demand analysis, and market insights for informed decisions.',
     image: '/images/service-analytics.jpg',
-    size: 'small',
   },
   {
+    key: 'news',
     icon: Newspaper,
     title: 'News & Updates',
     description: 'Stay updated with the latest property market news and price updates.',
     image: '/images/service-news.jpg',
-    size: 'small',
   },
   {
+    key: 'apartments',
     icon: Building,
     title: 'Apartments & Complex',
     description: 'AI-based full society and building visualization for better understanding.',
     image: '/images/service-apartments.jpg',
-    size: 'large',
   },
   {
+    key: 'subscription',
     icon: Crown,
     title: 'Subscription Plans',
     description: 'Unlock premium features with our flexible subscription plans.',
     image: '/images/service-subscription.jpg',
-    size: 'small',
   },
 ];
 
-export default function Services() {
+export default function Services({ onServiceClick }: ServicesProps) {
   const sectionRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const ctx = gsap.context(() => {
-      // Title animation
       gsap.fromTo(
         titleRef.current,
         { opacity: 0, y: 40 },
@@ -74,7 +85,6 @@ export default function Services() {
         }
       );
 
-      // Cards animation
       const cards = gridRef.current?.querySelectorAll('.service-card');
       if (cards) {
         gsap.fromTo(
@@ -108,7 +118,7 @@ export default function Services() {
       <div className="page-container">
         {/* Section Header */}
         <div ref={titleRef} className="text-center mb-12">
-          <h2 className="text-[22px] sm:text-[28px] lg:text-[36px] font-semibold text-brand-black mb-4 accent-title">
+          <h2 className="text-[22px] sm:text-[28px] lg:text-[36px] font-semibold text-brand-black mb-4 gradient-text">
             Comprehensive Property Services
           </h2>
           <p className="text-base text-brand-gray3 max-w-2xl mx-auto">
@@ -119,17 +129,18 @@ export default function Services() {
         {/* Services Grid */}
         <div ref={gridRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {services.map((service) => (
-            <div
+            <button
+              type="button"
               key={service.title}
-              className={`service-card group relative bg-white rounded-xl overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-500 hover:-translate-y-2 cursor-pointer ${
-                service.size === 'large' ? 'md:col-span-2 lg:col-span-1' : ''
-              }`}
+              onClick={() => onServiceClick?.(service.key)}
+              className="service-card group relative bg-white rounded-xl overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-500 hover:-translate-y-2 cursor-pointer text-left glow-border"
             >
               {/* Image */}
               <div className="relative h-[220px] overflow-hidden">
                 <img
                   src={service.image}
                   alt={service.title}
+                  loading="lazy"
                   className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
@@ -151,14 +162,14 @@ export default function Services() {
 
                 {/* CTA */}
                 <div className="flex items-center gap-2 text-brand-primary font-medium text-sm group-hover:gap-3 transition-all">
-                  <span>Learn More</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span>Explore Now</span>
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
                 </div>
               </div>
 
               {/* Hover overlay */}
               <div className="absolute inset-0 bg-brand-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none rounded-xl" />
-            </div>
+            </button>
           ))}
         </div>
       </div>

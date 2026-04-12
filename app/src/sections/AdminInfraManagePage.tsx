@@ -41,6 +41,38 @@ const PROJECT_TYPES = [
   'Connectivity Proposal',
 ];
 
+const TENDER_MODEL_GROUPS = [
+  {
+    title: 'Identity and trust',
+    fields: ['track', 'source_type', 'source_name', 'source_url', 'external_id', 'verification_level'],
+  },
+  {
+    title: 'Opportunity core',
+    fields: ['title', 'summary', 'authority_name', 'department_name', 'sector', 'work_type'],
+  },
+  {
+    title: 'LGD location spine',
+    fields: [
+      'state_name',
+      'district_name',
+      'block_name',
+      'village_name',
+      'lgd_state_code',
+      'lgd_district_code',
+      'lgd_block_code',
+      'lgd_village_code',
+    ],
+  },
+  {
+    title: 'Commercial timing',
+    fields: ['budget_amount', 'emd_amount', 'tender_status', 'published_at', 'bid_end_at', 'opening_at'],
+  },
+  {
+    title: 'Raw plus scored',
+    fields: ['document_urls', 'raw_payload', 'raw_text', 'normalized_text', 'impact_score', 'geo_lat', 'geo_lng'],
+  },
+] as const;
+
 interface EditDraft {
   state: string;
   district: string;
@@ -87,7 +119,7 @@ function formatDate(value: string): string {
 }
 
 export default function AdminInfraManagePage() {
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState('session');
   const [stateName, setStateName] = useState('');
   const [district, setDistrict] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<InfraUpdateCategory | ''>('');
@@ -194,10 +226,7 @@ export default function AdminInfraManagePage() {
     setError('');
     setMessage('');
 
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
     if (!editingId) return;
 
     if (!edit.projectName.trim() || !edit.statusText.trim() || !edit.sourceRef.trim()) {
@@ -246,10 +275,7 @@ export default function AdminInfraManagePage() {
     setError('');
     setMessage('');
 
-    if (!adminToken.trim()) {
-      setError('Admin token is required.');
-      return;
-    }
+    
 
     const confirmed = window.confirm('Delete this update? This action cannot be undone.');
     if (!confirmed) return;
@@ -277,6 +303,25 @@ export default function AdminInfraManagePage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <h2 className="text-lg font-semibold text-slate-950">Admin: Normalized Record Model</h2>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Internal reference only. Every public tender or notice should land in this normalized shape before scoring,
+            alerts, and downstream review.
+          </p>
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
+            {TENDER_MODEL_GROUPS.map((group) => (
+              <div key={group.title} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-sm font-semibold text-slate-900">{group.title}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">{group.fields.join(', ')}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <label className="space-y-1 xl:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
@@ -286,7 +331,7 @@ export default function AdminInfraManagePage() {
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 type="password"
-                placeholder="Enter ADMIN_TOKEN"
+                placeholder="Admin session is active"
                 className="h-11 bg-white"
               />
             </label>
@@ -666,3 +711,4 @@ export default function AdminInfraManagePage() {
     </section>
   );
 }
+

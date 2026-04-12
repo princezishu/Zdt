@@ -6,25 +6,63 @@ import {
   CheckCircle2,
   Compass,
   Flag,
+  GitCompareArrows,
   MapPin,
+  MessageCircle,
   PhoneCall,
+  Share2,
   ShieldAlert,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { findPropertyByReference, portalProperties } from '@/lib/portalData';
+import { buildHrefForView } from '@/lib/appRoutes';
+import {
+  findPropertyByReference,
+  getPortalPropertyContact,
+  portalProperties,
+  portalTrendLocalities,
+  type PortalCategory,
+} from '@/lib/portalData';
+import {
+  COMPARE_CHANGED_EVENT,
+  isCompared,
+  removeComparedListing,
+  upsertComparedListing,
+} from '@/lib/compareStore';
 import { apiRequest } from '@/lib/http';
 import { addNotification } from '@/lib/notificationsStore';
+import {
+  createRecentlyViewedPortalListingFromProperty,
+  upsertRecentlyViewedPortalListing,
+} from '@/lib/portalBrowsingStore';
 import { toast } from 'sonner';
 import { PhoneVerificationField } from '../workflow/CommonBlocks';
 import PropertyListingCard from './PropertyListingCard';
+import { applySeo } from '@/lib/seo';
+import { openPhoneDialer } from '@/lib/phone';
+import { trackPropertyInteraction } from '@/lib/propertyAnalyticsApi';
+import { createListingAssistRequest } from '@/lib/listingAssistApi';
+import { readStoredUser } from '@/lib/session';
+import { shareLink } from '@/lib/share';
 
 interface PortalPropertyDetailsPageProps {
   referenceId?: string;
   onOpenSimilar: (referenceId?: string) => void;
-  onOpenMessages: (referenceId?: string) => void;
+  onOpenMessages: (
+    referenceId?: string,
+    draftMessage?: string,
+    conversationId?: number | null
+  ) => void;
   onOpenPostProperty: () => void;
 }
 
@@ -109,6 +147,65 @@ function formatUpdatedAt(value: string): string {
   });
 }
 
+function resolveWorkflowCategory(requestType: string): PortalCategory {
+  const normalized = requestType.trim().toLowerCase();
+  if (normalized.includes('rent')) return 'rent';
+  if (normalized.includes('project') || normalized.includes('launch')) return 'projects';
+  if (normalized.includes('commercial')) return 'commercial';
+  if (normalized.includes('plot') || normalized.includes('land')) return 'plots-land';
+  return 'buy';
+}
+
+function formatPortalCategoryLabel(value: string): string {
+  if (!value) return 'Property';
+  return value
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function normalizeMarketText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function parsePriceLabelToValue(value: string): number {
+  const normalized = value.replace(/,/g, '').toLowerCase();
+  const match = /(\d+(?:\.\d+)?)/.exec(normalized);
+  if (!match) {
+    return 0;
+  }
+
+  const base = Number(match[1]);
+  if (!Number.isFinite(base)) {
+    return 0;
+  }
+
+  if (/\bcr|crore\b/.test(normalized)) {
+    return Math.round(base * 10000000);
+  }
+  if (/\blakh|lac\b/.test(normalized)) {
+    return Math.round(base * 100000);
+  }
+  return Math.round(base);
+}
+
+function parseAreaLabelToSqft(value: string): number {
+  const normalized = value.replace(/,/g, '').toLowerCase();
+  const match = /(\d+(?:\.\d+)?)/.exec(normalized);
+  if (!match) {
+    return 0;
+  }
+  const base = Number(match[1]);
+  return Number.isFinite(base) ? Math.round(base) : 0;
+}
+
+function formatInr(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 'Available on request';
+  }
+  return `INR ${Math.round(value).toLocaleString('en-IN')}`;
+}
+
 export default function PortalPropertyDetailsPage({
   referenceId,
   onOpenSimilar,
@@ -188,6 +285,29 @@ export default function PortalPropertyDetailsPage({
     return portalProperties.filter((item) => item.referenceId !== portalProperty.referenceId).slice(0, 3);
   }, [portalProperty]);
 
+  useEffect(() => {
+    if (portalProperty) {
+      upsertRecentlyViewedPortalListing(createRecentlyViewedPortalListingFromProperty(portalProperty));
+      return;
+    }
+
+    if (!workflowListing) return;
+    upsertRecentlyViewedPortalListing({
+      referenceId: workflowListing.referenceId,
+      title: workflowListing.title,
+      city: workflowListing.city,
+      location: workflowListing.area,
+      priceLabel: workflowListing.priceLabel,
+      image: workflowListing.image,
+      projectName: workflowListing.propertyType,
+      category: resolveWorkflowCategory(workflowListing.requestType),
+      status: workflowListing.propertyType || 'Available',
+      verified: workflowListing.verified,
+      description: `${workflowListing.propertyType} in ${workflowListing.area || workflowListing.city}`.trim(),
+      viewedAt: new Date().toISOString(),
+    });
+  }, [portalProperty, workflowListing]);
+
   const [visitOpen, setVisitOpen] = useState(false);
   const [visitName, setVisitName] = useState('');
   const [visitPhone, setVisitPhone] = useState('');
@@ -203,10 +323,162 @@ export default function PortalPropertyDetailsPage({
   const [fraudPhoneVerificationId, setFraudPhoneVerificationId] = useState('');
   const [fraudReason, setFraudReason] = useState('');
   const [isFraudSubmitting, setIsFraudSubmitting] = useState(false);
+  const [shareStatus, setShareStatus] = useState('');
+  const [contactUnlocked, setContactUnlocked] = useState(false);
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
+  const [assistSubmittingMode, setAssistSubmittingMode] = useState<
+    null | 'brochure' | 'loan' | 'price-sheet'
+  >(null);
 
   const displayReference = portalProperty?.referenceId || workflowListing?.referenceId || refKey;
   const displayTitle = portalProperty?.title || workflowListing?.title || 'Property';
   const displayCity = portalProperty?.city || workflowListing?.city || '';
+  const displayLocation = portalProperty?.location || workflowListing?.area || '';
+  const displayAreaLabel = portalProperty?.areaLabel || workflowListing?.areaLabel || 'Area on request';
+  const displayStatus = portalProperty?.status || workflowListing?.propertyType || 'Available';
+  const displayCategoryLabel = portalProperty
+    ? formatPortalCategoryLabel(portalProperty.category)
+    : formatPortalCategoryLabel(resolveWorkflowCategory(workflowListing?.requestType || 'buy'));
+  const displayContactRole = useMemo(() => {
+    if (portalProperty) {
+      return getPortalPropertyContact(portalProperty).role;
+    }
+
+    const workflowCategory = resolveWorkflowCategory(workflowListing?.requestType || 'buy');
+    if (workflowCategory === 'commercial') return 'Dealer';
+    if (workflowCategory === 'projects') return 'Builder';
+    return 'Owner';
+  }, [portalProperty, workflowListing?.requestType]);
+  const displayPublicPhone = useMemo(() => {
+    const workflowPhone = workflowListing?.ownerPhone || '';
+    const fallbackPhone = portalProperty
+      ? getPortalPropertyContact(portalProperty).phone
+      : displayContactRole === 'Dealer'
+        ? '+91 90000 20002'
+        : displayContactRole === 'Builder'
+          ? '+91 90000 30003'
+          : '+91 90000 10001';
+    return workflowPhone && !/hidden|na|not\s*available/i.test(workflowPhone)
+      ? workflowPhone
+      : fallbackPhone;
+  }, [displayContactRole, portalProperty, workflowListing]);
+  const displayPriceValue = useMemo(() => {
+    if (portalProperty?.priceValue && portalProperty.priceValue > 0) {
+      return Number(portalProperty.priceValue);
+    }
+    return parsePriceLabelToValue(portalProperty?.priceLabel || workflowListing?.priceLabel || '');
+  }, [portalProperty?.priceLabel, portalProperty?.priceValue, workflowListing?.priceLabel]);
+  const displayAreaSqft = useMemo(() => {
+    if (portalProperty?.areaSqft && portalProperty.areaSqft > 0) {
+      return Number(portalProperty.areaSqft);
+    }
+    return parseAreaLabelToSqft(displayAreaLabel);
+  }, [displayAreaLabel, portalProperty?.areaSqft]);
+  const pricePerSqft = useMemo(() => {
+    if (!displayPriceValue || !displayAreaSqft) {
+      return 0;
+    }
+    return Math.round(displayPriceValue / displayAreaSqft);
+  }, [displayAreaSqft, displayPriceValue]);
+  const estimatedMonthlyEmi = useMemo(() => {
+    if (!displayPriceValue || displayPriceValue <= 0) {
+      return 0;
+    }
+    return Math.round(displayPriceValue * 0.0084);
+  }, [displayPriceValue]);
+  const marketSnapshot = useMemo(() => {
+    const locationTokens = [displayLocation, displayCity]
+      .map((item) => normalizeMarketText(item))
+      .filter(Boolean);
+
+    return (
+      portalTrendLocalities.find((item) => {
+        const locality = normalizeMarketText(item.locality);
+        const city = normalizeMarketText(item.city);
+        return locationTokens.some(
+          (token) => token.includes(locality) || locality.includes(token) || token.includes(city)
+        );
+      }) || null
+    );
+  }, [displayCity, displayLocation]);
+  const buyerDecisionCards = useMemo(
+    () => [
+      {
+        label: 'Estimated EMI',
+        value:
+          estimatedMonthlyEmi > 0
+            ? `${formatInr(estimatedMonthlyEmi)} / month`
+            : 'Available on request',
+        note: 'Indicative financing estimate for faster buyer qualification.',
+      },
+      {
+        label: 'Price / sq.ft',
+        value: pricePerSqft > 0 ? `${formatInr(pricePerSqft)} / sq.ft` : 'Available on request',
+        note: 'Use this to compare micro-market pricing before a site visit.',
+      },
+      {
+        label: 'Listing Status',
+        value: displayStatus,
+        note:
+          portalProperty?.readyToMove === true
+            ? 'Ready inventory usually converts faster into verified visits.'
+            : 'Review timeline, payment schedule, and document flow carefully.',
+      },
+      {
+        label: 'Lead Route',
+        value: contactUnlocked ? 'Verified contact unlocked' : 'Chat + phone unlock',
+        note: 'Brochure, price sheet, loan help, and site visit actions stay tied to one funnel.',
+      },
+    ],
+    [contactUnlocked, displayStatus, estimatedMonthlyEmi, portalProperty?.readyToMove, pricePerSqft]
+  );
+  const [isComparedListing, setIsComparedListing] = useState(() =>
+    displayReference ? isCompared(displayReference) : false
+  );
+
+  const comparePayload = useMemo(() => {
+    if (portalProperty) {
+      return {
+        id: String(portalProperty.id),
+        referenceId: portalProperty.referenceId,
+        title: portalProperty.title,
+        image: portalProperty.image,
+        city: portalProperty.city,
+        area: portalProperty.location,
+        priceLabel: portalProperty.priceLabel,
+        areaLabel: portalProperty.areaLabel,
+        propertyType: portalProperty.category,
+        bhk: portalProperty.bhk,
+        mainDoorFacing: portalProperty.facing,
+        vastuScore: portalProperty.readyToMove ? 84 : 79,
+        verified: portalProperty.verified,
+        ownerPhone: 'Hidden',
+        updatedAt: portalProperty.constructionLastUpdatedAt || '',
+      };
+    }
+
+    if (workflowListing) {
+      return {
+        id: workflowListing.id,
+        referenceId: workflowListing.referenceId,
+        title: workflowListing.title,
+        image: workflowListing.image,
+        city: workflowListing.city,
+        area: workflowListing.area,
+        priceLabel: workflowListing.priceLabel,
+        areaLabel: workflowListing.areaLabel,
+        propertyType: workflowListing.propertyType,
+        bhk: workflowListing.bhk,
+        mainDoorFacing: workflowListing.mainDoorFacing,
+        vastuScore: workflowListing.vastuScore,
+        verified: workflowListing.verified,
+        ownerPhone: workflowListing.ownerPhone,
+        updatedAt: workflowListing.updatedAt,
+      };
+    }
+
+    return null;
+  }, [portalProperty, workflowListing]);
 
   useEffect(() => {
     setVisitOpen(false);
@@ -217,7 +489,74 @@ export default function PortalPropertyDetailsPage({
     setVisitTime('');
     setVisitNote('');
     setFraudReason('');
+    setContactUnlocked(false);
+    setLoginPromptOpen(false);
   }, [displayReference]);
+
+  useEffect(() => {
+    const canonicalPath = displayReference
+      ? `/property-details/${encodeURIComponent(displayReference)}`
+      : '/property-details';
+    const locationLabel = portalProperty
+      ? `${portalProperty.location}, ${portalProperty.city}`
+      : workflowListing
+        ? `${workflowListing.area}, ${workflowListing.city}`
+        : 'India';
+    const priceLabel = portalProperty?.priceLabel || workflowListing?.priceLabel || 'Price on request';
+
+    applySeo({
+      title: `${displayTitle} | ZDT Realty`,
+      description: `${displayTitle} in ${locationLabel}. ${priceLabel}.`,
+      canonicalPath,
+      type: 'product',
+      structuredData: {
+        '@context': 'https://schema.org',
+        '@type': 'Residence',
+        name: displayTitle,
+        description: `${displayTitle} in ${locationLabel}.`,
+        url: canonicalPath,
+      },
+    });
+  }, [displayReference, displayTitle, portalProperty, workflowListing]);
+
+  useEffect(() => {
+    const sync = () => {
+      setIsComparedListing(displayReference ? isCompared(displayReference) : false);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'zdt_compared_listings') {
+        return;
+      }
+      sync();
+    };
+
+    sync();
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(COMPARE_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(COMPARE_CHANGED_EVENT, sync);
+    };
+  }, [displayReference]);
+
+  const toggleCompare = () => {
+    if (!displayReference || !comparePayload) {
+      toast.error('Unable to add this property to compare.');
+      return;
+    }
+
+    if (isComparedListing) {
+      removeComparedListing(displayReference);
+      setIsComparedListing(false);
+      toast.success('Removed from compare');
+      return;
+    }
+
+    upsertComparedListing(comparePayload);
+    setIsComparedListing(true);
+    toast.success('Added to compare');
+  };
 
   const submitScheduleVisit = async () => {
     if (!displayReference) {
@@ -337,11 +676,166 @@ export default function PortalPropertyDetailsPage({
     }
   };
 
+  const handleLeadAssist = async (mode: 'brochure' | 'loan' | 'price-sheet') => {
+    if (!displayReference) {
+      toast.error('Missing property reference.');
+      return;
+    }
+
+    const currentUser = readStoredUser();
+    if (!currentUser) {
+      setLoginPromptOpen(true);
+      return;
+    }
+
+    const assistType =
+      mode === 'brochure'
+        ? 'brochure'
+        : mode === 'price-sheet'
+          ? 'price_sheet'
+          : 'loan_help';
+
+    setAssistSubmittingMode(mode);
+    try {
+      const response = await createListingAssistRequest(displayReference, {
+        assistType,
+        context: 'portal_property_details',
+      });
+
+      onOpenMessages(
+        displayReference,
+        '',
+        response.conversation?.id && response.conversation.id > 0 ? response.conversation.id : null
+      );
+
+      if (mode === 'brochure') {
+        toast.success('Brochure request sent. Opening the seller conversation.');
+      } else if (mode === 'price-sheet') {
+        toast.success('Price sheet request sent. Opening the seller conversation.');
+      } else {
+        toast.success('Loan help request sent. Opening support conversation.');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to start this assist workflow.');
+    } finally {
+      setAssistSubmittingMode(null);
+    }
+  };
+
+  const handleCallContact = () => {
+    if (!displayReference) {
+      toast.error('Missing property reference.');
+      return;
+    }
+
+    if (!contactUnlocked) {
+      const currentUser = readStoredUser();
+      if (!currentUser) {
+        setLoginPromptOpen(true);
+        return;
+      }
+
+      if (!displayPublicPhone) {
+        onOpenMessages(displayReference);
+        toast.info('Phone number unavailable. Opened in-app chat.');
+        return;
+      }
+
+      setContactUnlocked(true);
+      void trackPropertyInteraction({
+        referenceId: displayReference,
+        action: 'unlock_phone',
+        context: 'portal_property_details',
+      });
+      toast.success('Seller number unlocked');
+      return;
+    }
+
+    void trackPropertyInteraction({
+      referenceId: displayReference,
+      action: 'call_click',
+      context: 'portal_property_details',
+    });
+    const opened = openPhoneDialer(displayPublicPhone);
+
+    if (!opened) {
+      onOpenMessages(displayReference);
+      toast.info('Phone number unavailable. Opened in-app chat.');
+    }
+  };
+
+  const handleShareListing = async () => {
+    const url = `${window.location.origin}/property-details/${encodeURIComponent(
+      displayReference || displayTitle
+    )}`;
+    const result = await shareLink({
+      title: displayTitle,
+      text: `Check this listing on ZDT Realty: ${displayTitle}`,
+      url,
+    });
+
+    if (result === 'copied') {
+      setShareStatus('Link copied');
+      toast.success('Listing link copied.');
+      return;
+    }
+    if (result === 'native') {
+      setShareStatus('Shared');
+      return;
+    }
+    setShareStatus('Share failed');
+    toast.error('Unable to share this listing right now.');
+  };
+
+  const loginPromptDialog = (
+    <Dialog open={loginPromptOpen} onOpenChange={setLoginPromptOpen}>
+      <DialogContent className="max-w-md border border-slate-200 bg-white">
+        <DialogHeader>
+          <DialogTitle className="text-slate-900">Login to unlock the contact</DialogTitle>
+          <DialogDescription className="text-sm text-slate-600">
+            Sign in to reveal the {displayContactRole.toLowerCase()} phone number and keep this
+            enquiry tracked as a verified lead.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-3 text-sm text-blue-900">
+          <p className="font-semibold">{displayTitle}</p>
+          <p className="mt-1 text-xs text-blue-900/80">
+            {displayCity || 'India'} • {displayReference || 'Reference pending'}
+          </p>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-xl border-slate-300"
+            onClick={() => {
+              setLoginPromptOpen(false);
+              if (displayReference) {
+                onOpenMessages(displayReference);
+              }
+            }}
+          >
+            Continue In Chat
+          </Button>
+          <Button
+            type="button"
+            className="rounded-xl bg-blue-700 text-white hover:bg-blue-800"
+            onClick={() => {
+              window.location.assign(buildHrefForView('login'));
+            }}
+          >
+            Login To Continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (!portalProperty) {
     return (
-      <section className="pb-16 pt-28 text-slate-900">
-        <div className="page-container space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="portal-mobile-page pb-16 pt-28 text-slate-900">
+        <div className="page-container portal-mobile-stack space-y-6">
+          <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Workflow Listing</p>
             <h1 className="mt-2 text-2xl font-bold text-slate-900">
               {workflowListing?.title || 'Listing details'}
@@ -367,7 +861,7 @@ export default function PortalPropertyDetailsPage({
           ) : (
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="space-y-6">
-                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
                   <img
                     src={workflowListing.image}
                     alt={workflowListing.title}
@@ -375,7 +869,7 @@ export default function PortalPropertyDetailsPage({
                   />
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                   <div className="flex flex-wrap items-center gap-3">
                     {workflowListing.verified && (
                       <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
@@ -384,7 +878,7 @@ export default function PortalPropertyDetailsPage({
                       </Badge>
                     )}
                     {workflowListing.requestType ? (
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         {workflowListing.requestType}
                       </span>
                     ) : null}
@@ -397,36 +891,72 @@ export default function PortalPropertyDetailsPage({
                   </p>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">Area</p>
                       <p className="mt-1 font-semibold text-slate-900">{workflowListing.areaLabel}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">Type</p>
                       <p className="mt-1 font-semibold text-slate-900">{workflowListing.propertyType}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">BHK</p>
                       <p className="mt-1 font-semibold text-slate-900">{workflowListing.bhk}</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">Facing</p>
                       <p className="mt-1 font-semibold text-slate-900">{workflowListing.mainDoorFacing}</p>
                     </div>
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">Vastu Score</p>
                       <p className="mt-1 font-semibold text-slate-900">{workflowListing.vastuScore}%</p>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">Last Updated</p>
                       <p className="mt-1 font-semibold text-slate-900">{formatUpdatedAt(workflowListing.updatedAt)}</p>
                     </div>
                   </div>
 
-                  <div className="mt-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-700">
+                        Buyer Fit
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {workflowListing.requestType || 'Verified listing'}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        Best for buyers who want visible trust signals and a direct route into site-visit follow-up.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                        Lead Protection
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        Controlled contact access
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        Keep enquiry quality high by unlocking contact after login and using chat as the safer fallback.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/70 p-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                        Response Window
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        Call, chat, or schedule
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        Use the visit form for serious intent and chat for brochure, price, or loan assistance.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="portal-mobile-panel mt-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900">Trust & Safety</h3>
                     <ul className="mt-4 space-y-3 text-sm text-slate-700">
                       <li className="inline-flex items-start gap-2">
@@ -443,11 +973,67 @@ export default function PortalPropertyDetailsPage({
                       </li>
                     </ul>
                   </div>
+
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-lg font-semibold text-slate-900">Buyer Decision Kit</h3>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {buyerDecisionCards.map((item) => (
+                          <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">{item.label}</p>
+                            <p className="mt-2 text-lg font-semibold text-slate-900">{item.value}</p>
+                            <p className="mt-2 text-xs leading-5 text-slate-500">{item.note}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-lg font-semibold text-slate-900">Micro-market Snapshot</h3>
+                      {marketSnapshot ? (
+                        <div className="mt-4 space-y-3">
+                          <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-blue-700">
+                              {marketSnapshot.demandLabel}
+                            </p>
+                            <p className="mt-2 text-lg font-semibold text-slate-900">
+                              {marketSnapshot.locality}, {marketSnapshot.city}
+                            </p>
+                            <p className="mt-2 text-sm text-slate-700">{marketSnapshot.momentum}</p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <p className="text-xs uppercase tracking-wide text-slate-500">Average Ticket</p>
+                              <p className="mt-2 text-base font-semibold text-slate-900">
+                                {marketSnapshot.averageTicket}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <p className="text-xs uppercase tracking-wide text-slate-500">Trust Note</p>
+                              <p className="mt-2 text-sm font-medium text-slate-900">
+                                {marketSnapshot.trustNote}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                          <p className="font-semibold text-slate-900">
+                            {displayLocation || displayCity || 'This micro-market'}
+                          </p>
+                          <p className="mt-2">
+                            Compare price per sq.ft, verified status, and visit readiness to validate
+                            this {displayCategoryLabel.toLowerCase()} opportunity before the next step.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                   <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Price</p>
                   <p className="mt-2 text-3xl font-bold text-blue-900">{workflowListing.priceLabel}</p>
                   <p className="mt-2 text-sm text-slate-600">{workflowListing.referenceId}</p>
@@ -456,11 +1042,68 @@ export default function PortalPropertyDetailsPage({
                     className="mt-4 h-11 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800"
                     onClick={() => onOpenMessages(workflowListing.referenceId)}
                   >
-                    <PhoneCall className="h-4 w-4" />
-                    Contact Seller
+                    <MessageCircle className="h-4 w-4" />
+                    Message Seller
+                  </Button>
+                  <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Contact {displayContactRole}:{' '}
+                    <span className="font-semibold text-slate-900">
+                      {contactUnlocked ? displayPublicPhone || 'Unavailable' : 'Hidden until login'}
+                    </span>
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-11 w-full rounded-xl border-slate-300"
+                    onClick={handleCallContact}
+                  >
+                    <PhoneCall className="mr-2 h-4 w-4" />
+                    {contactUnlocked ? 'Call Seller' : 'Show Number'}
+                  </Button>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-xl border-slate-300"
+                      disabled={assistSubmittingMode !== null}
+                      onClick={() => handleLeadAssist('brochure')}
+                    >
+                      {assistSubmittingMode === 'brochure' ? 'Opening...' : 'Request Brochure'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-xl border-slate-300"
+                      disabled={assistSubmittingMode !== null}
+                      onClick={() => handleLeadAssist('loan')}
+                    >
+                      {assistSubmittingMode === 'loan' ? 'Opening...' : 'Loan Help'}
+                    </Button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-11 w-full rounded-xl border-slate-300"
+                    onClick={() => void handleShareListing()}
+                  >
+                    <Share2 className="mr-2 h-4 w-4" />
+                    {shareStatus || 'Share Listing'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={`mt-3 h-10 w-full rounded-xl border-slate-300 ${
+                      isComparedListing
+                        ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        : ''
+                    }`}
+                    onClick={toggleCompare}
+                  >
+                    <GitCompareArrows className="mr-2 h-4 w-4" />
+                    {isComparedListing ? 'Added to Compare' : 'Add to Compare'}
                   </Button>
                   <p className="mt-2 text-xs text-slate-500">
-                    Privacy Note: Your contact details are shared only after consent.
+                    Privacy note: phone unlocks and calls are tracked as verified lead actions.
                   </p>
 
                   <Button
@@ -532,16 +1175,17 @@ export default function PortalPropertyDetailsPage({
                   )}
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <h3 className="text-sm font-semibold text-slate-900">Post Property FREE</h3>
+                <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-sm font-semibold text-slate-900">Seller Growth Upgrade</h3>
                   <p className="mt-2 text-sm text-slate-600">
-                    Reach premium buyers and tenants with verified listing support.
+                    Promote listings, unlock verified lead tracking, and package premium visibility
+                    for faster response.
                   </p>
                   <Button
                     onClick={onOpenPostProperty}
                     className="mt-4 h-10 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800"
                   >
-                    Start Posting
+                    List And Upgrade
                   </Button>
                 </div>
               </aside>
@@ -566,6 +1210,7 @@ export default function PortalPropertyDetailsPage({
               ))}
             </div>
           </div>
+          {loginPromptDialog}
         </div>
       </section>
     );
@@ -574,11 +1219,11 @@ export default function PortalPropertyDetailsPage({
   const property = portalProperty;
 
   return (
-    <section className="pb-16 pt-28 text-slate-900">
-      <div className="page-container space-y-6">
+    <section className="portal-mobile-page pb-16 pt-28 text-slate-900">
+      <div className="page-container portal-mobile-stack space-y-6">
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <img src={activeImage} alt={property.title} className="h-[360px] w-full object-cover sm:h-[440px]" />
               <div className="grid grid-cols-3 gap-2 p-3 sm:grid-cols-4">
                 {gallery.map((item) => (
@@ -594,7 +1239,7 @@ export default function PortalPropertyDetailsPage({
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-center gap-3">
                 {property.verified && (
                   <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
@@ -602,7 +1247,7 @@ export default function PortalPropertyDetailsPage({
                     Verified listing
                   </Badge>
                 )}
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
                   {property.status}
                 </span>
               </div>
@@ -614,35 +1259,71 @@ export default function PortalPropertyDetailsPage({
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Area</p>
                   <p className="mt-1 font-semibold text-slate-900">{property.areaLabel}</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Configuration</p>
                   <p className="mt-1 font-semibold text-slate-900">{property.bhk}</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Facing</p>
                   <p className="mt-1 font-semibold text-slate-900">{property.facing}</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Floor</p>
                   <p className="mt-1 font-semibold text-slate-900">{property.floor}</p>
                 </div>
               </div>
 
               <p className="mt-5 text-sm leading-relaxed text-slate-700">{property.description}</p>
+
+              <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-700">
+                    Buyer Fit
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {property.readyToMove ? 'Ready-to-move preference' : property.status}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Strong for buyers who want verified stock, direct contact control, and easier shortlisting.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                    Lead Protection
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    Verified enquiry flow
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Unlock contact as a logged-in user and keep visits, comparison, and chat tied to a cleaner funnel.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-amber-100 bg-amber-50/70 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                    Demand Signal
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                    {property.featured ? 'Featured inventory' : 'Market-ready listing'}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Compare this listing, ask for brochure support, and use visit requests to move toward a final decision.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900">Amenities</h2>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {property.amenities.map((amenity) => (
                     <span
                       key={amenity}
-                      className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700"
+                      className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700"
                     >
                       {amenity}
                     </span>
@@ -650,7 +1331,7 @@ export default function PortalPropertyDetailsPage({
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-slate-900">Vastu Insights</h2>
                 <div className="mt-4 space-y-3">
                   <p className="inline-flex items-center gap-2 text-sm text-slate-700">
@@ -677,7 +1358,7 @@ export default function PortalPropertyDetailsPage({
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900">Trust & Safety</h2>
               <ul className="mt-4 space-y-3 text-sm text-slate-700">
                 <li className="inline-flex items-start gap-2">
@@ -694,10 +1375,86 @@ export default function PortalPropertyDetailsPage({
                 </li>
               </ul>
             </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-semibold text-slate-900">Buyer Advantage</h2>
+                <ul className="mt-4 space-y-3 text-sm text-slate-700">
+                  <li className="inline-flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+                    Verified listing backed by trust and moderation checks.
+                  </li>
+                  <li className="inline-flex items-start gap-2">
+                    <CalendarDays className="mt-0.5 h-4 w-4 text-blue-700" />
+                    Schedule visits directly from this page with verified phone flow.
+                  </li>
+                  <li className="inline-flex items-start gap-2">
+                    <MessageCircle className="mt-0.5 h-4 w-4 text-blue-700" />
+                    Request brochure, price sheet, and seller clarifications in chat.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h2 className="text-lg font-semibold text-slate-900">Investment Snapshot</h2>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {buyerDecisionCards.map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">{item.label}</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">{item.value}</p>
+                        <p className="mt-2 text-xs leading-5 text-slate-500">{item.note}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h2 className="text-lg font-semibold text-slate-900">Micro-market Snapshot</h2>
+                  {marketSnapshot ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-blue-700">
+                          {marketSnapshot.demandLabel}
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {marketSnapshot.locality}, {marketSnapshot.city}
+                        </p>
+                        <p className="mt-2 text-sm text-slate-700">{marketSnapshot.momentum}</p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Average Ticket</p>
+                          <p className="mt-2 text-base font-semibold text-slate-900">
+                            {marketSnapshot.averageTicket}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Trust Note</p>
+                          <p className="mt-2 text-sm font-medium text-slate-900">
+                            {marketSnapshot.trustNote}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <p className="font-semibold text-slate-900">
+                        {displayLocation || displayCity || 'This micro-market'}
+                      </p>
+                      <p className="mt-2">
+                        Compare price per sq.ft, verified status, and visit readiness to validate
+                        this {displayCategoryLabel.toLowerCase()} opportunity before you negotiate.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Price</p>
               <p className="mt-2 text-3xl font-bold text-blue-900">{property.priceLabel}</p>
               <p className="mt-2 text-sm text-slate-600">{property.referenceId}</p>
@@ -706,11 +1463,77 @@ export default function PortalPropertyDetailsPage({
                 className="mt-4 h-11 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800"
                 onClick={() => onOpenMessages(property.referenceId)}
               >
-                <PhoneCall className="h-4 w-4" />
-                Contact Seller
+                <MessageCircle className="h-4 w-4" />
+                Message Seller
+              </Button>
+              <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Contact {displayContactRole}:{' '}
+                <span className="font-semibold text-slate-900">
+                  {contactUnlocked ? displayPublicPhone || 'Unavailable' : 'Hidden until login'}
+                </span>
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 h-11 w-full rounded-xl border-slate-300"
+                onClick={handleCallContact}
+              >
+                <PhoneCall className="mr-2 h-4 w-4" />
+                {contactUnlocked ? 'Call Seller' : 'Show Number'}
+              </Button>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-xl border-slate-300"
+                  disabled={assistSubmittingMode !== null}
+                  onClick={() => handleLeadAssist('brochure')}
+                >
+                  {assistSubmittingMode === 'brochure' ? 'Opening...' : 'Request Brochure'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-xl border-slate-300"
+                  disabled={assistSubmittingMode !== null}
+                  onClick={() => handleLeadAssist('price-sheet')}
+                >
+                  {assistSubmittingMode === 'price-sheet' ? 'Opening...' : 'Price Sheet'}
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 h-10 w-full rounded-xl border-slate-300"
+                disabled={assistSubmittingMode !== null}
+                onClick={() => handleLeadAssist('loan')}
+              >
+                {assistSubmittingMode === 'loan' ? 'Opening...' : 'Loan & EMI Support'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 h-11 w-full rounded-xl border-slate-300"
+                onClick={() => void handleShareListing()}
+              >
+                <Share2 className="mr-2 h-4 w-4" />
+                {shareStatus || 'Share Listing'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={`mt-3 h-10 w-full rounded-xl border-slate-300 ${
+                  isComparedListing
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    : ''
+                }`}
+                onClick={toggleCompare}
+              >
+                <GitCompareArrows className="mr-2 h-4 w-4" />
+                {isComparedListing ? 'Added to Compare' : 'Add to Compare'}
               </Button>
               <p className="mt-2 text-xs text-slate-500">
-                Privacy Note: Your contact details are shared only after consent.
+                Privacy note: phone unlocks and calls are tracked as verified lead actions.
               </p>
 
               <Button
@@ -782,16 +1605,17 @@ export default function PortalPropertyDetailsPage({
               )}
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-900">Post Property FREE</h3>
+            <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">Seller Growth Upgrade</h3>
               <p className="mt-2 text-sm text-slate-600">
-                Reach premium buyers and tenants with verified listing support.
+                Promote listings, unlock verified lead tracking, and package premium visibility
+                for faster response.
               </p>
               <Button
                 onClick={onOpenPostProperty}
                 className="mt-4 h-10 w-full rounded-xl bg-blue-700 text-white hover:bg-blue-800"
               >
-                Start Posting
+                List And Upgrade
               </Button>
             </div>
           </aside>
@@ -815,6 +1639,7 @@ export default function PortalPropertyDetailsPage({
             ))}
           </div>
         </div>
+        {loginPromptDialog}
       </div>
     </section>
   );

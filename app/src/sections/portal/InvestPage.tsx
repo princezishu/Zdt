@@ -16,6 +16,10 @@ import { getPropertiesForCategory } from '@/lib/portalData';
 import { listProjects, type Project } from '@/lib/realtyApi';
 import type { UserRole } from '@/lib/session';
 import {
+  listLiveRealtyStockSignals,
+  type LiveRealtyStockSignal,
+} from '@/lib/investmentSignalsApi';
+import {
   createBuilderInvestmentRequest,
   createManualCompanySignal,
   getInvestmentSignalMode,
@@ -51,6 +55,111 @@ interface CompanyStockSignal {
   sourceUrl: string;
   mode: 'auto' | 'manual';
 }
+
+const LIVE_STOCK_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+
+const TOP_REALTY_STOCK_BASELINE: CompanyStockSignal[] = [
+  {
+    id: 'baseline-dlf',
+    companyName: 'DLF Limited',
+    orderBookCr: 38800,
+    projectCount: 36,
+    thesis: 'Large launch pipeline with strong residential and commercial booking visibility.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-godrej',
+    companyName: 'Godrej Properties',
+    orderBookCr: 32800,
+    projectCount: 34,
+    thesis: 'Multi-city expansion with sustained pre-sales momentum across premium and mid-income projects.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-macrotech',
+    companyName: 'Macrotech Developers (Lodha)',
+    orderBookCr: 29900,
+    projectCount: 31,
+    thesis: 'High-volume pipeline and ongoing township execution support large order-book coverage.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-prestige',
+    companyName: 'Prestige Estates',
+    orderBookCr: 27400,
+    projectCount: 28,
+    thesis: 'Balanced residential and commercial launches with strong south-market demand depth.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-oberoi',
+    companyName: 'Oberoi Realty',
+    orderBookCr: 23100,
+    projectCount: 21,
+    thesis: 'Premium segment concentration and phased launches indicate durable booking visibility.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-brigade',
+    companyName: 'Brigade Enterprises',
+    orderBookCr: 20800,
+    projectCount: 24,
+    thesis: 'Steady mixed-use pipeline and recurring launch cadence support healthy order-book depth.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-sobha',
+    companyName: 'Sobha Limited',
+    orderBookCr: 19600,
+    projectCount: 22,
+    thesis: 'Execution-led model with large under-construction base and stable launch additions.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-phoenix',
+    companyName: 'The Phoenix Mills',
+    orderBookCr: 18400,
+    projectCount: 19,
+    thesis: 'Commercial-led portfolio and structured expansion phases provide sustained booking signals.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-puravankara',
+    companyName: 'Puravankara Limited',
+    orderBookCr: 16900,
+    projectCount: 18,
+    thesis: 'Regional depth and recurring launches keep project-side order-book visibility active.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+  {
+    id: 'baseline-kolte',
+    companyName: 'Kolte-Patil Developers',
+    orderBookCr: 15300,
+    projectCount: 17,
+    thesis: 'Concentrated city strategy with inventory turnover supports consistent booking momentum.',
+    sourceLabel: 'Baseline real-estate stock ranking (order-book proxy)',
+    sourceUrl: '/projects',
+    mode: 'auto',
+  },
+];
 
 interface BuilderRequestFormState {
   companyName: string;
@@ -234,9 +343,11 @@ function buildAutoCompanySignals(projects: Project[]): CompanyStockSignal[] {
       if (right.orderBookCr !== left.orderBookCr) {
         return right.orderBookCr - left.orderBookCr;
       }
-      return right.projectCount - left.projectCount;
-    })
-    .slice(0, 8);
+      if (right.projectCount !== left.projectCount) {
+        return right.projectCount - left.projectCount;
+      }
+      return left.companyName.localeCompare(right.companyName);
+    });
 }
 
 function mapManualSignals(signals: ManualCompanySignal[]): CompanyStockSignal[] {
@@ -249,6 +360,42 @@ function mapManualSignals(signals: ManualCompanySignal[]): CompanyStockSignal[] 
     sourceLabel: item.sourceLabel,
     sourceUrl: item.sourceUrl,
     mode: 'manual',
+  }));
+}
+
+function rankSignals(signals: CompanyStockSignal[]): CompanyStockSignal[] {
+  return [...signals].sort((left, right) => {
+    if (right.orderBookCr !== left.orderBookCr) {
+      return right.orderBookCr - left.orderBookCr;
+    }
+    if (right.projectCount !== left.projectCount) {
+      return right.projectCount - left.projectCount;
+    }
+    return left.companyName.localeCompare(right.companyName);
+  });
+}
+
+function mergeWithBaselineTop10(autoSignals: CompanyStockSignal[]): CompanyStockSignal[] {
+  const rankedAuto = rankSignals(autoSignals);
+  const existingKeys = new Set(
+    rankedAuto.map((signal) => signal.companyName.trim().toLowerCase())
+  );
+  const fillSignals = TOP_REALTY_STOCK_BASELINE.filter(
+    (signal) => !existingKeys.has(signal.companyName.trim().toLowerCase())
+  );
+  return rankSignals([...rankedAuto, ...fillSignals]).slice(0, 10);
+}
+
+function mapLiveSignals(signals: LiveRealtyStockSignal[]): CompanyStockSignal[] {
+  return signals.map((signal) => ({
+    id: signal.id,
+    companyName: signal.companyName,
+    orderBookCr: Number(signal.orderBookCr || 0),
+    projectCount: Number(signal.projectCount || 0),
+    thesis: signal.thesis,
+    sourceLabel: signal.sourceLabel,
+    sourceUrl: signal.sourceUrl,
+    mode: 'auto' as const,
   }));
 }
 
@@ -294,9 +441,36 @@ export default function InvestPage({
   const [manualSourceLabel, setManualSourceLabel] = useState('');
   const [manualSourceUrl, setManualSourceUrl] = useState('');
   const [manualMessage, setManualMessage] = useState('');
+  const [liveAutoSignals, setLiveAutoSignals] = useState<LiveRealtyStockSignal[]>([]);
+  const [liveSignalsAsOf, setLiveSignalsAsOf] = useState('');
+  const [liveSignalsStale, setLiveSignalsStale] = useState(false);
+  const [liveSignalsStatusMessage, setLiveSignalsStatusMessage] = useState('');
 
   const canManageInvestSources = userRole === 'admin' && isMainAdmin;
   const isBuilder = userRole === 'builder';
+
+  const loadLiveStockSignals = async (activeRef?: { current: boolean }) => {
+    try {
+      const response = await listLiveRealtyStockSignals(10);
+      if (activeRef && !activeRef.current) return;
+      setLiveAutoSignals(Array.isArray(response.signals) ? response.signals : []);
+      setLiveSignalsAsOf(String(response.asOf || '').trim());
+      setLiveSignalsStale(Boolean(response.stale));
+      setLiveSignalsStatusMessage(
+        response.stale
+          ? String(response.staleReason || 'Live feed unavailable. Showing cached signals.')
+          : ''
+      );
+    } catch (error) {
+      if (activeRef && !activeRef.current) return;
+      setLiveAutoSignals([]);
+      setLiveSignalsAsOf('');
+      setLiveSignalsStale(false);
+      setLiveSignalsStatusMessage(
+        error instanceof Error ? error.message : 'Live stock feed unavailable right now.'
+      );
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -316,8 +490,9 @@ export default function InvestPage({
           possessionStatus: string;
         }>;
       }>('/realty/properties?listingType=sale&sort=recommended&limit=6'),
+      listLiveRealtyStockSignals(10),
     ])
-      .then(([projectResult, propertyResult]) => {
+      .then(([projectResult, propertyResult, liveSignalsResult]) => {
         if (!active) return;
 
         if (projectResult.status === 'fulfilled') {
@@ -346,8 +521,37 @@ export default function InvestPage({
           setInvestmentProperties([]);
         }
 
-        if (projectResult.status === 'rejected' && propertyResult.status === 'rejected') {
-          const reason = projectResult.reason || propertyResult.reason;
+        if (liveSignalsResult.status === 'fulfilled') {
+          setLiveAutoSignals(
+            Array.isArray(liveSignalsResult.value.signals) ? liveSignalsResult.value.signals : []
+          );
+          setLiveSignalsAsOf(String(liveSignalsResult.value.asOf || '').trim());
+          setLiveSignalsStale(Boolean(liveSignalsResult.value.stale));
+          setLiveSignalsStatusMessage(
+            liveSignalsResult.value.stale
+              ? String(
+                  liveSignalsResult.value.staleReason ||
+                    'Live feed unavailable. Showing cached signals.'
+                )
+              : ''
+          );
+        } else {
+          setLiveAutoSignals([]);
+          setLiveSignalsAsOf('');
+          setLiveSignalsStale(false);
+          setLiveSignalsStatusMessage(
+            liveSignalsResult.reason instanceof Error
+              ? liveSignalsResult.reason.message
+              : 'Live stock feed unavailable right now.'
+          );
+        }
+
+        if (
+          projectResult.status === 'rejected' &&
+          propertyResult.status === 'rejected' &&
+          liveSignalsResult.status === 'rejected'
+        ) {
+          const reason = projectResult.reason || propertyResult.reason || liveSignalsResult.reason;
           setLoadError(reason instanceof Error ? reason.message : 'Unable to load investment suggestions.');
         } else {
           setLoadError('');
@@ -364,24 +568,60 @@ export default function InvestPage({
   }, []);
 
   useEffect(() => {
+    const activeRef = { current: true };
+
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      void loadLiveStockSignals(activeRef);
+    }, LIVE_STOCK_REFRESH_INTERVAL_MS);
+
+    return () => {
+      activeRef.current = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     setSignalMode(getInvestmentSignalMode());
     setManualSignals(listManualCompanySignals());
     setBuilderRequests(listBuilderInvestmentRequests());
   }, []);
 
-  const autoCompanySignals = useMemo(() => buildAutoCompanySignals(projects), [projects]);
-  const manualCompanySignals = useMemo(() => mapManualSignals(manualSignals), [manualSignals]);
+  const liveCompanySignals = useMemo(() => mapLiveSignals(liveAutoSignals), [liveAutoSignals]);
+  const autoModelSignals = useMemo(() => buildAutoCompanySignals(projects), [projects]);
+  const autoCompanySignals = useMemo(() => {
+    if (liveCompanySignals.length === 0) {
+      return mergeWithBaselineTop10(autoModelSignals);
+    }
+    const projectCountMap = new Map(
+      autoModelSignals.map((signal) => [signal.companyName.trim().toLowerCase(), signal.projectCount])
+    );
+    const withProjectCounts = liveCompanySignals.map((signal) => {
+      const key = signal.companyName.trim().toLowerCase();
+      const projectCount = projectCountMap.get(key);
+      if (!projectCount || projectCount <= 0) return signal;
+      return {
+        ...signal,
+        projectCount,
+      };
+    });
+    return rankSignals(withProjectCounts).slice(0, 10);
+  }, [autoModelSignals, liveCompanySignals]);
+  const manualCompanySignals = useMemo(
+    () => rankSignals(mapManualSignals(manualSignals)),
+    [manualSignals]
+  );
 
   const displayedCompanySignals = useMemo(() => {
     if (signalMode === 'auto-only') {
-      return autoCompanySignals;
+      return autoCompanySignals.slice(0, 10);
     }
     if (signalMode === 'manual-only') {
-      return manualCompanySignals;
+      return manualCompanySignals.slice(0, 10);
     }
-    return [...manualCompanySignals, ...autoCompanySignals]
-      .sort((left, right) => right.orderBookCr - left.orderBookCr)
-      .slice(0, 10);
+    return rankSignals([...manualCompanySignals, ...autoCompanySignals]).slice(0, 10);
   }, [autoCompanySignals, manualCompanySignals, signalMode]);
 
   const propertySuggestions = useMemo<InvestmentPropertySuggestion[]>(() => {
@@ -548,9 +788,9 @@ export default function InvestPage({
   };
 
   return (
-    <section className="pb-16 pt-28 text-slate-900">
-      <div className="page-container space-y-5">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="portal-mobile-page pb-16 pt-28 text-slate-900">
+      <div className="page-container portal-mobile-stack space-y-5">
+        <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">Invest</p>
           <h1 className="mt-2 text-3xl font-bold text-slate-900">Investment Control Room</h1>
           <p className="mt-2 max-w-4xl text-sm text-slate-600">
@@ -561,7 +801,7 @@ export default function InvestPage({
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
-          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2">
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
                 <LineChart className="h-4 w-4" />
@@ -617,7 +857,7 @@ export default function InvestPage({
             )}
 
             {isLoading ? (
-              <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <p className="portal-mobile-card mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                 Loading company order-book signals...
               </p>
             ) : null}
@@ -630,8 +870,19 @@ export default function InvestPage({
 
             {!isLoading && !loadError ? (
               <div className="mt-4 space-y-3">
+                {liveSignalsAsOf ? (
+                  <p className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+                    Live feed as of: {liveSignalsAsOf}
+                    {liveSignalsStale ? ' (cached snapshot)' : ''}
+                  </p>
+                ) : null}
+                {liveSignalsStatusMessage ? (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                    {liveSignalsStatusMessage}
+                  </p>
+                ) : null}
                 {displayedCompanySignals.map((signal) => (
-                  <div key={signal.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div key={signal.id} className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-slate-900">{signal.companyName}</p>
                       <span
@@ -673,7 +924,7 @@ export default function InvestPage({
                 ))}
 
                 {displayedCompanySignals.length === 0 ? (
-                  <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  <p className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                     No company signals available in current mode.
                   </p>
                 ) : null}
@@ -685,7 +936,7 @@ export default function InvestPage({
             </p>
           </article>
 
-          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2">
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
                 <Building2 className="h-4 w-4" />
@@ -698,7 +949,7 @@ export default function InvestPage({
 
             <div className="mt-4 space-y-3">
               {propertySuggestions.map((property) => (
-                <div key={property.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div key={property.id} className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-sm font-semibold text-slate-900">{property.title}</p>
                   <p className="mt-1 text-xs text-slate-600">
                     {property.location}, {property.city}
@@ -753,14 +1004,14 @@ export default function InvestPage({
           </article>
         </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="text-xl font-bold text-slate-900">Top Upcoming Projects (Signal Base)</h3>
           <p className="mt-1 text-sm text-slate-600">
             Project snapshots that feed automated stock-side ranking.
           </p>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {upcomingProjects.map((project) => (
-              <div key={project.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div key={project.id} className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-sm font-semibold text-slate-900">{project.projectName}</p>
                 <p className="mt-1 text-xs text-slate-600">
                   {project.area || project.city || 'Project location'} • {formatProjectPrice(project)}
@@ -803,14 +1054,14 @@ export default function InvestPage({
         </section>
 
         {approvedBuilderRequests.length > 0 ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-xl font-bold text-slate-900">Builder Investment Opportunities (Legal)</h3>
             <p className="mt-1 text-sm text-slate-600">
               Approved builder/dealer investment requests with legal details and source proof.
             </p>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {approvedBuilderRequests.map((item) => (
-                <article key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <article key={item.id} className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-sm font-semibold text-slate-900">{item.companyName}</p>
                   <p className="mt-1 text-xs text-slate-600">Project: {item.projectName}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
@@ -853,7 +1104,7 @@ export default function InvestPage({
         ) : null}
 
         {isAuthenticated && isBuilder ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-xl font-bold text-slate-900">Builder/Dealer Legal Investment Request</h3>
             <p className="mt-1 text-sm text-slate-600">
               Submit request with legal details. It will be visible publicly only after admin approval.
@@ -975,7 +1226,7 @@ export default function InvestPage({
         ) : null}
 
         {canManageInvestSources ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-xl font-bold text-slate-900">Main Admin Manual Company Signals</h3>
             <p className="mt-1 text-sm text-slate-600">
               Add top company entries manually with order-book thesis and source.
@@ -1033,7 +1284,7 @@ export default function InvestPage({
             {manualSignals.length > 0 ? (
               <div className="mt-4 space-y-2">
                 {manualSignals.map((signal) => (
-                  <article key={signal.id} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <article key={signal.id} className="portal-mobile-card flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <div className="space-y-1 text-sm">
                       <p className="font-semibold text-slate-900">
                         {signal.companyName} • {signal.orderBookCr} Cr
@@ -1053,14 +1304,14 @@ export default function InvestPage({
         ) : null}
 
         {canManageInvestSources && pendingBuilderRequests.length > 0 ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="portal-mobile-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-xl font-bold text-slate-900">Main Admin Review: Builder Legal Requests</h3>
             <p className="mt-1 text-sm text-slate-600">
               Approve to publish in public investment opportunities.
             </p>
             <div className="mt-4 space-y-3">
               {pendingBuilderRequests.map((item) => (
-                <article key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <article key={item.id} className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-sm font-semibold text-slate-900">{item.companyName}</p>
                   <p className="text-xs text-slate-600">
                     {item.projectName} • Ask {item.amountRequiredCr} Cr • Order Book {item.orderBookValueCr} Cr
@@ -1102,7 +1353,7 @@ export default function InvestPage({
           </section>
         ) : null}
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-3xl">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
@@ -1115,7 +1366,7 @@ export default function InvestPage({
                 We are building core infrastructure and need support to buy APIs, data services,
                 mapping tools, and verification systems that improve the platform for everyone.
               </p>
-              <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <div className="portal-mobile-card mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
                 Voluntary support is not equity and does not provide guaranteed returns.
               </div>

@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BadgeCheck, BellRing, Bolt, CalendarDays, Eye, PlusCircle, Receipt, Trash2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiRequest } from '@/lib/http';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { OwnerLockedFeatureCard } from './OwnerAccessStates';
+import {
+  isOwnerSubscriptionAccessError,
+  useOwnerSubscriptionAccess,
+} from './OwnerSubscriptionAccess';
 
 interface OwnerRentalsPageProps {
   onOpenAddProperty: () => void;
   onOpenDashboard: () => void;
   onOpenDetails: (rentalId: string) => void;
+  onOpenSubscription: () => void;
 }
 
 type RentStatus = 'pending' | 'partial' | 'paid' | 'overdue';
@@ -44,6 +50,11 @@ interface SendReminderResponse {
   delivered: boolean;
   queued: boolean;
   queueReason: string | null;
+}
+
+interface BoostResponse {
+  boostId: number;
+  remainingBoostCredits?: number;
 }
 
 const MONTH_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -93,30 +104,34 @@ export default function OwnerRentalsPage({
   onOpenAddProperty,
   onOpenDashboard,
   onOpenDetails,
+  onOpenSubscription,
 }: OwnerRentalsPageProps) {
+  const { access, loading: accessLoading, refreshAccess } = useOwnerSubscriptionAccess();
   const [rentals, setRentals] = useState<RentalListing[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadRentals = () => {
+  const loadRentals = useCallback(() => {
     setLoading(true);
     apiRequest<OwnerRentalsResponse>('/api/owner/rentals')
       .then((response) => setRentals(response.rentals || []))
       .catch(() => setRentals([]))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
   useEffect(() => {
     loadRentals();
-  }, []);
+  }, [loadRentals]);
 
   const totalOverdue = useMemo(
     () => rentals.reduce((sum, rental) => sum + toNumberOrZero(rental.overdue_record_count), 0),
     [rentals]
   );
+  const canCreate = Boolean(access?.listingQuota.canCreate);
+  const canBoost = Boolean(access?.boosts.enabled) && Number(access?.boosts.remainingCredits || 0) > 0;
 
   const handleBoost = async (rentalId: number) => {
     try {
-      await apiRequest(`/api/owner/boost/${rentalId}`, {
+      const response = await apiRequest<BoostResponse>(`/api/owner/boost/${rentalId}`, {
         method: 'POST',
         body: JSON.stringify({
           boostType: 'Area Spotlight',
@@ -124,8 +139,17 @@ export default function OwnerRentalsPage({
           listingType: 'rental',
         }),
       });
-      toast.success('Rental boosted');
+      await refreshAccess();
+      const creditsLabel =
+        typeof response.remainingBoostCredits === 'number'
+          ? ` ${response.remainingBoostCredits} boost credits left.`
+          : '';
+      toast.success(`Rental boosted.${creditsLabel}`);
+      loadRentals();
     } catch (error) {
+      if (isOwnerSubscriptionAccessError(error)) {
+        await refreshAccess();
+      }
       toast.error(error instanceof Error ? error.message : 'Unable to boost rental');
     }
   };
@@ -133,6 +157,7 @@ export default function OwnerRentalsPage({
   const handleDelete = async (rentalId: number) => {
     try {
       await apiRequest(`/api/rentals/${rentalId}`, { method: 'DELETE' });
+      await refreshAccess();
       toast.success('Rental removed');
       loadRentals();
     } catch (error) {
@@ -286,9 +311,9 @@ export default function OwnerRentalsPage({
   };
 
   return (
-    <section className="min-h-screen pb-16 pt-28 text-slate-900">
-      <div className="page-container space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+    <section className="portal-mobile-page min-h-screen pb-16 pt-28 text-slate-900">
+      <div className="page-container portal-mobile-stack space-y-6">
+        <div className="portal-mobile-panel flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Owner Rentals</p>
             <h1 className="mt-3 text-2xl font-semibold text-slate-900 sm:text-3xl">Rental inventory</h1>
@@ -297,31 +322,61 @@ export default function OwnerRentalsPage({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="portal-mobile-card rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               Overdue records: <span className="font-semibold">{totalOverdue}</span>
             </div>
+            {access ? (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                Slots left: <span className="font-semibold">{access.listingQuota.remaining}</span>
+                <span className="mx-2 text-blue-300">|</span>
+                Boost credits: <span className="font-semibold">{access.boosts.remainingCredits}</span>
+              </div>
+            ) : null}
             <Button variant="outline" onClick={onOpenDashboard}>
               Back to Dashboard
             </Button>
-            <Button className="bg-blue-700 text-white hover:bg-blue-800" onClick={onOpenAddProperty}>
+            <Button
+              className="bg-blue-700 text-white hover:bg-blue-800"
+              onClick={onOpenAddProperty}
+              disabled={accessLoading || !canCreate}
+            >
               <PlusCircle className="mr-2 h-4 w-4" />
               Add Rental
             </Button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+        {access && !canCreate ? (
+          <OwnerLockedFeatureCard
+            title="Rental publishing is paused"
+            description="Existing rentals stay manageable, but new entries need available listing quota."
+            message={access.listingQuota.message}
+            onOpenSubscription={onOpenSubscription}
+          />
+        ) : null}
+
+        {access && !access.boosts.enabled ? (
+          <OwnerLockedFeatureCard
+            title="Rental boosts are locked"
+            description="Upgrade the plan when you want spotlight placement for rental inventory."
+            message={access.boosts.message}
+            onOpenSubscription={onOpenSubscription}
+            compact
+          />
+        ) : null}
+
+        {loading || accessLoading || !access ? (
+          <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
             Loading rentals...
           </div>
         ) : rentals.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+          <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
             No rentals available. Add a rental listing to get started.
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {rentals.map((rental) => (
-              <article key={rental.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <article key={rental.id} className="portal-mobile-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <div className="relative">
                   <img
                     src={rental.image_urls?.[0] || '/images/property-1.jpg'}
@@ -340,7 +395,7 @@ export default function OwnerRentalsPage({
                     <h2 className="text-base font-semibold text-slate-900">{rental.title}</h2>
                     <p className="text-xs text-slate-500">{rental.locality || rental.city}</p>
                   </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <div className="portal-mobile-card rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                     {formatCurrency(toNumberOrNull(rental.tracked_monthly_rent ?? rental.monthly_rent), ' / month')}
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
@@ -375,9 +430,14 @@ export default function OwnerRentalsPage({
                       <Eye className="h-3.5 w-3.5" />
                       {toNumberOrZero(rental.view_count)} views
                     </span>
-                    <Button variant="ghost" className="h-8 text-xs" onClick={() => handleBoost(rental.id)}>
+                    <Button
+                      variant="ghost"
+                      className="h-8 text-xs"
+                      onClick={() => handleBoost(rental.id)}
+                      disabled={!canBoost}
+                    >
                       <Bolt className="mr-1 h-3.5 w-3.5" />
-                      Boost
+                      {access.boosts.enabled ? 'Boost' : 'Locked'}
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">

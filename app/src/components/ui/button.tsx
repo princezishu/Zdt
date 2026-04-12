@@ -14,11 +14,11 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-white shadow-[0_14px_28px_-16px_rgba(239,68,68,0.62)] hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
-          "border border-border bg-white text-slate-700 shadow-[0_10px_24px_-20px_rgba(11,31,59,0.4)] hover:border-brand-secondary/45 hover:bg-slate-50 hover:text-brand-primary dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+          "border border-border/90 bg-white/92 text-slate-700 shadow-[0_14px_28px_-22px_rgba(11,31,59,0.34)] backdrop-blur-sm hover:-translate-y-0.5 hover:border-brand-gold/45 hover:bg-white hover:text-brand-primary dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
         secondary:
-          "bg-brand-secondary text-white shadow-[0_14px_30px_-18px_rgba(29,78,216,0.5)] hover:bg-[#1d46be]",
+          "bg-gradient-to-r from-brand-secondary to-[#123160] text-white shadow-[0_16px_30px_-20px_rgba(29,78,216,0.54)] hover:-translate-y-0.5 hover:from-[#1d46be] hover:to-brand-primary",
         ghost:
-          "text-slate-700 hover:bg-brand-primary/10 hover:text-brand-primary dark:hover:bg-accent/50",
+          "text-slate-700 hover:bg-brand-primary/8 hover:text-brand-primary dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

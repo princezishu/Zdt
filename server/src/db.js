@@ -70,12 +70,42 @@ if (missingEnv.length > 0) {
   process.exit(1);
 }
 
-export const pool = new Pool({
+function readBooleanEnv(name, fallback = false) {
+  const value = String(process.env[name] || '').trim().toLowerCase();
+  if (!value) return fallback;
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+const dbSslEnabled = readBooleanEnv('DB_SSL', false);
+const dbSslRejectUnauthorized = readBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true);
+const dbSslCa = String(process.env.DB_SSL_CA || '').trim();
+const dbConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
   port: Number(process.env.DB_PORT),
+};
+
+if (dbSslEnabled) {
+  dbConfig.ssl = {
+    rejectUnauthorized: dbSslRejectUnauthorized,
+  };
+  if (dbSslCa) {
+    dbConfig.ssl.ca = dbSslCa.replace(/\\n/g, '\n');
+  }
+}
+
+const dbPoolMax = Math.max(5, Math.min(50,
+  Number(process.env.DB_POOL_MAX || 20) || 20
+));
+
+export const pool = new Pool({
+  ...dbConfig,
+  max: dbPoolMax,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+  allowExitOnIdle: false,
 });
 
 export async function pingDb() {
@@ -136,6 +166,11 @@ export async function ensureAuthTables() {
       is_main_admin BOOLEAN NOT NULL DEFAULT FALSE,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+      managed_auth_provider VARCHAR(40),
+      managed_auth_subject VARCHAR(255),
+      managed_auth_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      managed_auth_only BOOLEAN NOT NULL DEFAULT FALSE,
+      managed_auth_last_sign_in_at TIMESTAMPTZ,
       deactivated_until TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -149,6 +184,11 @@ export async function ensureAuthTables() {
       ADD COLUMN IF NOT EXISTS is_main_admin BOOLEAN NOT NULL DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
       ADD COLUMN IF NOT EXISTS force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS managed_auth_provider VARCHAR(40),
+      ADD COLUMN IF NOT EXISTS managed_auth_subject VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS managed_auth_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS managed_auth_only BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS managed_auth_last_sign_in_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS deactivated_until TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS kyc_verified BOOLEAN NOT NULL DEFAULT FALSE;
   `);
@@ -173,7 +213,34 @@ export async function ensureAuthTables() {
   await pool.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'subscriptions'
+          AND column_name = 'status'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'subscriptions_status_check'
+      ) THEN
+        ALTER TABLE subscriptions
+          ADD CONSTRAINT subscriptions_status_check
+          CHECK (status IN ('active', 'cancelled', 'expired', 'pending_payment'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'property_requests'
+          AND column_name = 'lifecycle_status'
+      ) AND NOT EXISTS (
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'property_requests_lifecycle_status_check'
@@ -200,7 +267,13 @@ export async function ensureAuthTables() {
   await pool.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'property_requests'
+          AND column_name = 'risk_score'
+      ) AND NOT EXISTS (
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'property_requests_risk_score_range_check'
@@ -215,7 +288,13 @@ export async function ensureAuthTables() {
   await pool.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'property_requests'
+          AND column_name = 'engagement_score'
+      ) AND NOT EXISTS (
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'property_requests_engagement_score_non_negative_check'
@@ -230,7 +309,13 @@ export async function ensureAuthTables() {
   await pool.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'property_requests'
+          AND column_name = 'boost_weight'
+      ) AND NOT EXISTS (
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'property_requests_boost_weight_non_negative_check'
@@ -365,6 +450,22 @@ export async function ensureAuthTables() {
       expires_at TIMESTAMPTZ NOT NULL,
       attempts SMALLINT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS login_2fa_challenges (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      challenge_hash VARCHAR(128) NOT NULL UNIQUE,
+      otp_hash VARCHAR(128) NOT NULL,
+      device_id VARCHAR(120) NOT NULL,
+      requested_ip VARCHAR(64) NOT NULL DEFAULT '',
+      requested_user_agent VARCHAR(255) NOT NULL DEFAULT '',
+      attempts SMALLINT NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      verified_at TIMESTAMPTZ
     );
   `);
 
@@ -935,6 +1036,13 @@ export async function ensureAuthTables() {
   `);
 
   await pool.query(`
+    ALTER TABLE subscriptions
+      ADD COLUMN IF NOT EXISTS status VARCHAR(24) NOT NULL DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS provider VARCHAR(60) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(120) NOT NULL DEFAULT '';
+  `);
+
+  await pool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -979,27 +1087,26 @@ export async function ensureAuthTables() {
   `);
 
   await pool.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'listing_analytics_events_type_check'
-      ) THEN
-        ALTER TABLE listing_analytics_events
-          ADD CONSTRAINT listing_analytics_events_type_check
-          CHECK (
-            event_type IN (
-              'view',
-              'save',
-              'contact_click',
-              'visit_request',
-              'conversion',
-              'price_change'
-            )
-          );
-      END IF;
-    END $$;
+    ALTER TABLE listing_analytics_events
+      DROP CONSTRAINT IF EXISTS listing_analytics_events_type_check;
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_analytics_events
+      ADD CONSTRAINT listing_analytics_events_type_check
+      CHECK (
+        event_type IN (
+          'view',
+          'save',
+          'contact_click',
+          'phone_unlock',
+          'call_click',
+          'visit_request',
+          'premium_cta',
+          'conversion',
+          'price_change'
+        )
+      );
   `);
 
   await pool.query(`
@@ -1032,6 +1139,16 @@ export async function ensureAuthTables() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT property_analytics_daily_unique UNIQUE (property_request_id, day_date)
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE property_analytics_daily
+      ADD COLUMN IF NOT EXISTS phone_unlocks_count INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS call_clicks_count INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS premium_cta_count INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS brochure_requests_count INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS price_sheet_requests_count INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS loan_help_requests_count INT NOT NULL DEFAULT 0;
   `);
 
   await pool.query(`
@@ -1717,6 +1834,15 @@ export async function ensureAuthTables() {
     'CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active ON user_sessions(user_id, revoked_at);'
   );
   await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_managed_auth_identity_unique ON users(managed_auth_provider, managed_auth_subject) WHERE managed_auth_provider IS NOT NULL AND managed_auth_subject IS NOT NULL;'
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_login_2fa_challenges_user_created ON login_2fa_challenges(user_id, created_at DESC);'
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_login_2fa_challenges_expires ON login_2fa_challenges(expires_at);'
+  );
+  await pool.query(
     'CREATE INDEX IF NOT EXISTS idx_user_profiles_country ON user_profiles(country);'
   );
   await pool.query(
@@ -1830,19 +1956,23 @@ export async function ensureAuthTables() {
   ];
 
   for (const tableName of uuidMigrationTargets) {
-    await pool.query(`
-      ALTER TABLE IF EXISTS ${tableName}
-      ADD COLUMN IF NOT EXISTS uuid_id UUID DEFAULT gen_random_uuid()
-    `);
-    await pool.query(`
-      UPDATE ${tableName}
-      SET uuid_id = gen_random_uuid()
-      WHERE uuid_id IS NULL
-    `);
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_${tableName}_uuid_id_unique
-      ON ${tableName}(uuid_id)
-    `);
+    try {
+      await pool.query(`
+        ALTER TABLE IF EXISTS ${tableName}
+        ADD COLUMN IF NOT EXISTS uuid_id UUID DEFAULT gen_random_uuid()
+      `);
+      await pool.query(`
+        UPDATE ${tableName}
+        SET uuid_id = gen_random_uuid()
+        WHERE uuid_id IS NULL
+      `);
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_${tableName}_uuid_id_unique
+        ON ${tableName}(uuid_id)
+      `);
+    } catch {
+      // Table may not exist yet (created by a later ensure* function); skip gracefully.
+    }
   }
 
   const rolesSeed = [
@@ -2132,9 +2262,9 @@ export async function ensureAuthTables() {
     );
   }
 
-  const ownerName = process.env.MAIN_ADMIN_NAME?.trim() || 'ZDT Realty Owner';
-  const ownerEmail = (process.env.MAIN_ADMIN_EMAIL?.trim() || 'owner@zdtrealty.local').toLowerCase();
-  const ownerPassword = process.env.MAIN_ADMIN_PASSWORD || 'Owner@12345';
+  const ownerEmail = process.env.MAIN_ADMIN_EMAIL?.trim().toLowerCase() || '';
+  const ownerPassword = process.env.MAIN_ADMIN_PASSWORD || '';
+  const ownerName = process.env.MAIN_ADMIN_NAME?.trim() || process.env.APP_NAME?.trim() || ownerEmail;
   const ownerPhone = process.env.MAIN_ADMIN_PHONE?.trim() || null;
 
   const existingOwner = await pool.query(
@@ -2142,100 +2272,120 @@ export async function ensureAuthTables() {
   );
 
   if (existingOwner.rowCount === 0) {
-    const ownerByEmail = await pool.query(
-      'SELECT id FROM users WHERE email = $1 LIMIT 1',
-      [ownerEmail]
-    );
-
-    if (ownerByEmail.rowCount > 0) {
-      await pool.query(
-        `
-          UPDATE users
-          SET role = 'admin',
-              account_type = 'corporate',
-              subscription_tier = 'enterprise',
-              is_main_admin = TRUE,
-              is_active = TRUE
-          WHERE id = $1
-        `,
-        [ownerByEmail.rows[0].id]
+    if (!ownerEmail) {
+      console.warn(
+        '[SECURITY] Skipping main admin bootstrap. Set MAIN_ADMIN_EMAIL to promote or create the bootstrap admin account.'
       );
     } else {
-      const passwordHash = await bcrypt.hash(ownerPassword, 12);
-      await pool.query(
-        `
-          INSERT INTO users (
-            name,
-            email,
-            password_hash,
-            phone,
-            role,
-            account_type,
-            subscription_tier,
-            is_main_admin,
-            is_active,
-            force_password_reset
-          )
-          VALUES ($1, $2, $3, $4, 'admin', 'corporate', 'enterprise', TRUE, TRUE, TRUE)
-        `,
-        [ownerName, ownerEmail, passwordHash, ownerPhone]
+      const ownerByEmail = await pool.query(
+        'SELECT id FROM users WHERE email = $1 LIMIT 1',
+        [ownerEmail]
       );
-    }
 
-    if (!process.env.MAIN_ADMIN_EMAIL || !process.env.MAIN_ADMIN_PASSWORD) {
-      console.warn(
-        `[SECURITY] Main admin bootstrap account ready: ${ownerEmail}. Set MAIN_ADMIN_EMAIL and MAIN_ADMIN_PASSWORD in environment.`
-      );
+      if (ownerByEmail.rowCount > 0) {
+        await pool.query(
+          `
+            UPDATE users
+            SET role = 'admin',
+                account_type = 'corporate',
+                subscription_tier = 'enterprise',
+                is_main_admin = TRUE,
+                is_active = TRUE
+            WHERE id = $1
+          `,
+          [ownerByEmail.rows[0].id]
+        );
+      } else {
+        if (!ownerPassword) {
+          console.warn(
+            `[SECURITY] Skipping bootstrap admin creation for ${ownerEmail}. Set MAIN_ADMIN_PASSWORD to create the account automatically.`
+          );
+        } else {
+          const passwordHash = await bcrypt.hash(ownerPassword, 12);
+          await pool.query(
+            `
+              INSERT INTO users (
+                name,
+                email,
+                password_hash,
+                phone,
+                role,
+                account_type,
+                subscription_tier,
+                is_main_admin,
+                is_active,
+                force_password_reset
+              )
+              VALUES ($1, $2, $3, $4, 'admin', 'corporate', 'enterprise', TRUE, TRUE, TRUE)
+            `,
+            [ownerName || ownerEmail, ownerEmail, passwordHash, ownerPhone]
+          );
+        }
+      }
     }
   }
 
-  await pool.query(`
-    INSERT INTO subscriptions (
-      user_id,
-      plan_id,
-      subscription_tier,
-      start_date,
-      end_date,
-      features_json,
-      listing_quota,
-      boost_credits,
-      is_active,
-      created_by_user_id
-    )
-    SELECT
-      u.id,
-      CASE u.subscription_tier
-        WHEN 'enterprise' THEN 'enterprise_plan'
-        WHEN 'premium' THEN 'premium_plan'
-        WHEN 'pro' THEN 'pro_plan'
-        ELSE 'free_plan'
-      END AS plan_id,
-      u.subscription_tier,
-      CURRENT_DATE,
-      NULL,
-      '{}'::jsonb,
-      CASE u.subscription_tier
-        WHEN 'enterprise' THEN 1000
-        WHEN 'premium' THEN 200
-        WHEN 'pro' THEN 50
-        ELSE 10
-      END AS listing_quota,
-      CASE u.subscription_tier
-        WHEN 'enterprise' THEN 200
-        WHEN 'premium' THEN 60
-        WHEN 'pro' THEN 20
-        ELSE 3
-      END AS boost_credits,
-      TRUE,
-      NULL
-    FROM users u
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM subscriptions s
-      WHERE s.user_id = u.id
-        AND s.is_active = TRUE
-    )
-  `);
+  // NOTE: subscriptions.owner_id has NOT NULL on first boot; ensureOwnerTables() (run later)
+  // drops that constraint. Wrap in try-catch so first-boot doesn't crash — the seed will
+  // succeed on subsequent starts once the schema migration has run.
+  try {
+    await pool.query(`
+      INSERT INTO subscriptions (
+        user_id,
+        plan_id,
+        subscription_tier,
+        start_date,
+        end_date,
+        features_json,
+        listing_quota,
+        boost_credits,
+        is_active,
+        created_by_user_id
+      )
+      SELECT
+        u.id,
+        CASE u.subscription_tier
+          WHEN 'enterprise' THEN 'enterprise_plan'
+          WHEN 'premium' THEN 'premium_plan'
+          WHEN 'pro' THEN 'pro_plan'
+          ELSE 'free_plan'
+        END AS plan_id,
+        u.subscription_tier,
+        CURRENT_DATE,
+        NULL,
+        '{}'::jsonb,
+        CASE u.subscription_tier
+          WHEN 'enterprise' THEN 1000
+          WHEN 'premium' THEN 200
+          WHEN 'pro' THEN 50
+          ELSE 10
+        END AS listing_quota,
+        CASE u.subscription_tier
+          WHEN 'enterprise' THEN 200
+          WHEN 'premium' THEN 60
+          WHEN 'pro' THEN 20
+          ELSE 3
+        END AS boost_credits,
+        TRUE,
+        NULL
+      FROM users u
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM subscriptions s
+        WHERE s.user_id = u.id
+          AND s.is_active = TRUE
+      )
+    `);
+  } catch (subscriptionSeedError) {
+    // Schema migration for subscriptions.owner_id NOT NULL may not have run yet
+    // (ensureOwnerTables runs after ensureAuthTables). This is safe to skip on first boot.
+    const pgCode = typeof subscriptionSeedError?.code === 'string' ? subscriptionSeedError.code : '';
+    if (pgCode === '23502') {
+      console.warn('[DB] subscriptions seed skipped (owner_id NOT NULL not yet dropped — will retry next boot after ensureOwnerTables runs).');
+    } else {
+      throw subscriptionSeedError;
+    }
+  }
 }
 
 export async function ensureOwnerTables() {
@@ -2280,6 +2430,32 @@ export async function ensureOwnerTables() {
     );
   `);
 
+  // Migrate: owner_id → nullable so the newer user_id-based seed works.
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ALTER COLUMN owner_id DROP NOT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
+  `);
+  // Backfill: keep owner_id and user_id in sync.
+  await pool.query(`
+    UPDATE subscriptions SET user_id = owner_id WHERE user_id IS NULL AND owner_id IS NOT NULL;
+  `);
+  await pool.query(`
+    UPDATE subscriptions SET owner_id = user_id WHERE owner_id IS NULL AND user_id IS NOT NULL;
+  `);
+  // Also make legacy columns have defaults so the newer auth seed doesn't violate NOT NULL.
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ALTER COLUMN plan_name SET DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ALTER COLUMN price SET DEFAULT 0;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS boosts (
       id BIGSERIAL PRIMARY KEY,
@@ -2297,6 +2473,164 @@ export async function ensureOwnerTables() {
         OR (listing_type = 'rental' AND rental_id IS NOT NULL)
       )
     );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS billing_orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      order_kind VARCHAR(32) NOT NULL,
+      provider VARCHAR(32) NOT NULL DEFAULT 'razorpay',
+      status VARCHAR(24) NOT NULL DEFAULT 'created',
+      currency_code VARCHAR(8) NOT NULL DEFAULT 'INR',
+      amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      provider_order_id VARCHAR(120),
+      provider_payment_id VARCHAR(120),
+      provider_signature VARCHAR(255) NOT NULL DEFAULT '',
+      provider_receipt VARCHAR(120) NOT NULL DEFAULT '',
+      provider_last_event_type VARCHAR(80) NOT NULL DEFAULT '',
+      related_plan_id VARCHAR(40) REFERENCES subscription_plans(plan_id) ON DELETE SET NULL,
+      related_plan_name VARCHAR(120) NOT NULL DEFAULT '',
+      related_listing_reference VARCHAR(80) NOT NULL DEFAULT '',
+      fulfilled_entity_type VARCHAR(32) NOT NULL DEFAULT '',
+      fulfilled_entity_id BIGINT,
+      activated_subscription_id BIGINT REFERENCES subscriptions(id) ON DELETE SET NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      paid_at TIMESTAMPTZ,
+      failed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query('ALTER TABLE billing_orders DROP CONSTRAINT IF EXISTS billing_orders_kind_check;');
+  await pool.query(`
+    ALTER TABLE billing_orders
+      ADD CONSTRAINT billing_orders_kind_check
+      CHECK (order_kind IN ('subscription', 'sponsored_listing', 'ecommerce'));
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'billing_orders_status_check'
+      ) THEN
+        ALTER TABLE billing_orders
+          ADD CONSTRAINT billing_orders_status_check
+          CHECK (status IN ('created', 'authorized', 'paid', 'failed', 'expired', 'cancelled'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_assist_requests (
+      id BIGSERIAL PRIMARY KEY,
+      property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+      requester_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chat_conversation_id BIGINT REFERENCES chat_conversations(id) ON DELETE SET NULL,
+      assist_type VARCHAR(24) NOT NULL,
+      route_owner VARCHAR(24) NOT NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'open',
+      source_context VARCHAR(64) NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      last_requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      fulfilled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_type_check'
+      ) THEN
+        ALTER TABLE listing_assist_requests
+          ADD CONSTRAINT listing_assist_requests_type_check
+          CHECK (assist_type IN ('brochure', 'price_sheet', 'loan_help'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_route_check'
+      ) THEN
+        ALTER TABLE listing_assist_requests
+          ADD CONSTRAINT listing_assist_requests_route_check
+          CHECK (route_owner IN ('owner', 'team_support'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_status_check'
+      ) THEN
+        ALTER TABLE listing_assist_requests
+          ADD CONSTRAINT listing_assist_requests_status_check
+          CHECK (status IN ('open', 'in_progress', 'closed', 'cancelled'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_sponsorships (
+      id BIGSERIAL PRIMARY KEY,
+      property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      billing_order_id BIGINT REFERENCES billing_orders(id) ON DELETE SET NULL,
+      placement VARCHAR(24) NOT NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'pending_payment',
+      title_override VARCHAR(180) NOT NULL DEFAULT '',
+      subtitle_override VARCHAR(240) NOT NULL DEFAULT '',
+      description_override TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL DEFAULT '',
+      badge_text VARCHAR(60) NOT NULL DEFAULT 'Sponsored',
+      cta_label VARCHAR(60) NOT NULL DEFAULT 'Open Listing',
+      target_city VARCHAR(120) NOT NULL DEFAULT '',
+      target_locality VARCHAR(160) NOT NULL DEFAULT '',
+      target_request_type VARCHAR(16) NOT NULL DEFAULT '',
+      target_property_type VARCHAR(40) NOT NULL DEFAULT '',
+      sort_priority INT NOT NULL DEFAULT 100,
+      start_at TIMESTAMPTZ,
+      end_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'listing_sponsorships_placement_check'
+      ) THEN
+        ALTER TABLE listing_sponsorships
+          ADD CONSTRAINT listing_sponsorships_placement_check
+          CHECK (placement IN ('portal_home', 'public_results'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'listing_sponsorships_status_check'
+      ) THEN
+        ALTER TABLE listing_sponsorships
+          ADD CONSTRAINT listing_sponsorships_status_check
+          CHECK (status IN ('pending_payment', 'active', 'expired', 'cancelled'));
+      END IF;
+    END $$;
   `);
 
   await pool.query(`
@@ -2454,6 +2788,30 @@ export async function ensureOwnerTables() {
     EXECUTE FUNCTION set_updated_at_timestamp();
   `);
 
+  await pool.query('DROP TRIGGER IF EXISTS trg_billing_orders_updated_at ON billing_orders;');
+  await pool.query(`
+    CREATE TRIGGER trg_billing_orders_updated_at
+    BEFORE UPDATE ON billing_orders
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_listing_assist_requests_updated_at ON listing_assist_requests;');
+  await pool.query(`
+    CREATE TRIGGER trg_listing_assist_requests_updated_at
+    BEFORE UPDATE ON listing_assist_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_listing_sponsorships_updated_at ON listing_sponsorships;');
+  await pool.query(`
+    CREATE TRIGGER trg_listing_sponsorships_updated_at
+    BEFORE UPDATE ON listing_sponsorships
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS owner_profiles_user_idx ON owner_profiles(user_id);
   `);
@@ -2481,6 +2839,49 @@ export async function ensureOwnerTables() {
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS boosts_owner_idx ON boosts(owner_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS billing_orders_user_created_idx
+      ON billing_orders(user_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS billing_orders_status_idx
+      ON billing_orders(status, order_kind, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_provider_order_unique
+      ON billing_orders(provider_order_id)
+      WHERE provider_order_id IS NOT NULL AND provider_order_id <> '';
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_provider_payment_unique
+      ON billing_orders(provider_payment_id)
+      WHERE provider_payment_id IS NOT NULL AND provider_payment_id <> '';
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS listing_assist_requests_property_idx
+      ON listing_assist_requests(property_request_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS listing_assist_requests_requester_idx
+      ON listing_assist_requests(requester_user_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS listing_assist_requests_open_unique
+      ON listing_assist_requests(property_request_id, requester_user_id, assist_type)
+      WHERE status IN ('open', 'in_progress');
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS listing_sponsorships_owner_idx
+      ON listing_sponsorships(owner_user_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS listing_sponsorships_public_idx
+      ON listing_sponsorships(status, placement, sort_priority, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS listing_sponsorships_property_idx
+      ON listing_sponsorships(property_request_id);
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS properties_owner_idx ON properties(posted_by, created_at DESC);
@@ -2514,20 +2915,907 @@ export async function ensureOwnerTables() {
   `);
 }
 
+export async function ensureDalalCoinTables() {
+  await pool.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS referral_code VARCHAR(24),
+      ADD COLUMN IF NOT EXISTS referred_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS referred_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS dalal_coins INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS dalal_coin_balance INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS dalal_coin_tier VARCHAR(20) NOT NULL DEFAULT 'silver';
+  `);
+
+  await pool.query(`
+    UPDATE users
+    SET referred_by_user_id = COALESCE(referred_by_user_id, referred_by),
+        referred_by = COALESCE(referred_by, referred_by_user_id),
+        dalal_coin_balance = GREATEST(COALESCE(dalal_coin_balance, dalal_coins, 0), 0),
+        dalal_coins = GREATEST(COALESCE(dalal_coin_balance, dalal_coins, 0), 0);
+  `);
+
+  await pool.query(`
+    ALTER TABLE user_profiles
+      ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_dalal_coin_balance_check'
+      ) THEN
+        ALTER TABLE users
+          ADD CONSTRAINT users_dalal_coin_balance_check
+          CHECK (dalal_coins >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_dalal_coin_tier_check'
+      ) THEN
+        ALTER TABLE users
+          ADD CONSTRAINT users_dalal_coin_tier_check
+          CHECK (dalal_coin_tier IN ('silver', 'gold', 'platinum'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_dalal_coin_cached_balance_check'
+      ) THEN
+        ALTER TABLE users
+          ADD CONSTRAINT users_dalal_coin_cached_balance_check
+          CHECK (dalal_coin_balance >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ADD COLUMN IF NOT EXISTS coins_used INT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS final_price NUMERIC(14, 2);
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'subscriptions_coins_used_non_negative_check'
+      ) THEN
+        ALTER TABLE subscriptions
+          ADD CONSTRAINT subscriptions_coins_used_non_negative_check
+          CHECK (coins_used >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_grants (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount INT NOT NULL,
+      remaining_amount INT NOT NULL,
+      reserved_amount INT NOT NULL DEFAULT 0,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      reason_code VARCHAR(60) NOT NULL,
+      unlock_requirement VARCHAR(40) NOT NULL DEFAULT 'none',
+      source_type VARCHAR(40) NOT NULL DEFAULT '',
+      source_id VARCHAR(120) NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      confirmed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_grants_amount_positive_check'
+      ) THEN
+        ALTER TABLE dalal_coin_grants
+          ADD CONSTRAINT dalal_coin_grants_amount_positive_check
+          CHECK (amount > 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_grants_remaining_range_check'
+      ) THEN
+        ALTER TABLE dalal_coin_grants
+          ADD CONSTRAINT dalal_coin_grants_remaining_range_check
+          CHECK (
+            remaining_amount >= 0
+            AND reserved_amount >= 0
+            AND reserved_amount <= remaining_amount
+            AND remaining_amount <= amount
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_grants_status_check'
+      ) THEN
+        ALTER TABLE dalal_coin_grants
+          ADD CONSTRAINT dalal_coin_grants_status_check
+          CHECK (status IN ('pending', 'confirmed', 'expired', 'cancelled'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_grants_unlock_requirement_check'
+      ) THEN
+        ALTER TABLE dalal_coin_grants
+          ADD CONSTRAINT dalal_coin_grants_unlock_requirement_check
+          CHECK (unlock_requirement IN ('none', 'phone_verification', 'referred_user_first_paid'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_transactions (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount INT NOT NULL,
+      remaining_amount INT NOT NULL DEFAULT 0,
+      type VARCHAR(12) NOT NULL,
+      reason VARCHAR(80) NOT NULL,
+      reference_type VARCHAR(40) NOT NULL DEFAULT '',
+      reference_id VARCHAR(120) NOT NULL DEFAULT '',
+      expires_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE dalal_coin_transactions
+      ADD COLUMN IF NOT EXISTS grant_id BIGINT REFERENCES dalal_coin_grants(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS hold_id BIGINT,
+      ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'posted';
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_transactions_amount_positive_check'
+      ) THEN
+        ALTER TABLE dalal_coin_transactions
+          ADD CONSTRAINT dalal_coin_transactions_amount_positive_check
+          CHECK (amount > 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_transactions_type_check'
+      ) THEN
+        ALTER TABLE dalal_coin_transactions
+          ADD CONSTRAINT dalal_coin_transactions_type_check
+          CHECK (type IN ('credit', 'debit'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_transactions_remaining_range_check'
+      ) THEN
+        ALTER TABLE dalal_coin_transactions
+          ADD CONSTRAINT dalal_coin_transactions_remaining_range_check
+          CHECK (
+            remaining_amount >= 0
+            AND remaining_amount <= amount
+            AND (
+              (type = 'credit')
+              OR (type = 'debit' AND remaining_amount = 0)
+            )
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_transactions_status_check'
+      ) THEN
+        ALTER TABLE dalal_coin_transactions
+          ADD CONSTRAINT dalal_coin_transactions_status_check
+          CHECK (status IN ('posted', 'reversed'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_referrals (
+      id BIGSERIAL PRIMARY KEY,
+      referrer_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      referred_user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      referral_code VARCHAR(24) NOT NULL,
+      signup_device_id VARCHAR(120) NOT NULL DEFAULT '',
+      signup_ip_address VARCHAR(64) NOT NULL DEFAULT '',
+      status VARCHAR(40) NOT NULL DEFAULT 'pending_phone_verification',
+      blocked_reason VARCHAR(60) NOT NULL DEFAULT '',
+      first_paid_order_type VARCHAR(40) NOT NULL DEFAULT '',
+      first_paid_order_id VARCHAR(120) NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'user_referrals_status_check'
+      ) THEN
+        ALTER TABLE user_referrals
+          ADD CONSTRAINT user_referrals_status_check
+          CHECK (
+            status IN (
+              'pending_phone_verification',
+              'pending_first_paid_action',
+              'completed',
+              'blocked'
+            )
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_referrals (
+      id BIGSERIAL PRIMARY KEY,
+      referrer_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      referred_user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      referral_code VARCHAR(24) NOT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending_first_action',
+      referred_device_id VARCHAR(120) NOT NULL DEFAULT '',
+      referred_ip_address VARCHAR(120) NOT NULL DEFAULT '',
+      qualifying_action VARCHAR(40) NOT NULL DEFAULT '',
+      qualifying_reference_id VARCHAR(120) NOT NULL DEFAULT '',
+      rewarded_referrer_amount INT NOT NULL DEFAULT 0,
+      rewarded_referred_amount INT NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_referrals_status_check'
+      ) THEN
+        ALTER TABLE dalal_coin_referrals
+          ADD CONSTRAINT dalal_coin_referrals_status_check
+          CHECK (
+            status IN (
+              'pending_first_action',
+              'completed',
+              'blocked_device_limit',
+              'blocked_ip_limit'
+            )
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_referrals_reward_amount_non_negative_check'
+      ) THEN
+        ALTER TABLE dalal_coin_referrals
+          ADD CONSTRAINT dalal_coin_referrals_reward_amount_non_negative_check
+          CHECK (
+            rewarded_referrer_amount >= 0
+            AND rewarded_referred_amount >= 0
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_campaigns (
+      id BIGSERIAL PRIMARY KEY,
+      campaign_code VARCHAR(40) NOT NULL UNIQUE,
+      title VARCHAR(160) NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      reward_multiplier NUMERIC(8, 2) NOT NULL DEFAULT 1,
+      extra_bonus_coins INT NOT NULL DEFAULT 0,
+      starts_at TIMESTAMPTZ NOT NULL,
+      ends_at TIMESTAMPTZ,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_campaigns_multiplier_positive_check'
+      ) THEN
+        ALTER TABLE dalal_coin_campaigns
+          ADD CONSTRAINT dalal_coin_campaigns_multiplier_positive_check
+          CHECK (reward_multiplier > 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_campaigns_bonus_non_negative_check'
+      ) THEN
+        ALTER TABLE dalal_coin_campaigns
+          ADD CONSTRAINT dalal_coin_campaigns_bonus_non_negative_check
+          CHECK (extra_bonus_coins >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_reservations (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount INT NOT NULL,
+      context_type VARCHAR(40) NOT NULL,
+      context_id VARCHAR(120) NOT NULL DEFAULT '',
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      consumed_at TIMESTAMPTZ,
+      released_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_reservations_amount_positive_check'
+      ) THEN
+        ALTER TABLE dalal_coin_reservations
+          ADD CONSTRAINT dalal_coin_reservations_amount_positive_check
+          CHECK (amount > 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_reservations_status_check'
+      ) THEN
+        ALTER TABLE dalal_coin_reservations
+          ADD CONSTRAINT dalal_coin_reservations_status_check
+          CHECK (status IN ('active', 'released', 'consumed', 'expired'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS property_orders (
+      id BIGSERIAL PRIMARY KEY,
+      order_reference VARCHAR(80) NOT NULL UNIQUE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_id BIGINT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      discount_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
+      coins_used INT NOT NULL DEFAULT 0,
+      final_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      status VARCHAR(24) NOT NULL DEFAULT 'confirmed',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecommerce_orders (
+      id BIGSERIAL PRIMARY KEY,
+      order_reference VARCHAR(80) NOT NULL UNIQUE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      discount_percent NUMERIC(6, 2) NOT NULL DEFAULT 0,
+      coins_used INT NOT NULL DEFAULT 0,
+      final_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      status VARCHAR(24) NOT NULL DEFAULT 'confirmed',
+      order_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE ecommerce_orders
+      ADD COLUMN IF NOT EXISTS billing_order_id BIGINT REFERENCES billing_orders(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS subtotal_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS coin_discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS contact_name VARCHAR(120) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(40) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS contact_email VARCHAR(190) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS shipping_city VARCHAR(120) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS shipping_address TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+  `);
+
+  await pool.query('ALTER TABLE ecommerce_orders DROP CONSTRAINT IF EXISTS ecommerce_orders_status_check;');
+  await pool.query(`
+    ALTER TABLE ecommerce_orders
+      ADD CONSTRAINT ecommerce_orders_status_check
+      CHECK (status IN ('created', 'pending', 'paid', 'confirmed', 'failed', 'expired', 'cancelled'));
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecommerce_order_items (
+      id BIGSERIAL PRIMARY KEY,
+      ecommerce_order_id BIGINT NOT NULL REFERENCES ecommerce_orders(id) ON DELETE CASCADE,
+      material_item_id UUID REFERENCES material_items(id) ON DELETE SET NULL,
+      item_code VARCHAR(60) NOT NULL DEFAULT '',
+      item_name VARCHAR(200) NOT NULL,
+      brand VARCHAR(120) NOT NULL DEFAULT '',
+      unit VARCHAR(40) NOT NULL DEFAULT '',
+      unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      quantity INT NOT NULL DEFAULT 1,
+      line_subtotal NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ecommerce_order_items_quantity_positive_check'
+      ) THEN
+        ALTER TABLE ecommerce_order_items
+          ADD CONSTRAINT ecommerce_order_items_quantity_positive_check
+          CHECK (quantity > 0 AND unit_price >= 0 AND line_subtotal >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dalal_coin_holds (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      hold_kind VARCHAR(24) NOT NULL,
+      billing_order_id BIGINT REFERENCES billing_orders(id) ON DELETE SET NULL,
+      ecommerce_order_id BIGINT REFERENCES ecommerce_orders(id) ON DELETE SET NULL,
+      coins_amount INT NOT NULL,
+      rupee_discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      allocation_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      consumed_at TIMESTAMPTZ,
+      released_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_holds_amount_positive_check'
+      ) THEN
+        ALTER TABLE dalal_coin_holds
+          ADD CONSTRAINT dalal_coin_holds_amount_positive_check
+          CHECK (coins_amount > 0 AND rupee_discount_amount >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_holds_kind_check'
+      ) THEN
+        ALTER TABLE dalal_coin_holds
+          ADD CONSTRAINT dalal_coin_holds_kind_check
+          CHECK (hold_kind IN ('subscription', 'ecommerce'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'dalal_coin_holds_status_check'
+      ) THEN
+        ALTER TABLE dalal_coin_holds
+          ADD CONSTRAINT dalal_coin_holds_status_check
+          CHECK (status IN ('active', 'consumed', 'released', 'expired'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query('ALTER TABLE dalal_coin_transactions DROP CONSTRAINT IF EXISTS dalal_coin_transactions_hold_id_fkey;');
+  await pool.query(`
+    ALTER TABLE dalal_coin_transactions
+      ADD CONSTRAINT dalal_coin_transactions_hold_id_fkey
+      FOREIGN KEY (hold_id) REFERENCES dalal_coin_holds(id) ON DELETE SET NULL;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'property_orders_status_check'
+      ) THEN
+        ALTER TABLE property_orders
+          ADD CONSTRAINT property_orders_status_check
+          CHECK (status IN ('pending', 'confirmed', 'cancelled'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ecommerce_orders_status_check'
+      ) THEN
+        ALTER TABLE ecommerce_orders
+          ADD CONSTRAINT ecommerce_orders_status_check
+          CHECK (status IN ('pending', 'confirmed', 'cancelled'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'property_orders_non_negative_check'
+      ) THEN
+        ALTER TABLE property_orders
+          ADD CONSTRAINT property_orders_non_negative_check
+          CHECK (
+            price >= 0
+            AND discount_percent >= 0
+            AND coins_used >= 0
+            AND final_price >= 0
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ecommerce_orders_non_negative_check'
+      ) THEN
+        ALTER TABLE ecommerce_orders
+          ADD CONSTRAINT ecommerce_orders_non_negative_check
+          CHECK (
+            total_amount >= 0
+            AND discount_percent >= 0
+            AND coins_used >= 0
+            AND final_amount >= 0
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ecommerce_orders_extended_non_negative_check'
+      ) THEN
+        ALTER TABLE ecommerce_orders
+          ADD CONSTRAINT ecommerce_orders_extended_non_negative_check
+          CHECK (
+            subtotal_amount >= 0
+            AND delivery_amount >= 0
+            AND coin_discount_amount >= 0
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_dalal_coin_campaigns_updated_at ON dalal_coin_campaigns;');
+  await pool.query(`
+    CREATE TRIGGER trg_dalal_coin_campaigns_updated_at
+    BEFORE UPDATE ON dalal_coin_campaigns
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_dalal_coin_grants_updated_at ON dalal_coin_grants;');
+  await pool.query(`
+    CREATE TRIGGER trg_dalal_coin_grants_updated_at
+    BEFORE UPDATE ON dalal_coin_grants
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_user_referrals_updated_at ON user_referrals;');
+  await pool.query(`
+    CREATE TRIGGER trg_user_referrals_updated_at
+    BEFORE UPDATE ON user_referrals
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_dalal_coin_holds_updated_at ON dalal_coin_holds;');
+  await pool.query(`
+    CREATE TRIGGER trg_dalal_coin_holds_updated_at
+    BEFORE UPDATE ON dalal_coin_holds
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_property_orders_updated_at ON property_orders;');
+  await pool.query(`
+    CREATE TRIGGER trg_property_orders_updated_at
+    BEFORE UPDATE ON property_orders
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_ecommerce_orders_updated_at ON ecommerce_orders;');
+  await pool.query(`
+    CREATE TRIGGER trg_ecommerce_orders_updated_at
+    BEFORE UPDATE ON ecommerce_orders
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_unique_idx
+      ON users(referral_code)
+      WHERE referral_code IS NOT NULL AND referral_code <> '';
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS users_referred_by_user_id_idx
+      ON users(referred_by_user_id);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS users_dalal_coin_balance_idx
+      ON users(dalal_coin_balance DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS user_profiles_phone_verified_idx
+      ON user_profiles(phone_verified_at)
+      WHERE phone_verified_at IS NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS users_referred_by_idx
+      ON users(referred_by);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_transactions_user_created_idx
+      ON dalal_coin_transactions(user_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_transactions_grant_idx
+      ON dalal_coin_transactions(grant_id, created_at DESC)
+      WHERE grant_id IS NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_transactions_hold_idx
+      ON dalal_coin_transactions(hold_id, created_at DESC)
+      WHERE hold_id IS NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_transactions_user_expiry_idx
+      ON dalal_coin_transactions(user_id, expires_at ASC, created_at ASC)
+      WHERE type = 'credit' AND remaining_amount > 0;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_grants_user_status_expiry_idx
+      ON dalal_coin_grants(user_id, status, expires_at ASC, created_at ASC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_grants_source_idx
+      ON dalal_coin_grants(source_type, source_id, user_id);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS user_referrals_referrer_status_idx
+      ON user_referrals(referrer_user_id, status, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS user_referrals_referred_status_idx
+      ON user_referrals(referred_user_id, status, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS user_referrals_device_idx
+      ON user_referrals(signup_device_id)
+      WHERE signup_device_id <> '';
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS user_referrals_ip_idx
+      ON user_referrals(signup_ip_address)
+      WHERE signup_ip_address <> '';
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_referrals_referrer_idx
+      ON dalal_coin_referrals(referrer_user_id, status, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_referrals_device_idx
+      ON dalal_coin_referrals(referred_device_id)
+      WHERE referred_device_id <> '';
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_referrals_ip_idx
+      ON dalal_coin_referrals(referred_ip_address)
+      WHERE referred_ip_address <> '';
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_campaigns_active_idx
+      ON dalal_coin_campaigns(is_active, starts_at, ends_at);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_reservations_active_idx
+      ON dalal_coin_reservations(user_id, status, expires_at ASC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_holds_user_status_expiry_idx
+      ON dalal_coin_holds(user_id, status, expires_at ASC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS dalal_coin_holds_billing_order_idx
+      ON dalal_coin_holds(billing_order_id)
+      WHERE billing_order_id IS NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS property_orders_user_idx
+      ON property_orders(user_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS property_orders_property_idx
+      ON property_orders(property_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS ecommerce_orders_user_idx
+      ON ecommerce_orders(user_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS ecommerce_orders_billing_order_idx
+      ON ecommerce_orders(billing_order_id)
+      WHERE billing_order_id IS NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS ecommerce_order_items_order_idx
+      ON ecommerce_order_items(ecommerce_order_id, created_at ASC);
+  `);
+}
+
 export async function ensureEAuctionTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS eauction_sources (
       id BIGSERIAL PRIMARY KEY,
+      source_key TEXT,
       name TEXT NOT NULL,
+      authority_name TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT 'common_portal',
       portal_url TEXT NOT NULL,
+      official_listing_url TEXT NOT NULL DEFAULT '',
+      official_detail_url TEXT NOT NULL DEFAULT '',
+      notice_pdf_url TEXT NOT NULL DEFAULT '',
+      source_domain TEXT NOT NULL DEFAULT '',
+      allowed_domains TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
       category TEXT NOT NULL DEFAULT 'all',
       description TEXT NOT NULL DEFAULT '',
       badges TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      login_required BOOLEAN NOT NULL DEFAULT FALSE,
+      bidder_registration_required BOOLEAN NOT NULL DEFAULT FALSE,
+      emd_mentioned BOOLEAN NOT NULL DEFAULT FALSE,
+      domain_status TEXT NOT NULL DEFAULT 'verified',
+      last_checked_at TIMESTAMPTZ,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       sort_order INT NOT NULL DEFAULT 100,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE eauction_sources
+      ADD COLUMN IF NOT EXISTS source_key TEXT,
+      ADD COLUMN IF NOT EXISTS authority_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'common_portal',
+      ADD COLUMN IF NOT EXISTS official_listing_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS official_detail_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS notice_pdf_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source_domain TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS allowed_domains TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS login_required BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS bidder_registration_required BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS emd_mentioned BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS domain_status TEXT NOT NULL DEFAULT 'verified',
+      ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+  `);
+
+  await pool.query(`
+    UPDATE eauction_sources
+    SET official_listing_url = portal_url
+    WHERE official_listing_url = '';
+  `);
+
+  await pool.query(`
+    UPDATE eauction_sources
+    SET source_domain = REGEXP_REPLACE(REGEXP_REPLACE(official_listing_url, '^https?://', '', 'i'), '/.*$', '')
+    WHERE source_domain = ''
+      AND official_listing_url <> '';
   `);
 
   await pool.query(`
@@ -2546,8 +3834,43 @@ export async function ensureEAuctionTables() {
   `);
 
   await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'eauction_sources_source_type_check'
+      ) THEN
+        ALTER TABLE eauction_sources
+          ADD CONSTRAINT eauction_sources_source_type_check
+          CHECK (source_type IN ('bank', 'government', 'common_portal'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'eauction_sources_domain_status_check'
+      ) THEN
+        ALTER TABLE eauction_sources
+          ADD CONSTRAINT eauction_sources_domain_status_check
+          CHECK (domain_status IN ('verified', 'review_required', 'blocked'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS eauction_sources_portal_url_unique
       ON eauction_sources (portal_url);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS eauction_sources_source_key_unique
+      ON eauction_sources (source_key)
+      WHERE source_key IS NOT NULL;
   `);
 
   await pool.query('DROP TRIGGER IF EXISTS trg_eauction_sources_updated_at ON eauction_sources;');
@@ -2558,63 +3881,222 @@ export async function ensureEAuctionTables() {
     EXECUTE FUNCTION set_updated_at_timestamp();
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS eauction_listings (
+      id BIGSERIAL PRIMARY KEY,
+      listing_key TEXT,
+      source_id BIGINT REFERENCES eauction_sources(id) ON DELETE CASCADE,
+      external_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      property_type TEXT NOT NULL DEFAULT 'other',
+      bank_authority_name TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT 'bank',
+      official_listing_url TEXT NOT NULL DEFAULT '',
+      official_detail_url TEXT NOT NULL DEFAULT '',
+      notice_pdf_url TEXT NOT NULL DEFAULT '',
+      source_domain TEXT NOT NULL DEFAULT '',
+      login_required BOOLEAN NOT NULL DEFAULT FALSE,
+      bidder_registration_required BOOLEAN NOT NULL DEFAULT FALSE,
+      emd_mentioned BOOLEAN NOT NULL DEFAULT FALSE,
+      reserve_price_amount NUMERIC(18, 2),
+      reserve_price_display TEXT NOT NULL DEFAULT '',
+      emd_amount NUMERIC(18, 2),
+      emd_display TEXT NOT NULL DEFAULT '',
+      auction_date TIMESTAMPTZ,
+      inspection_date TIMESTAMPTZ,
+      state_name TEXT NOT NULL DEFAULT '',
+      district_name TEXT NOT NULL DEFAULT '',
+      city_name TEXT NOT NULL DEFAULT '',
+      property_location TEXT NOT NULL DEFAULT '',
+      domain_status TEXT NOT NULL DEFAULT 'verified',
+      last_checked_at TIMESTAMPTZ,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INT NOT NULL DEFAULT 100,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'eauction_listings_property_type_check'
+      ) THEN
+        ALTER TABLE eauction_listings
+          ADD CONSTRAINT eauction_listings_property_type_check
+          CHECK (property_type IN (
+            'plot_land',
+            'apartment_flat',
+            'commercial',
+            'industrial',
+            'agricultural',
+            'mixed',
+            'other'
+          ));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'eauction_listings_source_type_check'
+      ) THEN
+        ALTER TABLE eauction_listings
+          ADD CONSTRAINT eauction_listings_source_type_check
+          CHECK (source_type IN ('bank', 'government', 'common_portal'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'eauction_listings_domain_status_check'
+      ) THEN
+        ALTER TABLE eauction_listings
+          ADD CONSTRAINT eauction_listings_domain_status_check
+          CHECK (domain_status IN ('verified', 'review_required', 'blocked'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS eauction_listings_listing_key_unique
+      ON eauction_listings (listing_key)
+      WHERE listing_key IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS eauction_listings_source_idx
+      ON eauction_listings (source_id, is_active, auction_date);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS eauction_listings_geo_idx
+      ON eauction_listings (state_name, district_name, city_name);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS eauction_listings_type_idx
+      ON eauction_listings (source_type, property_type, auction_date);
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_eauction_listings_updated_at ON eauction_listings;');
+  await pool.query(`
+    CREATE TRIGGER trg_eauction_listings_updated_at
+    BEFORE UPDATE ON eauction_listings
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+
   const seedSources = [
     {
-      name: 'e-Auction India (Indian Banks)',
-      portalUrl: 'https://www.eauctionindia.com/property-auction',
+      sourceKey: 'IBAPI',
+      name: 'IBAPI',
+      authorityName: 'Indian Banks Association / Department of Financial Services',
+      sourceType: 'common_portal',
+      portalUrl: 'https://ibapi.in/',
+      officialListingUrl: 'https://ibapi.in/',
+      officialDetailUrl: 'https://ibapi.in/',
+      noticePdfUrl: '',
+      sourceDomain: 'ibapi.in',
+      allowedDomains: ['ibapi.in', 'www.ibapi.in', 'mstcecommerce.com', 'www.mstcecommerce.com'],
       category: 'all',
-      badges: ['Official', 'Bank Auction', 'SARFAESI'],
-      description: 'Direct property-auction listing page for SARFAESI and bank auctions.',
+      badges: ['Official Bank Source', 'Common Portal', 'Property Search'],
+      description:
+        'Common mortgaged-property directory used by Indian banks to publish auction inventory and guide bidders to the official auction platform.',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: true,
+      domainStatus: 'verified',
       sortOrder: 10,
     },
     {
-      name: 'MSTC eCommerce (Govt PSU)',
-      portalUrl: 'https://www.mstcecommerce.com/auctionhome/',
+      sourceKey: 'BAANKNET',
+      name: 'BAANKNET',
+      authorityName: 'PSB Alliance',
+      sourceType: 'common_portal',
+      portalUrl: 'https://baanknet.com/eauction-psb/home',
+      officialListingUrl: 'https://baanknet.com/eauction-psb/home',
+      officialDetailUrl: 'https://baanknet.com/eauction-psb/home',
+      noticePdfUrl: '',
+      sourceDomain: 'baanknet.com',
+      allowedDomains: ['baanknet.com', 'www.baanknet.com'],
       category: 'all',
-      badges: ['Official', 'Govt PSU', 'e-Auction'],
-      description: 'Direct auction home for government, PSU and institutional e-auctions.',
+      badges: ['Official Bank Source', 'Buyer Registration', 'Auction Search'],
+      description:
+        'Public-sector-bank auction discovery portal with auction search, buyer registration, and bidder participation workflows.',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: true,
+      domainStatus: 'verified',
       sortOrder: 20,
     },
     {
-      name: 'SBI Auctions',
-      portalUrl: 'https://sbi.bank.in/web/sbi-in-the-news/auction-notices',
+      sourceKey: 'NIC_EAUCTION_INDIA',
+      name: 'NIC eAuction India',
+      authorityName: 'National Informatics Centre / Auction Inviting Authorities',
+      sourceType: 'government',
+      portalUrl: 'https://eauction.gov.in/eAuction/app',
+      officialListingUrl: 'https://eauction.gov.in/eAuction/app',
+      officialDetailUrl: 'https://eauction.gov.in/eAuction/app',
+      noticePdfUrl: '',
+      sourceDomain: 'eauction.gov.in',
+      allowedDomains: ['eauction.gov.in', 'www.eauction.gov.in', 'gepnicreports.gov.in'],
       category: 'all',
-      badges: ['Official', 'Bank Auction'],
-      description: 'Direct SBI auction notices page.',
+      badges: ['Official Government Source', 'Auction Search', 'Bidder Enrollment'],
+      description:
+        'Official government e-auction platform for public authorities, with auction search, status tracking, and bidder enrollment.',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      domainStatus: 'verified',
       sortOrder: 30,
     },
     {
-      name: 'Bank of Baroda e-Auction',
-      portalUrl: 'https://bankofbaroda.bank.in/e-auction',
+      sourceKey: 'PNB_EAUCTION',
+      name: 'PNB e-Auction',
+      authorityName: 'Punjab National Bank',
+      sourceType: 'bank',
+      portalUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      sourceDomain: 'pnb.bank.in',
+      allowedDomains: [
+        'pnb.bank.in',
+        'pnbindia.in',
+        'www.pnbindia.in',
+        'etender.pnb.bank.in',
+        'etender.pnbnet.in',
+      ],
       category: 'all',
-      badges: ['Official', 'Bank Auction'],
-      description: 'Direct Bank of Baroda e-auction page.',
+      badges: ['Official Bank Source', 'Sale Notices', 'No Broker Involvement'],
+      description:
+        'Official Punjab National Bank e-auction listing page for sale notices, property notices, and linked auction portal access.',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: true,
+      domainStatus: 'verified',
       sortOrder: 40,
     },
-    {
-      name: 'PNB e-Auction',
-      portalUrl: 'https://pnb.bank.in/eAuction.aspx/Tender.aspx',
-      category: 'all',
-      badges: ['Official', 'Bank Auction'],
-      description: 'Direct PNB e-auction tender listings page.',
-      sortOrder: 50,
-    },
-    {
-      name: 'Canara Bank e-Auction',
-      portalUrl: 'https://www.canarabank.bank.in/e-auction',
-      category: 'all',
-      badges: ['Official', 'Bank Auction'],
-      description: 'Direct Canara Bank e-auction page.',
-      sortOrder: 60,
-    },
-    {
-      name: 'ICICI Bank Property Auctions',
-      portalUrl: 'https://www.icicihfc.com/property-auction',
-      category: 'all',
-      badges: ['Official', 'Bank Auction'],
-      description: 'Direct ICICI Home Finance property auction page.',
-      sortOrder: 70,
-    },
+  ];
+
+  const legacySeedNames = [
+    'e-Auction India (Indian Banks)',
+    'MSTC eCommerce (Govt PSU)',
+    'SBI Auctions',
+    'Bank of Baroda e-Auction',
+    'Canara Bank e-Auction',
+    'ICICI Bank Property Auctions',
   ];
 
   for (const source of seedSources) {
@@ -2622,20 +4104,45 @@ export async function ensureEAuctionTables() {
       `
         UPDATE eauction_sources
         SET
-          portal_url = $2,
-          category = $3,
-          description = $4,
-          badges = $5::text[],
+          name = $2,
+          authority_name = $3,
+          source_type = $4,
+          portal_url = $5,
+          official_listing_url = $6,
+          official_detail_url = $7,
+          notice_pdf_url = $8,
+          source_domain = $9,
+          allowed_domains = $10::text[],
+          category = $11,
+          description = $12,
+          badges = $13::text[],
+          login_required = $14,
+          bidder_registration_required = $15,
+          emd_mentioned = $16,
+          domain_status = $17,
+          last_checked_at = NOW(),
           is_active = TRUE,
-          sort_order = $6
-        WHERE LOWER(name) = LOWER($1)
+          sort_order = $18
+        WHERE source_key = $1
       `,
       [
+        source.sourceKey,
         source.name,
+        source.authorityName,
+        source.sourceType,
         source.portalUrl,
+        source.officialListingUrl,
+        source.officialDetailUrl,
+        source.noticePdfUrl,
+        source.sourceDomain,
+        source.allowedDomains,
         source.category,
         source.description,
         source.badges,
+        Boolean(source.loginRequired),
+        Boolean(source.bidderRegistrationRequired),
+        Boolean(source.emdMentioned),
+        source.domainStatus,
         source.sortOrder,
       ]
     );
@@ -2643,43 +4150,486 @@ export async function ensureEAuctionTables() {
     await pool.query(
       `
         INSERT INTO eauction_sources (
+          source_key,
           name,
+          authority_name,
+          source_type,
           portal_url,
+          official_listing_url,
+          official_detail_url,
+          notice_pdf_url,
+          source_domain,
+          allowed_domains,
           category,
           description,
           badges,
+          login_required,
+          bidder_registration_required,
+          emd_mentioned,
+          domain_status,
+          last_checked_at,
           is_active,
           sort_order
         )
-        VALUES ($1, $2, $3, $4, $5::text[], TRUE, $6)
-        ON CONFLICT (portal_url)
-        DO UPDATE
-          SET name = EXCLUDED.name,
-              category = EXCLUDED.category,
-              description = EXCLUDED.description,
-              badges = EXCLUDED.badges,
-              is_active = TRUE,
-              sort_order = EXCLUDED.sort_order
+        SELECT
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10::text[],
+          $11,
+          $12,
+          $13::text[],
+          $14,
+          $15,
+          $16,
+          $17,
+          NOW(),
+          TRUE,
+          $18
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM eauction_sources
+          WHERE source_key = $1
+             OR portal_url = $5
+        )
       `,
       [
+        source.sourceKey,
         source.name,
+        source.authorityName,
+        source.sourceType,
         source.portalUrl,
+        source.officialListingUrl,
+        source.officialDetailUrl,
+        source.noticePdfUrl,
+        source.sourceDomain,
+        source.allowedDomains,
         source.category,
         source.description,
         source.badges,
+        Boolean(source.loginRequired),
+        Boolean(source.bidderRegistrationRequired),
+        Boolean(source.emdMentioned),
+        source.domainStatus,
         source.sortOrder,
       ]
     );
 
     await pool.query(
       `
-        DELETE FROM eauction_sources
-        WHERE LOWER(name) = LOWER($1)
-          AND portal_url <> $2
+        UPDATE eauction_sources
+        SET
+          source_key = $1,
+          authority_name = $3,
+          source_type = $4,
+          portal_url = $5,
+          official_listing_url = $6,
+          official_detail_url = $7,
+          notice_pdf_url = $8,
+          source_domain = $9,
+          allowed_domains = $10::text[],
+          category = $11,
+          description = $12,
+          badges = $13::text[],
+          login_required = $14,
+          bidder_registration_required = $15,
+          emd_mentioned = $16,
+          domain_status = $17,
+          last_checked_at = NOW(),
+          is_active = TRUE,
+          sort_order = $18
+        WHERE (LOWER(name) = LOWER($2) OR portal_url = $5)
+          AND (source_key IS NULL OR source_key = '')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM eauction_sources current_source
+            WHERE current_source.source_key = $1
+          )
       `,
       [
+        source.sourceKey,
         source.name,
+        source.authorityName,
+        source.sourceType,
         source.portalUrl,
+        source.officialListingUrl,
+        source.officialDetailUrl,
+        source.noticePdfUrl,
+        source.sourceDomain,
+        source.allowedDomains,
+        source.category,
+        source.description,
+        source.badges,
+        Boolean(source.loginRequired),
+        Boolean(source.bidderRegistrationRequired),
+        Boolean(source.emdMentioned),
+        source.domainStatus,
+        source.sortOrder,
+      ]
+    );
+
+    await pool.query(
+      `
+        UPDATE eauction_sources
+        SET is_active = FALSE
+        WHERE LOWER(name) = LOWER($2)
+          AND (source_key IS NULL OR source_key <> $1)
+          AND EXISTS (
+            SELECT 1
+            FROM eauction_sources current_source
+            WHERE current_source.source_key = $1
+          )
+      `,
+      [source.sourceKey, source.name]
+    );
+  }
+
+  if (legacySeedNames.length > 0) {
+    await pool.query(
+      `
+        UPDATE eauction_sources
+        SET is_active = FALSE
+        WHERE LOWER(name) = ANY($1::text[])
+          AND (source_key IS NULL OR source_key = '')
+      `,
+      [legacySeedNames.map((name) => name.toLowerCase())]
+    );
+  }
+
+  const sourceRows = await pool.query(`
+    SELECT id, source_key, source_type, authority_name, source_domain
+    FROM eauction_sources
+    WHERE source_key IS NOT NULL
+  `);
+  const sourceMap = new Map(
+    sourceRows.rows.map((row) => [
+      String(row.source_key || ''),
+      {
+        id: Number(row.id),
+        sourceType: String(row.source_type || 'common_portal'),
+        authorityName: String(row.authority_name || ''),
+        sourceDomain: String(row.source_domain || ''),
+      },
+    ])
+  );
+
+  const seedListings = [
+    {
+      listingKey: 'PNB_AHMEDABAD_20260327',
+      sourceKey: 'PNB_EAUCTION',
+      externalId: 'pnb-ahmedabad-2026-03-27',
+      title: 'ARMB Ahmedabad Auction 27.03.2026',
+      summary:
+        'Official Punjab National Bank sale notice entry for an Ahmedabad auction batch. Use the official page and linked notice before bidding.',
+      propertyType: 'commercial',
+      bankAuthorityName: 'Punjab National Bank',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      reservePriceAmount: null,
+      reservePriceDisplay: '',
+      emdAmount: null,
+      emdDisplay: '',
+      auctionDate: '2026-03-27T00:00:00+05:30',
+      inspectionDate: null,
+      stateName: 'Gujarat',
+      districtName: 'Ahmedabad',
+      cityName: 'Ahmedabad',
+      propertyLocation: 'CO Ahmedabad / ARMB Ahmedabad',
+      domainStatus: 'verified',
+      sortOrder: 10,
+    },
+    {
+      listingKey: 'PNB_LUDHIANA_20260327',
+      sourceKey: 'PNB_EAUCTION',
+      externalId: 'pnb-ludhiana-2026-03-27',
+      title: 'Auction ENG 1 27.03.2026',
+      summary:
+        'Official Punjab National Bank sale notice listing for a Ludhiana auction window. Open the official page and notice before registration or payment.',
+      propertyType: 'mixed',
+      bankAuthorityName: 'Punjab National Bank',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      reservePriceAmount: null,
+      reservePriceDisplay: '',
+      emdAmount: null,
+      emdDisplay: '',
+      auctionDate: '2026-03-27T00:00:00+05:30',
+      inspectionDate: null,
+      stateName: 'Punjab',
+      districtName: 'Ludhiana',
+      cityName: 'Ludhiana',
+      propertyLocation: 'CO Ludhiana',
+      domainStatus: 'verified',
+      sortOrder: 20,
+    },
+    {
+      listingKey: 'PNB_MANAV_RICE_20260330',
+      sourceKey: 'PNB_EAUCTION',
+      externalId: 'pnb-manav-rice-2026-03-30',
+      title: 'E-auction Notice of M/s Manav Rice',
+      summary:
+        'Official PNB zonal-office notice tied to an auction event for M/s Manav Rice. Read the official notice and terms carefully before taking action.',
+      propertyType: 'industrial',
+      bankAuthorityName: 'Punjab National Bank',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      reservePriceAmount: null,
+      reservePriceDisplay: '',
+      emdAmount: null,
+      emdDisplay: '',
+      auctionDate: '2026-03-30T00:00:00+05:30',
+      inspectionDate: null,
+      stateName: 'Chandigarh',
+      districtName: 'Chandigarh',
+      cityName: 'Chandigarh',
+      propertyLocation: 'ZO Chandigarh',
+      domainStatus: 'verified',
+      sortOrder: 30,
+    },
+    {
+      listingKey: 'PNB_MURSHIDABAD_20260327',
+      sourceKey: 'PNB_EAUCTION',
+      externalId: 'pnb-murshidabad-2026-03-27',
+      title: 'Circle Office Murshidabad E-Auction Sale 27.03.2026',
+      summary:
+        'Official Murshidabad circle sale notice listed by Punjab National Bank. Use the official page or notice link for the authoritative auction record.',
+      propertyType: 'mixed',
+      bankAuthorityName: 'Punjab National Bank',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      reservePriceAmount: null,
+      reservePriceDisplay: '',
+      emdAmount: null,
+      emdDisplay: '',
+      auctionDate: '2026-03-27T00:00:00+05:30',
+      inspectionDate: null,
+      stateName: 'West Bengal',
+      districtName: 'Murshidabad',
+      cityName: 'Murshidabad',
+      propertyLocation: 'CO Murshidabad',
+      domainStatus: 'verified',
+      sortOrder: 40,
+    },
+    {
+      listingKey: 'PNB_RAJKOT_20260327',
+      sourceKey: 'PNB_EAUCTION',
+      externalId: 'pnb-rajkot-2026-03-27',
+      title: 'Auction-27.03.26, ENG, D.O.P-11.03.26',
+      summary:
+        'Official PNB Rajkot circle auction listing. Confirm reserve price, EMD, and property specifics from the official notice before proceeding.',
+      propertyType: 'mixed',
+      bankAuthorityName: 'Punjab National Bank',
+      officialListingUrl: 'https://pnb.bank.in/EAuction.aspx',
+      officialDetailUrl: 'https://pnb.bank.in/EAuction.aspx/document/Approved-List.html',
+      noticePdfUrl: '',
+      loginRequired: false,
+      bidderRegistrationRequired: true,
+      emdMentioned: false,
+      reservePriceAmount: null,
+      reservePriceDisplay: '',
+      emdAmount: null,
+      emdDisplay: '',
+      auctionDate: '2026-03-27T00:00:00+05:30',
+      inspectionDate: null,
+      stateName: 'Gujarat',
+      districtName: 'Rajkot',
+      cityName: 'Rajkot',
+      propertyLocation: 'CO Rajkot',
+      domainStatus: 'verified',
+      sortOrder: 50,
+    },
+  ];
+
+  for (const listing of seedListings) {
+    const source = sourceMap.get(listing.sourceKey);
+    if (!source?.id) {
+      continue;
+    }
+
+    await pool.query(
+      `
+        UPDATE eauction_listings
+        SET
+          source_id = $2,
+          external_id = $3,
+          title = $4,
+          summary = $5,
+          property_type = $6,
+          bank_authority_name = $7,
+          source_type = $8,
+          official_listing_url = $9,
+          official_detail_url = $10,
+          notice_pdf_url = $11,
+          source_domain = $12,
+          login_required = $13,
+          bidder_registration_required = $14,
+          emd_mentioned = $15,
+          reserve_price_amount = $16,
+          reserve_price_display = $17,
+          emd_amount = $18,
+          emd_display = $19,
+          auction_date = $20,
+          inspection_date = $21,
+          state_name = $22,
+          district_name = $23,
+          city_name = $24,
+          property_location = $25,
+          domain_status = $26,
+          last_checked_at = NOW(),
+          is_active = TRUE,
+          sort_order = $27
+        WHERE listing_key = $1
+      `,
+      [
+        listing.listingKey,
+        source.id,
+        listing.externalId,
+        listing.title,
+        listing.summary,
+        listing.propertyType,
+        listing.bankAuthorityName,
+        source.sourceType,
+        listing.officialListingUrl,
+        listing.officialDetailUrl,
+        listing.noticePdfUrl,
+        source.sourceDomain,
+        Boolean(listing.loginRequired),
+        Boolean(listing.bidderRegistrationRequired),
+        Boolean(listing.emdMentioned),
+        listing.reservePriceAmount,
+        listing.reservePriceDisplay,
+        listing.emdAmount,
+        listing.emdDisplay,
+        listing.auctionDate,
+        listing.inspectionDate,
+        listing.stateName,
+        listing.districtName,
+        listing.cityName,
+        listing.propertyLocation,
+        listing.domainStatus,
+        listing.sortOrder,
+      ]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO eauction_listings (
+          listing_key,
+          source_id,
+          external_id,
+          title,
+          summary,
+          property_type,
+          bank_authority_name,
+          source_type,
+          official_listing_url,
+          official_detail_url,
+          notice_pdf_url,
+          source_domain,
+          login_required,
+          bidder_registration_required,
+          emd_mentioned,
+          reserve_price_amount,
+          reserve_price_display,
+          emd_amount,
+          emd_display,
+          auction_date,
+          inspection_date,
+          state_name,
+          district_name,
+          city_name,
+          property_location,
+          domain_status,
+          last_checked_at,
+          is_active,
+          sort_order
+        )
+        SELECT
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16,
+          $17,
+          $18,
+          $19,
+          $20,
+          $21,
+          $22,
+          $23,
+          $24,
+          $25,
+          $26,
+          NOW(),
+          TRUE,
+          $27
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM eauction_listings
+          WHERE listing_key = $1
+        )
+      `,
+      [
+        listing.listingKey,
+        source.id,
+        listing.externalId,
+        listing.title,
+        listing.summary,
+        listing.propertyType,
+        listing.bankAuthorityName,
+        source.sourceType,
+        listing.officialListingUrl,
+        listing.officialDetailUrl,
+        listing.noticePdfUrl,
+        source.sourceDomain,
+        Boolean(listing.loginRequired),
+        Boolean(listing.bidderRegistrationRequired),
+        Boolean(listing.emdMentioned),
+        listing.reservePriceAmount,
+        listing.reservePriceDisplay,
+        listing.emdAmount,
+        listing.emdDisplay,
+        listing.auctionDate,
+        listing.inspectionDate,
+        listing.stateName,
+        listing.districtName,
+        listing.cityName,
+        listing.propertyLocation,
+        listing.domainStatus,
+        listing.sortOrder,
       ]
     );
   }
@@ -4077,6 +6027,296 @@ export async function ensureBuilderCompanyTables() {
   }
 }
 
+export async function ensureVerificationTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS govt_source_registry (
+      id BIGSERIAL PRIMARY KEY,
+      authority_name VARCHAR(180) NOT NULL,
+      source_type VARCHAR(24) NOT NULL DEFAULT 'other',
+      source_url TEXT,
+      authority_scope VARCHAR(120) NOT NULL DEFAULT '',
+      verification_weight INT NOT NULL DEFAULT 5,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS builder_verification_cases (
+      id BIGSERIAL PRIMARY KEY,
+      company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      requested_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      case_type VARCHAR(32) NOT NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'pending',
+      priority VARCHAR(12) NOT NULL DEFAULT 'normal',
+      note TEXT NOT NULL DEFAULT '',
+      public_note VARCHAR(300) NOT NULL DEFAULT '',
+      trust_score_delta INT NOT NULL DEFAULT 0,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+      source_reference_url TEXT,
+      resolved_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS property_verification_cases (
+      id BIGSERIAL PRIMARY KEY,
+      property_id BIGINT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
+      requested_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      case_type VARCHAR(32) NOT NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'pending',
+      priority VARCHAR(12) NOT NULL DEFAULT 'normal',
+      note TEXT NOT NULL DEFAULT '',
+      public_note VARCHAR(300) NOT NULL DEFAULT '',
+      trust_score_delta INT NOT NULL DEFAULT 0,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+      source_reference_url TEXT,
+      resolved_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ownership_verification_checks (
+      id BIGSERIAL PRIMARY KEY,
+      property_id BIGINT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      case_id BIGINT REFERENCES property_verification_cases(id) ON DELETE SET NULL,
+      owner_name VARCHAR(160) NOT NULL,
+      owner_phone VARCHAR(32) NOT NULL DEFAULT '',
+      document_type VARCHAR(80) NOT NULL,
+      check_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      result_summary VARCHAR(500) NOT NULL DEFAULT '',
+      source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+      checked_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fake_listing_reports (
+      id BIGSERIAL PRIMARY KEY,
+      property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
+      company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL,
+      property_reference VARCHAR(80) NOT NULL DEFAULT '',
+      reporter_name VARCHAR(120) NOT NULL,
+      reporter_email VARCHAR(190) NOT NULL DEFAULT '',
+      reporter_phone VARCHAR(32) NOT NULL DEFAULT '',
+      reason VARCHAR(32) NOT NULL,
+      details TEXT NOT NULL DEFAULT '',
+      source_url TEXT,
+      status VARCHAR(16) NOT NULL DEFAULT 'new',
+      reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      resolution_note TEXT NOT NULL DEFAULT '',
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fraud_actions (
+      id BIGSERIAL PRIMARY KEY,
+      report_id BIGINT REFERENCES fake_listing_reports(id) ON DELETE SET NULL,
+      action_key VARCHAR(24) NOT NULL,
+      action_note TEXT NOT NULL DEFAULT '',
+      actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'govt_source_registry_type_check') THEN
+        ALTER TABLE govt_source_registry
+          ADD CONSTRAINT govt_source_registry_type_check
+          CHECK (source_type IN ('government_portal', 'rera', 'bank_portal', 'municipal', 'court_notice', 'other'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'govt_source_registry_weight_check') THEN
+        ALTER TABLE govt_source_registry
+          ADD CONSTRAINT govt_source_registry_weight_check
+          CHECK (verification_weight BETWEEN 0 AND 20);
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'builder_verification_cases_status_check') THEN
+        ALTER TABLE builder_verification_cases
+          ADD CONSTRAINT builder_verification_cases_status_check
+          CHECK (status IN ('pending', 'under_review', 'approved', 'rejected', 'needs_changes'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'builder_verification_cases_priority_check') THEN
+        ALTER TABLE builder_verification_cases
+          ADD CONSTRAINT builder_verification_cases_priority_check
+          CHECK (priority IN ('low', 'normal', 'high'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'builder_verification_cases_case_type_check') THEN
+        ALTER TABLE builder_verification_cases
+          ADD CONSTRAINT builder_verification_cases_case_type_check
+          CHECK (case_type IN ('kyc', 'rera', 'project_document', 'ownership', 'banking', 'site_audit'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'property_verification_cases_status_check') THEN
+        ALTER TABLE property_verification_cases
+          ADD CONSTRAINT property_verification_cases_status_check
+          CHECK (status IN ('pending', 'under_review', 'approved', 'rejected', 'needs_changes'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'property_verification_cases_priority_check') THEN
+        ALTER TABLE property_verification_cases
+          ADD CONSTRAINT property_verification_cases_priority_check
+          CHECK (priority IN ('low', 'normal', 'high'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'property_verification_cases_case_type_check') THEN
+        ALTER TABLE property_verification_cases
+          ADD CONSTRAINT property_verification_cases_case_type_check
+          CHECK (case_type IN ('listing_authenticity', 'ownership', 'pricing', 'location', 'rera', 'media'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ownership_verification_checks_status_check') THEN
+        ALTER TABLE ownership_verification_checks
+          ADD CONSTRAINT ownership_verification_checks_status_check
+          CHECK (check_status IN ('pending', 'verified', 'failed', 'manual_review'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fake_listing_reports_reason_check') THEN
+        ALTER TABLE fake_listing_reports
+          ADD CONSTRAINT fake_listing_reports_reason_check
+          CHECK (reason IN ('duplicate_listing', 'wrong_price', 'wrong_location', 'ownership_doubt', 'scam_behavior', 'fake_media', 'other'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fake_listing_reports_status_check') THEN
+        ALTER TABLE fake_listing_reports
+          ADD CONSTRAINT fake_listing_reports_status_check
+          CHECK (status IN ('new', 'reviewing', 'resolved', 'rejected'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fraud_actions_key_check') THEN
+        ALTER TABLE fraud_actions
+          ADD CONSTRAINT fraud_actions_key_check
+          CHECK (action_key IN ('flag_listing', 'warn_builder', 'reject_report', 'resolve_report', 'suspend_listing', 'keep_listing_live'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS govt_source_registry_source_url_unique
+      ON govt_source_registry (source_url)
+      WHERE source_url IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS builder_verification_cases_company_status_idx
+      ON builder_verification_cases (company_id, status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS property_verification_cases_property_status_idx
+      ON property_verification_cases (property_id, status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS ownership_verification_checks_property_checked_idx
+      ON ownership_verification_checks (property_id, checked_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS fake_listing_reports_open_idx
+      ON fake_listing_reports (status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS fake_listing_reports_property_idx
+      ON fake_listing_reports (property_id, status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS fraud_actions_report_idx
+      ON fraud_actions (report_id, created_at DESC);
+  `);
+
+  await pool.query('DROP TRIGGER IF EXISTS trg_govt_source_registry_updated_at ON govt_source_registry;');
+  await pool.query(`
+    CREATE TRIGGER trg_govt_source_registry_updated_at
+    BEFORE UPDATE ON govt_source_registry
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+  await pool.query('DROP TRIGGER IF EXISTS trg_builder_verification_cases_updated_at ON builder_verification_cases;');
+  await pool.query(`
+    CREATE TRIGGER trg_builder_verification_cases_updated_at
+    BEFORE UPDATE ON builder_verification_cases
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+  await pool.query('DROP TRIGGER IF EXISTS trg_property_verification_cases_updated_at ON property_verification_cases;');
+  await pool.query(`
+    CREATE TRIGGER trg_property_verification_cases_updated_at
+    BEFORE UPDATE ON property_verification_cases
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+  await pool.query('DROP TRIGGER IF EXISTS trg_fake_listing_reports_updated_at ON fake_listing_reports;');
+  await pool.query(`
+    CREATE TRIGGER trg_fake_listing_reports_updated_at
+    BEFORE UPDATE ON fake_listing_reports
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at_timestamp();
+  `);
+}
+
 export async function ensureLayoutUnitTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS floors (
@@ -4367,6 +6607,10 @@ export async function ensureApartmentComplexTables() {
       tenant_phone VARCHAR(40),
       tenant_joined_on DATE,
       rent_due_day INT,
+      is_sold BOOLEAN NOT NULL DEFAULT FALSE,
+      sold_at TIMESTAMPTZ,
+      sold_note TEXT,
+      sold_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT rooms_building_floor_room_label_unique UNIQUE (building_id, floor_number, room_label)
     );
@@ -4394,6 +6638,13 @@ export async function ensureApartmentComplexTables() {
   await pool.query(`
     ALTER TABLE rooms
       ADD COLUMN IF NOT EXISTS tenant_joined_on DATE;
+  `);
+  await pool.query(`
+    ALTER TABLE rooms
+      ADD COLUMN IF NOT EXISTS is_sold BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS sold_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS sold_note TEXT,
+      ADD COLUMN IF NOT EXISTS sold_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
   `);
 
   await pool.query(`
@@ -4654,6 +6905,10 @@ export async function ensureApartmentComplexTables() {
       ON rooms (building_id, floor_number, created_at DESC);
   `);
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS rooms_sold_idx
+      ON rooms (is_sold, building_id, floor_number, created_at DESC);
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS rent_payments_room_month_idx
       ON rent_payments (room_id, month_key);
   `);
@@ -4698,8 +6953,20 @@ export async function ensureInsightsTables() {
       snippet TEXT,
       category VARCHAR(80),
       published_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 days'),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE news_articles
+      ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 days');
+  `);
+
+  await pool.query(`
+    UPDATE news_articles
+    SET expires_at = COALESCE(published_at, created_at, NOW()) + INTERVAL '10 days'
+    WHERE expires_at IS NULL;
   `);
 
   await pool.query(`
@@ -4811,6 +7078,10 @@ export async function ensureInsightsTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS news_articles_source_idx
       ON news_articles (source_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS news_articles_expires_idx
+      ON news_articles (expires_at ASC);
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS news_clicks_article_idx
@@ -5109,6 +7380,428 @@ export async function ensureInfrastructureTables() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_hash_unique
       ON infra_ingest_items (source_key, content_hash);
+  `);
+}
+
+export async function ensureTenderIntelligenceTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tender_intelligence_sources (
+      id BIGSERIAL PRIMARY KEY,
+      source_key VARCHAR(80) NOT NULL UNIQUE,
+      track VARCHAR(20) NOT NULL
+        CHECK (track IN ('government', 'private')),
+      source_type VARCHAR(40) NOT NULL
+        CHECK (
+          source_type IN (
+            'government_tender',
+            'government_notice',
+            'award',
+            'private_opportunity',
+            'village_signal'
+          )
+        ),
+      source_name VARCHAR(160) NOT NULL,
+      source_url TEXT NOT NULL,
+      collection_method VARCHAR(20) NOT NULL DEFAULT 'html'
+        CHECK (collection_method IN ('api', 'rss', 'html', 'pdf', 'manual', 'hybrid')),
+      verification_level VARCHAR(40) NOT NULL DEFAULT 'UNKNOWN'
+        CHECK (
+          verification_level IN (
+            'OFFICIAL_PORTAL',
+            'OFFICIAL_DEPARTMENT_SITE',
+            'PUBLIC_NOTICE_PRESS_RELEASE',
+            'MARKET_SOURCE',
+            'UNKNOWN'
+          )
+        ),
+      coverage_scope VARCHAR(20) NOT NULL DEFAULT 'national'
+        CHECK (
+          coverage_scope IN (
+            'national',
+            'state',
+            'district',
+            'block',
+            'village',
+            'private_network'
+          )
+        ),
+      coverage_state_name VARCHAR(120),
+      priority_order INTEGER NOT NULL DEFAULT 100,
+      refresh_interval_minutes INTEGER NOT NULL DEFAULT 1440
+        CHECK (refresh_interval_minutes BETWEEN 15 AND 10080),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_sources_track
+      ON tender_intelligence_sources (track, is_active, priority_order);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_sources_type
+      ON tender_intelligence_sources (source_type, is_active);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tender_intelligence_records (
+      id BIGSERIAL PRIMARY KEY,
+      source_id BIGINT REFERENCES tender_intelligence_sources(id) ON DELETE SET NULL,
+      track VARCHAR(20) NOT NULL
+        CHECK (track IN ('government', 'private')),
+      source_type VARCHAR(40) NOT NULL
+        CHECK (
+          source_type IN (
+            'government_tender',
+            'government_notice',
+            'award',
+            'private_opportunity',
+            'village_signal'
+          )
+        ),
+      source_name VARCHAR(160) NOT NULL,
+      source_url TEXT NOT NULL,
+      external_id VARCHAR(200),
+      record_hash VARCHAR(64),
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      authority_name VARCHAR(200),
+      department_name VARCHAR(200),
+      sector VARCHAR(120),
+      work_type VARCHAR(120),
+      state_name VARCHAR(120),
+      district_name VARCHAR(120),
+      block_name VARCHAR(120),
+      village_name VARCHAR(200),
+      lgd_state_code VARCHAR(20),
+      lgd_district_code VARCHAR(20),
+      lgd_block_code VARCHAR(20),
+      lgd_village_code VARCHAR(20),
+      budget_amount NUMERIC(18, 2),
+      emd_amount NUMERIC(18, 2),
+      tender_status VARCHAR(80),
+      published_at TIMESTAMPTZ,
+      bid_end_at TIMESTAMPTZ,
+      opening_at TIMESTAMPTZ,
+      document_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      raw_text TEXT NOT NULL DEFAULT '',
+      normalized_text TEXT NOT NULL DEFAULT '',
+      verification_level VARCHAR(40) NOT NULL DEFAULT 'UNKNOWN'
+        CHECK (
+          verification_level IN (
+            'OFFICIAL_PORTAL',
+            'OFFICIAL_DEPARTMENT_SITE',
+            'PUBLIC_NOTICE_PRESS_RELEASE',
+            'MARKET_SOURCE',
+            'UNKNOWN'
+          )
+        ),
+      parser_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (parser_status IN ('PENDING', 'PARSED', 'PARTIAL', 'FAILED')),
+      moderation_status VARCHAR(20) NOT NULL DEFAULT 'REVIEW_REQUIRED'
+        CHECK (
+          moderation_status IN (
+            'AUTO_APPROVED',
+            'REVIEW_REQUIRED',
+            'MANUALLY_APPROVED',
+            'REJECTED'
+          )
+        ),
+      impact_score NUMERIC(6, 2) NOT NULL DEFAULT 0
+        CHECK (impact_score BETWEEN 0 AND 100),
+      geo_lat NUMERIC(9, 6),
+      geo_lng NUMERIC(9, 6),
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT tender_intelligence_records_source_external_unique
+        UNIQUE (source_id, external_id)
+    );
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_intelligence_records_record_hash_unique
+      ON tender_intelligence_records (record_hash)
+      WHERE record_hash IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_records_track_type
+      ON tender_intelligence_records (track, source_type, published_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_records_location_codes
+      ON tender_intelligence_records (
+        lgd_state_code,
+        lgd_district_code,
+        lgd_block_code,
+        lgd_village_code
+      );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_records_dates
+      ON tender_intelligence_records (published_at DESC, bid_end_at DESC, opening_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_records_status
+      ON tender_intelligence_records (verification_level, parser_status, moderation_status);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_records_budget
+      ON tender_intelligence_records (budget_amount DESC NULLS LAST, impact_score DESC);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tender_intelligence_documents (
+      id BIGSERIAL PRIMARY KEY,
+      record_id BIGINT NOT NULL REFERENCES tender_intelligence_records(id) ON DELETE CASCADE,
+      document_type VARCHAR(30) NOT NULL DEFAULT 'OTHER'
+        CHECK (
+          document_type IN (
+            'NOTICE',
+            'NIT',
+            'CORRIGENDUM',
+            'BOQ',
+            'AWARD',
+            'PRESS_RELEASE',
+            'DRAWING',
+            'OTHER'
+          )
+        ),
+      label VARCHAR(200) NOT NULL DEFAULT '',
+      document_url TEXT NOT NULL,
+      file_format VARCHAR(20),
+      extracted_text TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_documents_record
+      ON tender_intelligence_documents (record_id, document_type, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tender_intelligence_history (
+      id BIGSERIAL PRIMARY KEY,
+      record_id BIGINT NOT NULL REFERENCES tender_intelligence_records(id) ON DELETE CASCADE,
+      event_type VARCHAR(40) NOT NULL
+        CHECK (
+          event_type IN (
+            'published',
+            'corrigendum',
+            'bid_closing_updated',
+            'awarded',
+            'cancelled',
+            'archived',
+            'manual_review',
+            'status_sync'
+          )
+        ),
+      previous_status VARCHAR(80),
+      next_status VARCHAR(80),
+      event_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      summary TEXT NOT NULL DEFAULT '',
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_history_record
+      ON tender_intelligence_history (record_id, event_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tender_intelligence_source_health_logs (
+      id BIGSERIAL PRIMARY KEY,
+      source_id BIGINT NOT NULL REFERENCES tender_intelligence_sources(id) ON DELETE CASCADE,
+      status VARCHAR(20) NOT NULL
+        CHECK (status IN ('HEALTHY', 'DEGRADED', 'FAILED', 'PAUSED')),
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      response_code INTEGER,
+      duration_ms INTEGER,
+      note TEXT NOT NULL DEFAULT '',
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_tender_intelligence_source_health_logs_source
+      ON tender_intelligence_source_health_logs (source_id, checked_at DESC);
+  `);
+}
+
+export async function ensureTenderIntelligenceSourceSeeds() {
+  await pool.query(`
+    INSERT INTO tender_intelligence_sources (
+      source_key,
+      track,
+      source_type,
+      source_name,
+      source_url,
+      collection_method,
+      verification_level,
+      coverage_scope,
+      coverage_state_name,
+      priority_order,
+      refresh_interval_minutes,
+      is_active,
+      notes
+    )
+    VALUES
+      (
+        'CPPP_EPROCURE',
+        'government',
+        'government_tender',
+        'Central Public Procurement Portal (CPPP / eProcure)',
+        'https://eprocure.gov.in/eprocure/app',
+        'html',
+        'OFFICIAL_PORTAL',
+        'national',
+        NULL,
+        10,
+        60,
+        TRUE,
+        'Primary national government tender backbone for phase 1.'
+      ),
+      (
+        'GEM_BIDS',
+        'government',
+        'government_tender',
+        'Government e Marketplace (GeM) Bids',
+        'https://gem.gov.in/',
+        'html',
+        'OFFICIAL_PORTAL',
+        'national',
+        NULL,
+        20,
+        60,
+        TRUE,
+        'Separate government tender stream; keep trust labeling aligned with official GeM pages.'
+      ),
+      (
+        'KARNATAKA_KPPP',
+        'government',
+        'government_tender',
+        'Karnataka Public Procurement Portal (KPPP)',
+        'https://kppp.karnataka.gov.in/',
+        'html',
+        'OFFICIAL_PORTAL',
+        'state',
+        'Karnataka',
+        30,
+        60,
+        TRUE,
+        'State procurement backbone for Karnataka-first rollout.'
+      ),
+      (
+        'PIB_INFRA',
+        'government',
+        'government_notice',
+        'Press Information Bureau Infrastructure Announcements',
+        'https://pib.gov.in/',
+        'rss',
+        'PUBLIC_NOTICE_PRESS_RELEASE',
+        'national',
+        NULL,
+        40,
+        180,
+        TRUE,
+        'Used for official announcements, approvals, and press-release style updates.'
+      ),
+      (
+        'LGD_DIRECTORY',
+        'government',
+        'village_signal',
+        'Local Government Directory (LGD)',
+        'https://lgdirectory.gov.in/',
+        'hybrid',
+        'OFFICIAL_DEPARTMENT_SITE',
+        'national',
+        NULL,
+        50,
+        1440,
+        TRUE,
+        'Location normalization backbone for state, district, block, and village codes.'
+      ),
+      (
+        'KARNATAKA_DEPT_TENDERS',
+        'government',
+        'government_tender',
+        'Karnataka Department Tender Pages',
+        'https://www.karnataka.gov.in/',
+        'html',
+        'OFFICIAL_DEPARTMENT_SITE',
+        'state',
+        'Karnataka',
+        60,
+        360,
+        TRUE,
+        'Use after CPPP and KPPP coverage is stable.'
+      ),
+      (
+        'KARNATAKA_LOCAL_BODIES',
+        'government',
+        'government_notice',
+        'Karnataka District and Local Body Websites',
+        'https://www.karnataka.gov.in/english',
+        'html',
+        'OFFICIAL_DEPARTMENT_SITE',
+        'district',
+        'Karnataka',
+        70,
+        1440,
+        TRUE,
+        'Lower-frequency crawl tier for district and local-government updates.'
+      ),
+      (
+        'PRIVATE_MARKET_PORTALS',
+        'private',
+        'private_opportunity',
+        'Private Tender and Market Opportunity Portals',
+        'https://www.tenderdetail.com/',
+        'html',
+        'MARKET_SOURCE',
+        'private_network',
+        NULL,
+        80,
+        720,
+        FALSE,
+        'Keep private opportunities separated from government trust badges until the module is enabled.'
+      ),
+      (
+        'INFRA_LEGACY_PUBLIC',
+        'government',
+        'government_notice',
+        'Legacy Public Infrastructure Feed',
+        'https://example.invalid/legacy-public-feed',
+        'manual',
+        'OFFICIAL_DEPARTMENT_SITE',
+        'national',
+        NULL,
+        500,
+        60,
+        TRUE,
+        'Fallback registry entry for existing infra_updates rows until a more specific source is known.'
+      )
+    ON CONFLICT (source_key)
+    DO UPDATE
+      SET track = EXCLUDED.track,
+          source_type = EXCLUDED.source_type,
+          source_name = EXCLUDED.source_name,
+          source_url = EXCLUDED.source_url,
+          collection_method = EXCLUDED.collection_method,
+          verification_level = EXCLUDED.verification_level,
+          coverage_scope = EXCLUDED.coverage_scope,
+          coverage_state_name = EXCLUDED.coverage_state_name,
+          priority_order = EXCLUDED.priority_order,
+          refresh_interval_minutes = EXCLUDED.refresh_interval_minutes,
+          is_active = EXCLUDED.is_active,
+          notes = EXCLUDED.notes,
+          updated_at = NOW();
   `);
 }
 
@@ -5627,6 +8320,182 @@ export async function ensureBuildingMaterialsTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS material_items_name_idx
       ON material_items (item_name);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS material_reuse_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      request_code VARCHAR(40) NOT NULL UNIQUE,
+      submitted_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      seller_type VARCHAR(20) NOT NULL DEFAULT 'homeowner',
+      material_category VARCHAR(120) NOT NULL,
+      material_name VARCHAR(180) NOT NULL,
+      approx_quantity VARCHAR(120) NOT NULL,
+      materials JSONB NOT NULL DEFAULT '[]'::jsonb,
+      location_city VARCHAR(120) NOT NULL,
+      location_address VARCHAR(320) NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      photo_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+      contact_name VARCHAR(120) NOT NULL DEFAULT '',
+      contact_phone VARCHAR(40) NOT NULL DEFAULT '',
+      consent_ownership BOOLEAN NOT NULL DEFAULT TRUE,
+      consent_legal BOOLEAN NOT NULL DEFAULT TRUE,
+      status VARCHAR(40) NOT NULL DEFAULT 'submitted',
+      admin_public_note VARCHAR(500) NOT NULL DEFAULT '',
+      admin_internal_note VARCHAR(1000) NOT NULL DEFAULT '',
+      valuation_inr NUMERIC(14, 2),
+      picked_up_at TIMESTAMPTZ,
+      closed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS material_reuse_request_events (
+      id BIGSERIAL PRIMARY KEY,
+      request_id UUID NOT NULL REFERENCES material_reuse_requests(id) ON DELETE CASCADE,
+      status VARCHAR(40) NOT NULL,
+      note VARCHAR(500) NOT NULL DEFAULT '',
+      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_requests_seller_type_check'
+      ) THEN
+        ALTER TABLE material_reuse_requests
+          ADD CONSTRAINT material_reuse_requests_seller_type_check
+          CHECK (seller_type IN ('homeowner', 'builder', 'developer'));
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_requests_status_check'
+      ) THEN
+        ALTER TABLE material_reuse_requests
+          ADD CONSTRAINT material_reuse_requests_status_check
+          CHECK (
+            status IN (
+              'submitted',
+              'under_review',
+              'inspection_required',
+              'inspection_not_required',
+              'approved',
+              'rejected',
+              'picked_up',
+              'closed'
+            )
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    ALTER TABLE material_reuse_requests
+      ADD COLUMN IF NOT EXISTS materials JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
+
+  await pool.query(`
+    UPDATE material_reuse_requests
+    SET materials = jsonb_build_array(
+      jsonb_build_object(
+        'materialCategory', material_category,
+        'materialName', material_name,
+        'approxQuantity', approx_quantity
+      )
+    )
+    WHERE materials IS NULL
+      OR jsonb_typeof(materials) <> 'array'
+      OR jsonb_array_length(materials) = 0;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_requests_photo_urls_array_check'
+      ) THEN
+        ALTER TABLE material_reuse_requests
+          ADD CONSTRAINT material_reuse_requests_photo_urls_array_check
+          CHECK (jsonb_typeof(photo_urls) = 'array');
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_requests_materials_array_check'
+      ) THEN
+        ALTER TABLE material_reuse_requests
+          ADD CONSTRAINT material_reuse_requests_materials_array_check
+          CHECK (jsonb_typeof(materials) = 'array');
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_requests_valuation_non_negative_check'
+      ) THEN
+        ALTER TABLE material_reuse_requests
+          ADD CONSTRAINT material_reuse_requests_valuation_non_negative_check
+          CHECK (valuation_inr IS NULL OR valuation_inr >= 0);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'material_reuse_request_events_status_check'
+      ) THEN
+        ALTER TABLE material_reuse_request_events
+          ADD CONSTRAINT material_reuse_request_events_status_check
+          CHECK (
+            status IN (
+              'submitted',
+              'under_review',
+              'inspection_required',
+              'inspection_not_required',
+              'approved',
+              'rejected',
+              'picked_up',
+              'closed'
+            )
+          );
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS material_reuse_requests_user_created_idx
+      ON material_reuse_requests (submitted_by_user_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS material_reuse_requests_status_created_idx
+      ON material_reuse_requests (status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS material_reuse_requests_city_status_idx
+      ON material_reuse_requests (location_city, status, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS material_reuse_request_events_request_created_idx
+      ON material_reuse_request_events (request_id, created_at ASC);
   `);
 
   const vendorSeeds = [
@@ -6421,6 +9290,45 @@ export async function ensureSupportProgramTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS support_contributions_verification_status_idx
       ON support_contributions (verification_status, created_at DESC);
+  `);
+}
+
+export async function ensureCollaborationTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collaboration_inquiries (
+      id BIGSERIAL PRIMARY KEY,
+      business_name VARCHAR(160) NOT NULL,
+      contact_name VARCHAR(120) NOT NULL DEFAULT '',
+      email VARCHAR(190) NOT NULL,
+      phone VARCHAR(32) NOT NULL DEFAULT '',
+      collaboration_type VARCHAR(40) NOT NULL
+        CHECK (collaboration_type IN (
+          'sponsored_property', 'brand_partnership',
+          'content_promotion', 'event_sponsorship', 'custom'
+        )),
+      package_tier VARCHAR(20) NOT NULL DEFAULT 'custom'
+        CHECK (package_tier IN ('bronze', 'silver', 'gold', 'platinum', 'custom')),
+      budget_range VARCHAR(60) NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'contacted', 'negotiating', 'active', 'completed', 'declined')),
+      admin_notes TEXT NOT NULL DEFAULT '',
+      reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TIMESTAMPTZ,
+      submission_ip VARCHAR(64) NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS collab_inquiries_status_idx
+      ON collaboration_inquiries (status, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS collab_inquiries_email_idx
+      ON collaboration_inquiries ((lower(trim(email))));
   `);
 }
 

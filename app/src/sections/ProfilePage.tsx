@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   BadgeCheck,
@@ -6,7 +6,9 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ClipboardList,
+  Coins,
   FileText,
+  Gift,
   Image as ImageIcon,
   KeyRound,
   LockKeyhole,
@@ -24,9 +26,24 @@ import { ProfileSkeleton } from '@/components/loading/PageSkeletons';
 import ImageCropDialog from '@/components/media/ImageCropDialog';
 import { LgdLocationAccuracyNote, LgdLocationInput } from '@/components/realty/LgdLocationInput';
 import { apiRequest } from '@/lib/http';
-import type { AuthUser } from '@/lib/session';
+import { parseApiUser, type AuthUser } from '@/lib/session';
+import {
+  clearManagedLinkHint,
+  getManagedAccessToken,
+  isSupabaseConfigured,
+} from '@/lib/supabase';
 
 type GovtStatus = 'Not Submitted' | 'Pending Verification' | 'Verified' | 'Rejected';
+type ProfilePropertyType = 'Any' | 'Plot' | 'Villa' | 'Flat / Apartment' | 'Commercial';
+
+type ProfilePreferences = {
+  budgetRange: string;
+  preferredLocation: string;
+  propertyType: ProfilePropertyType;
+  facingDirection: string;
+  furnishedPreference: string;
+  language: string;
+};
 
 interface ProfilePayload {
   id: number;
@@ -120,6 +137,7 @@ interface ProfilePayload {
     viewsGraphLabel: string;
     summaryLabel: string;
   };
+  preferences: ProfilePreferences;
   communicationCenter: {
     emailUpdates: boolean;
     propertyAlerts: boolean;
@@ -132,6 +150,9 @@ interface ProfilePageProps {
   user: AuthUser | null;
   onBackHome: () => void;
   onLogout: () => void;
+  onOpenWallet?: () => void;
+  onOpenReferrals?: () => void;
+  onSessionUpdated: (payload: { token: string; user: AuthUser }) => void;
 }
 
 type MainAdminMediaCategory = 'new_project' | 'construction_done';
@@ -151,6 +172,16 @@ interface MainAdminProfileMediaItem {
 
 const MAIN_ADMIN_MEDIA_IMAGE_LIMIT_BYTES = 6 * 1024 * 1024;
 const MAIN_ADMIN_MEDIA_VIDEO_LIMIT_BYTES = 30 * 1024 * 1024;
+const PROFILE_LANGUAGE_OPTIONS = [
+  { value: 'en-IN', label: 'English' },
+  { value: 'hi-IN', label: 'Hindi' },
+  { value: 'te-IN', label: 'Telugu' },
+  { value: 'ta-IN', label: 'Tamil' },
+  { value: 'kn-IN', label: 'Kannada' },
+  { value: 'mr-IN', label: 'Marathi' },
+  { value: 'bn-IN', label: 'Bengali' },
+  { value: 'gu-IN', label: 'Gujarati' },
+] as const;
 
 function formatDate(value: string | null): string {
   if (!value) return '-';
@@ -219,7 +250,22 @@ function mainAdminMediaCategoryLabel(category: MainAdminMediaCategory): string {
   return category === 'new_project' ? 'New Project' : 'Construction Done';
 }
 
-export default function ProfilePage({ token, user, onBackHome, onLogout }: ProfilePageProps) {
+function formatLanguageLabel(value: string): string {
+  const match = PROFILE_LANGUAGE_OPTIONS.find(
+    (option) => option.value.toLowerCase() === value.trim().toLowerCase()
+  );
+  return match?.label || value;
+}
+
+export default function ProfilePage({
+  token,
+  user,
+  onBackHome,
+  onLogout,
+  onOpenWallet,
+  onOpenReferrals,
+  onSessionUpdated,
+}: ProfilePageProps) {
   const [profile, setProfile] = useState<ProfilePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -240,6 +286,7 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
   const [emailUpdates, setEmailUpdates] = useState(true);
   const [propertyAlerts, setPropertyAlerts] = useState(true);
   const [adminAnnouncements, setAdminAnnouncements] = useState(true);
+  const [preferredLanguage, setPreferredLanguage] = useState('');
 
   const [aadhaar, setAadhaar] = useState('');
   const [pan, setPan] = useState('');
@@ -251,6 +298,7 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [deactivateConfirm, setDeactivateConfirm] = useState('');
+  const [isLinkingManagedAuth, setIsLinkingManagedAuth] = useState(false);
 
   const [mainAdminMediaItems, setMainAdminMediaItems] = useState<MainAdminProfileMediaItem[]>([]);
   const [mainAdminMediaLoading, setMainAdminMediaLoading] = useState(false);
@@ -264,7 +312,7 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
   const [pendingMainAdminMediaFileName, setPendingMainAdminMediaFileName] = useState('');
   const [mainAdminMediaDeletingId, setMainAdminMediaDeletingId] = useState<number | null>(null);
 
-  const syncForm = (next: ProfilePayload) => {
+  const syncForm = useCallback((next: ProfilePayload) => {
     setProfile(next);
     setName(next.name || '');
     setPhone(next.phone || '');
@@ -275,14 +323,15 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
     setEmailUpdates(next.communicationCenter.emailUpdates);
     setPropertyAlerts(next.communicationCenter.propertyAlerts);
     setAdminAnnouncements(next.communicationCenter.adminAnnouncements);
+    setPreferredLanguage(next.preferences.language || '');
     setAadhaar('');
     setPan('');
     setPassport('');
     setDrivingLicense('');
     setAddressProof('');
-  };
+  }, []);
 
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -293,9 +342,9 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, syncForm]);
 
-  const loadMainAdminMedia = async () => {
+  const loadMainAdminMedia = useCallback(async () => {
     setMainAdminMediaLoading(true);
     try {
       const response = await apiRequest<{ items: MainAdminProfileMediaItem[] }>(
@@ -314,11 +363,11 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
     } finally {
       setMainAdminMediaLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (token) void loadProfile();
-  }, [token]);
+  }, [token, loadProfile]);
 
   useEffect(() => {
     if (profile?.role !== 'admin') {
@@ -327,7 +376,7 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
       return;
     }
     void loadMainAdminMedia();
-  }, [profile?.role]);
+  }, [profile?.role, loadMainAdminMedia]);
 
   useEffect(() => {
     return () => {
@@ -454,6 +503,62 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
       setError(logoutError instanceof Error ? logoutError.message : 'Unable to logout all devices');
     } finally {
       setSaving('');
+    }
+  };
+
+  const linkManagedAuthSession = async () => {
+    if (!user || user.role !== 'user') {
+      return;
+    }
+
+    const managedToken = String(await getManagedAccessToken()).trim();
+    if (!managedToken) {
+      setError('No active Supabase session was found in this browser. Sign in with Supabase first, then try linking again.');
+      return;
+    }
+
+    setIsLinkingManagedAuth(true);
+    setError('');
+    setMessage('');
+    try {
+      const linkResponse = await apiRequest<{ provider?: string | null; user?: unknown }>(
+        '/auth/managed/link',
+        {
+          method: 'POST',
+          headers: {
+            'X-Managed-Auth-Token': managedToken,
+          },
+        },
+        token
+      );
+
+      let linkedUser: AuthUser | null = null;
+      try {
+        const response = await apiRequest<{ user: unknown }>('/auth/me', {}, managedToken);
+        linkedUser = parseApiUser(response.user);
+      } catch {
+        const fallbackUser = parseApiUser(linkResponse.user);
+        linkedUser = fallbackUser
+          ? {
+              ...fallbackUser,
+              authStrategy: 'managed',
+              managedAuthProvider:
+                linkResponse.provider || fallbackUser.managedAuthProvider || 'supabase',
+            }
+          : null;
+      }
+
+      if (!linkedUser) {
+        throw new Error('Managed auth was linked, but the new session could not be loaded. Sign in again.');
+      }
+
+      clearManagedLinkHint();
+      onSessionUpdated({ token: managedToken, user: linkedUser });
+      setMessage('Supabase sign-in linked successfully.');
+    } catch (linkError) {
+      setError(linkError instanceof Error ? linkError.message : 'Unable to link managed auth');
+    } finally {
+      setIsLinkingManagedAuth(false);
     }
   };
 
@@ -613,7 +718,16 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
   const idLabel = formatEmployeeId(profile);
   const accountStatus = resolveAccountStatus(profile);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
-  const language = typeof navigator !== 'undefined' ? navigator.language || 'en' : 'en';
+  const browserLanguage = typeof navigator !== 'undefined' ? navigator.language || 'en' : 'en';
+  const activeLanguageLabel = preferredLanguage
+    ? formatLanguageLabel(preferredLanguage)
+    : `Browser default (${browserLanguage})`;
+  const canLinkManagedAuth =
+    Boolean(user.role === 'user' && !user.isMainAdmin) && isSupabaseConfigured();
+  const isManagedLinked = Boolean(user.authStrategy === 'managed' || user.managedAuthProvider);
+  const managedAuthLabel = user.managedAuthProvider
+    ? user.managedAuthProvider.replace(/\b\w/g, (char) => char.toUpperCase())
+    : 'Supabase';
 
   const docs = profile.optionalGovernmentVerification.documents;
   const documents = [
@@ -733,6 +847,32 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
                     {accountStatus.label}
                   </span>
                 </div>
+                {onOpenWallet || onOpenReferrals ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {onOpenWallet ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={onOpenWallet}
+                        className="bg-white/15 text-white hover:bg-white/25"
+                      >
+                        <Coins className="mr-2 h-4 w-4" />
+                        Dalal Coin Wallet
+                      </Button>
+                    ) : null}
+                    {onOpenReferrals ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={onOpenReferrals}
+                        className="bg-white/15 text-white hover:bg-white/25"
+                      >
+                        <Gift className="mr-2 h-4 w-4" />
+                        Referral Rewards
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -973,6 +1113,31 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
               </p>
             </div>
 
+            {canLinkManagedAuth ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <p>
+                  <span className="font-semibold">Managed sign-in:</span>{' '}
+                  {isManagedLinked ? `Linked to ${managedAuthLabel}` : 'Not linked yet'}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {isManagedLinked
+                    ? 'This account can now be accessed with the managed provider.'
+                    : 'Link a live Supabase session in this browser to finish migrating this account.'}
+                </p>
+                {!isManagedLinked ? (
+                  <Button
+                    variant="outline"
+                    onClick={linkManagedAuthSession}
+                    disabled={isLinkingManagedAuth}
+                    className="mt-3"
+                  >
+                    <BadgeCheck className="mr-2 h-4 w-4" />
+                    {isLinkingManagedAuth ? 'Linking...' : 'Link Current Supabase Session'}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span>Enable / Disable 2FA</span>
@@ -1050,9 +1215,27 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
                 <Switch checked={adminAnnouncements} onCheckedChange={setAdminAnnouncements} />
               </div>
 
+              <label className="grid gap-1 text-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Language</span>
+                <select
+                  value={preferredLanguage || 'browser'}
+                  onChange={(event) =>
+                    setPreferredLanguage(event.target.value === 'browser' ? '' : event.target.value)
+                  }
+                  className="h-11 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none ring-blue-300 focus:ring"
+                >
+                  <option value="browser">Browser default ({browserLanguage})</option>
+                  {PROFILE_LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                 <p>
-                  <span className="font-semibold">Language:</span> {language}
+                  <span className="font-semibold">Language:</span> {activeLanguageLabel}
                 </p>
                 <p className="mt-1">
                   <span className="font-semibold">Time zone:</span> {tz}
@@ -1063,7 +1246,10 @@ export default function ProfilePage({ token, user, onBackHome, onLogout }: Profi
                 onClick={() =>
                   patchProfile(
                     'notifications',
-                    { communication: { emailUpdates, propertyAlerts, adminAnnouncements } },
+                    {
+                      communication: { emailUpdates, propertyAlerts, adminAnnouncements },
+                      preferences: { language: preferredLanguage },
+                    },
                     'Notification preferences updated.'
                   )
                 }

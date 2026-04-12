@@ -137,10 +137,12 @@ interface MessagesPageProps {
   user: AuthUser | null;
   initialPropertyReference?: string;
   initialCompanyId?: number | null;
+  initialConversationId?: number | null;
   initialDraftMessage?: string;
   initialOpenTeamChat?: boolean;
   onConsumeInitialPropertyReference?: () => void;
   onConsumeInitialCompanyId?: () => void;
+  onConsumeInitialConversationId?: () => void;
   onConsumeInitialDraftMessage?: () => void;
   onConsumeInitialOpenTeamChat?: () => void;
 }
@@ -368,10 +370,12 @@ export default function MessagesPage({
   user,
   initialPropertyReference,
   initialCompanyId,
+  initialConversationId,
   initialDraftMessage,
   initialOpenTeamChat,
   onConsumeInitialPropertyReference,
   onConsumeInitialCompanyId,
+  onConsumeInitialConversationId,
   onConsumeInitialDraftMessage,
   onConsumeInitialOpenTeamChat,
 }: MessagesPageProps) {
@@ -1369,13 +1373,14 @@ export default function MessagesPage({
       transports: ['websocket', 'polling'],
     });
     socketRef.current = socket;
+    const joinedConversationIds = joinedConversationIdsRef.current;
 
     const handleConnect = () => {
       setSocketConnected(true);
     };
     const handleDisconnect = () => {
       setSocketConnected(false);
-      joinedConversationIdsRef.current.clear();
+      joinedConversationIds.clear();
       Object.values(joinRetryTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
       joinRetryTimersRef.current = {};
       setTypingByConversation({});
@@ -1475,7 +1480,7 @@ export default function MessagesPage({
       socket.off('chat:presence', handlePresence);
       socket.disconnect();
       socketRef.current = null;
-      joinedConversationIdsRef.current.clear();
+      joinedConversationIds.clear();
       Object.values(joinRetryTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
       joinRetryTimersRef.current = {};
       setSocketConnected(false);
@@ -1660,6 +1665,24 @@ export default function MessagesPage({
       active = false;
     };
   }, [initialCompanyId, onConsumeInitialCompanyId, openCompanyConversation, token, user]);
+
+  useEffect(() => {
+    const conversationId = Number(initialConversationId);
+    if (!token || !user || !Number.isInteger(conversationId) || conversationId <= 0) return;
+
+    rememberPreferredConversation(conversationId);
+    setActiveConversationId(conversationId);
+    setMobileConversationOpen(true);
+    setDeferAutoSelect(false);
+    setError('');
+    onConsumeInitialConversationId?.();
+  }, [
+    initialConversationId,
+    onConsumeInitialConversationId,
+    rememberPreferredConversation,
+    token,
+    user,
+  ]);
 
   useEffect(() => {
     if (!token || !user || !initialOpenTeamChat) return;

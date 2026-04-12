@@ -23,8 +23,32 @@ export async function aggregateListingAnalyticsDay(inputDate) {
           e.property_request_id,
           COUNT(*) FILTER (WHERE e.event_type = 'view')::INT AS views_count,
           COUNT(*) FILTER (WHERE e.event_type = 'save')::INT AS saves_count,
-          COUNT(*) FILTER (WHERE e.event_type = 'contact_click')::INT AS contact_clicks_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'contact_click'
+              AND COALESCE(e.metadata->>'action', '') NOT IN ('unlock_phone', 'call_click')
+          )::INT AS contact_clicks_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'phone_unlock'
+              OR (e.event_type = 'contact_click' AND COALESCE(e.metadata->>'action', '') = 'unlock_phone')
+          )::INT AS phone_unlocks_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'call_click'
+              OR (e.event_type = 'contact_click' AND COALESCE(e.metadata->>'action', '') = 'call_click')
+          )::INT AS call_clicks_count,
           COUNT(*) FILTER (WHERE e.event_type = 'visit_request')::INT AS visit_requests_count,
+          COUNT(*) FILTER (WHERE e.event_type = 'premium_cta')::INT AS premium_cta_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'premium_cta'
+              AND COALESCE(e.metadata->>'assistType', '') = 'brochure'
+          )::INT AS brochure_requests_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'premium_cta'
+              AND COALESCE(e.metadata->>'assistType', '') = 'price_sheet'
+          )::INT AS price_sheet_requests_count,
+          COUNT(*) FILTER (
+            WHERE e.event_type = 'premium_cta'
+              AND COALESCE(e.metadata->>'assistType', '') = 'loan_help'
+          )::INT AS loan_help_requests_count,
           COUNT(*) FILTER (WHERE e.event_type = 'conversion')::INT AS conversions_count,
           COUNT(*) FILTER (WHERE e.event_type = 'price_change')::INT AS price_changes_count,
           AVG(e.event_value) FILTER (WHERE e.event_type = 'price_change') AS average_price
@@ -39,7 +63,13 @@ export async function aggregateListingAnalyticsDay(inputDate) {
         views_count,
         saves_count,
         contact_clicks_count,
+        phone_unlocks_count,
+        call_clicks_count,
         visit_requests_count,
+        premium_cta_count,
+        brochure_requests_count,
+        price_sheet_requests_count,
+        loan_help_requests_count,
         conversions_count,
         price_changes_count,
         conversion_ratio,
@@ -51,7 +81,13 @@ export async function aggregateListingAnalyticsDay(inputDate) {
         d.views_count,
         d.saves_count,
         d.contact_clicks_count,
+        d.phone_unlocks_count,
+        d.call_clicks_count,
         d.visit_requests_count,
+        d.premium_cta_count,
+        d.brochure_requests_count,
+        d.price_sheet_requests_count,
+        d.loan_help_requests_count,
         d.conversions_count,
         d.price_changes_count,
         CASE
@@ -66,7 +102,13 @@ export async function aggregateListingAnalyticsDay(inputDate) {
         views_count = EXCLUDED.views_count,
         saves_count = EXCLUDED.saves_count,
         contact_clicks_count = EXCLUDED.contact_clicks_count,
+        phone_unlocks_count = EXCLUDED.phone_unlocks_count,
+        call_clicks_count = EXCLUDED.call_clicks_count,
         visit_requests_count = EXCLUDED.visit_requests_count,
+        premium_cta_count = EXCLUDED.premium_cta_count,
+        brochure_requests_count = EXCLUDED.brochure_requests_count,
+        price_sheet_requests_count = EXCLUDED.price_sheet_requests_count,
+        loan_help_requests_count = EXCLUDED.loan_help_requests_count,
         conversions_count = EXCLUDED.conversions_count,
         price_changes_count = EXCLUDED.price_changes_count,
         conversion_ratio = EXCLUDED.conversion_ratio,
@@ -94,7 +136,10 @@ export async function aggregateListingAnalyticsDay(inputDate) {
           pr.submitted_by_user_id AS user_id,
           COUNT(*) FILTER (WHERE e.event_type = 'view')::INT AS total_views,
           COUNT(*) FILTER (WHERE e.event_type = 'save')::INT AS total_saves,
-          COUNT(*) FILTER (WHERE e.event_type = 'contact_click')::INT AS total_contacts
+          COUNT(*) FILTER (
+            WHERE e.event_type IN ('contact_click', 'phone_unlock', 'call_click', 'premium_cta', 'visit_request')
+              OR (e.event_type = 'contact_click' AND COALESCE(e.metadata->>'action', '') IN ('unlock_phone', 'call_click'))
+          )::INT AS total_contacts
         FROM listing_analytics_events e
         INNER JOIN property_requests pr
           ON pr.id = e.property_request_id
@@ -148,7 +193,10 @@ export async function aggregateListingAnalyticsDay(inputDate) {
       WITH lead_stats AS (
         SELECT
           e.property_request_id,
-          COUNT(*) FILTER (WHERE e.event_type = 'contact_click')::INT AS leads_generated,
+          COUNT(*) FILTER (
+            WHERE e.event_type IN ('contact_click', 'phone_unlock', 'call_click', 'premium_cta')
+              OR (e.event_type = 'contact_click' AND COALESCE(e.metadata->>'action', '') IN ('unlock_phone', 'call_click'))
+          )::INT AS leads_generated,
           COUNT(*) FILTER (WHERE e.event_type = 'visit_request')::INT AS visit_requests,
           COUNT(*) FILTER (WHERE e.event_type = 'conversion')::INT AS conversions
         FROM listing_analytics_events e
@@ -232,4 +280,3 @@ export function startPropertyAnalyticsScheduler({
   analyticsSchedulerHandle = setInterval(runner, Math.max(60_000, Number(intervalMs) || 60 * 60 * 1000));
   return analyticsSchedulerHandle;
 }
-

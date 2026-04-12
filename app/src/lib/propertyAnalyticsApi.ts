@@ -5,7 +5,9 @@ export type PropertyInteractionAction =
   | 'save'
   | 'unsave'
   | 'like'
-  | 'unlike';
+  | 'unlike'
+  | 'unlock_phone'
+  | 'call_click';
 
 interface TrackPropertyInteractionParams {
   referenceId: string;

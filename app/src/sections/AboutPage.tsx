@@ -31,13 +31,13 @@ const audience = [
 
 export default function AboutPage() {
   return (
-    <section className="relative overflow-hidden pb-16 pt-28 text-slate-900">
+    <section className="zdt-public-page relative overflow-hidden pb-16 pt-28 text-slate-900">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.14),_transparent_56%)]" />
 
       <div className="page-container relative z-10 space-y-8">
-        <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">About ZDT Realty</p>
-          <h1 className="mt-3 text-3xl font-bold leading-tight sm:text-4xl">Built for Trust in Indian Real Estate</h1>
+        <div className="zdt-public-hero rounded-3xl p-8 sm:p-10">
+          <p className="zdt-public-kicker text-xs font-semibold">About ZDT Realty</p>
+          <h1 className="brand-serif mt-3 text-3xl font-bold leading-tight sm:text-4xl">Built for Trust in Indian Real Estate</h1>
           <p className="mt-4 max-w-4xl text-base leading-relaxed text-slate-600">
             ZDT Realty is a modern real estate listing and management platform built primarily for builders and
             real estate developers in India. We help builders manage listings, generate genuine leads, and maintain
@@ -46,22 +46,22 @@ export default function AboutPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">What We Do</h2>
             <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-600">
               {whatWeDoPoints.map((point) => (
-                <li key={point} className="rounded-xl bg-slate-50 p-3">
+                <li key={point} className="zdt-public-muted-card rounded-xl p-3">
                   {point}
                 </li>
               ))}
             </ul>
           </article>
 
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Why ZDT Realty Exists</h2>
             <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-600">
               {whyWeExistPoints.map((point) => (
-                <li key={point} className="rounded-xl bg-slate-50 p-3">
+                <li key={point} className="zdt-public-muted-card rounded-xl p-3">
                   {point}
                 </li>
               ))}
@@ -70,7 +70,7 @@ export default function AboutPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Our Mission</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
               To empower builders with simple and reliable tools to manage properties and generate genuine leads,
@@ -78,7 +78,7 @@ export default function AboutPage() {
             </p>
           </article>
 
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Our Vision</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
               To build a trusted, local-first real estate ecosystem where builders, developers, buyers, and tenants
@@ -87,11 +87,11 @@ export default function AboutPage() {
           </article>
         </div>
 
-        <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+        <article className="zdt-public-card rounded-3xl p-7">
           <h2 className="text-xl font-semibold text-slate-900">What Makes ZDT Realty Different</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {differentiators.map((item) => (
-              <div key={item} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div key={item} className="zdt-public-muted-card rounded-xl p-3 text-sm text-slate-600">
                 {item}
               </div>
             ))}
@@ -99,7 +99,7 @@ export default function AboutPage() {
         </article>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Free to Use (Early-Stage Platform)</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
               ZDT Realty is currently free for builders, developers, and users, with no subscription fees at this
@@ -112,11 +112,11 @@ export default function AboutPage() {
             </p>
           </article>
 
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Trust and Transparency</h2>
             <ul className="mt-4 space-y-3 text-sm leading-relaxed text-slate-600">
               {trustPractices.map((practice) => (
-                <li key={practice} className="rounded-xl bg-slate-50 p-3">
+                <li key={practice} className="zdt-public-muted-card rounded-xl p-3">
                   {practice}
                 </li>
               ))}
@@ -125,18 +125,18 @@ export default function AboutPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Who We Serve</h2>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
               {audience.map((group) => (
-                <li key={group} className="rounded-lg border border-slate-200 px-3 py-2">
+                <li key={group} className="zdt-public-muted-card rounded-lg px-3 py-2">
                   {group}
                 </li>
               ))}
             </ul>
           </article>
 
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">About the Founder</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
               ZDT Realty was founded by Mohammad Zahir D. Tahsildar with the vision of creating a builder-focused
@@ -146,7 +146,7 @@ export default function AboutPage() {
           </article>
         </div>
 
-        <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+        <article className="zdt-public-card rounded-3xl p-7">
           <h2 className="text-xl font-semibold text-slate-900">A Growing Startup Built with Community Support</h2>
           <p className="mt-3 text-sm leading-relaxed text-slate-600">
             ZDT Realty is an early-stage startup built with limited resources and a strong belief in long-term value.
@@ -159,7 +159,7 @@ export default function AboutPage() {
         </article>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Growth and Expansion</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
               We currently follow a local-first approach, building strong relationships with builders in selected
@@ -168,19 +168,19 @@ export default function AboutPage() {
             </p>
           </article>
 
-          <article className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <article className="zdt-public-card rounded-3xl p-7">
             <h2 className="text-xl font-semibold text-slate-900">Contact and Support</h2>
             <p className="mt-3 text-sm text-slate-600">For queries, feedback, or builder partnerships:</p>
             <a
               href="mailto:zdtrealty@gmail.com"
-              className="mt-3 inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100"
+              className="zdt-mail-chip mt-3 inline-flex rounded-full px-4 py-2 text-sm font-semibold transition hover:-translate-y-0.5"
             >
               zdtrealty@gmail.com
             </a>
           </article>
         </div>
 
-        <article className="rounded-3xl border border-cyan-200 bg-cyan-50 p-7">
+        <article className="zdt-public-band rounded-3xl p-7">
           <h2 className="text-xl font-semibold text-slate-900">Closing Statement</h2>
           <p className="mt-3 text-sm leading-relaxed text-slate-700">
             ZDT Realty is built to support builders and real estate professionals with better tools, better visibility,

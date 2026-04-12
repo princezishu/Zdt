@@ -249,7 +249,7 @@ export default function InsightsProjectsPage({ token, user }: InsightsProjectsPa
   return (
     <section className="min-h-screen pb-16 pt-28 text-slate-900">
       <div className="page-container zdt-page-stack">
-        <div className="zdt-panel-hero rounded-3xl border p-6 shadow-xl">
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">News & Insights</p>
           <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Upcoming Project Announcements</h1>
           <p className="mt-2 text-sm text-slate-600">

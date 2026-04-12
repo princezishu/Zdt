@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { getGeoDistricts, getGeoPlaces, getGeoStates, getGeoSubdistricts } from '@/lib/geoApi';
 import { apiRequest } from '@/lib/http';
@@ -89,9 +89,12 @@ export function LgdLocationInput({
   debounceMs = 250,
 }: LgdLocationInputProps) {
   const listId = useId();
+  const closeMenuTimeoutRef = useRef<number | null>(null);
   const [options, setOptions] = useState<SuggestionOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorText, setErrorText] = useState('');
+  const [isFocused, setIsFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   const query = String(value || '').trim();
   const effectiveMinQueryLength = Math.max(0, minQueryLength ?? (suggestKind === 'state' ? 0 : 1));
@@ -114,24 +117,38 @@ export function LgdLocationInput({
     if (suggestKind === 'subdistrict') return !!districtCode.trim();
     if (suggestKind === 'place') return !!subdistrictCode.trim();
     return true;
-  }, [districtCode, indiaDistrict, indiaState, indiaValueField, stateCode, subdistrictCode, suggestKind]);
+  }, [
+    districtCode,
+    indiaDistrict,
+    indiaState,
+    indiaSubdistrict,
+    indiaValueField,
+    stateCode,
+    subdistrictCode,
+    suggestKind,
+  ]);
+  const isSearchActive = !disabled && canSearchByKind && (isFocused || query.length > 0);
   const shouldShowSuggestions =
-    !disabled && canSearchByKind && query.length >= effectiveMinQueryLength;
-  const visibleOptions = shouldShowSuggestions ? options : [];
+    isSearchActive && query.length >= effectiveMinQueryLength;
+  const visibleOptions = useMemo(
+    () => (shouldShowSuggestions ? options : []),
+    [options, shouldShowSuggestions]
+  );
 
   useEffect(() => {
-    if (!canSearchByKind || disabled || query.length < effectiveMinQueryLength) {
+    if (!isSearchActive || query.length < effectiveMinQueryLength) {
       setLoading(false);
       setErrorText('');
-      if (!query.length) {
-        setOptions([]);
-      }
+      setOptions([]);
       return;
     }
 
     const cacheKey = [
       suggestKind,
       normalize(query),
+      normalize(indiaState || ''),
+      normalize(indiaDistrict || ''),
+      normalize(indiaSubdistrict || ''),
       stateCode.trim(),
       districtCode.trim(),
       subdistrictCode.trim(),
@@ -330,6 +347,7 @@ export function LgdLocationInput({
       window.clearTimeout(timer);
     };
   }, [
+    isSearchActive,
     canSearchByKind,
     debounceMs,
     disabled,
@@ -345,6 +363,25 @@ export function LgdLocationInput({
     subdistrictCode,
     suggestKind,
   ]);
+
+  useEffect(() => {
+    if (!isFocused || visibleOptions.length === 0) {
+      setActiveIndex(-1);
+      return;
+    }
+    setActiveIndex((current) => {
+      if (current >= 0 && current < visibleOptions.length) return current;
+      return 0;
+    });
+  }, [isFocused, visibleOptions]);
+
+  useEffect(() => {
+    return () => {
+      if (closeMenuTimeoutRef.current != null) {
+        window.clearTimeout(closeMenuTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const dependencyHint = useMemo(() => {
     if (suggestKind === 'india') {
@@ -370,7 +407,16 @@ export function LgdLocationInput({
     if (suggestKind === 'subdistrict' && !districtCode.trim()) return 'Select a district first to get subdistrict suggestions.';
     if (suggestKind === 'place' && !subdistrictCode.trim()) return 'Select a subdistrict first to get place suggestions.';
     return '';
-  }, [districtCode, indiaDistrict, indiaState, indiaValueField, stateCode, subdistrictCode, suggestKind]);
+  }, [
+    districtCode,
+    indiaDistrict,
+    indiaState,
+    indiaSubdistrict,
+    indiaValueField,
+    stateCode,
+    subdistrictCode,
+    suggestKind,
+  ]);
 
   const showTypeHint =
     !disabled &&
@@ -384,39 +430,162 @@ export function LgdLocationInput({
     !errorText &&
     query.length >= effectiveMinQueryLength &&
     visibleOptions.length === 0;
+  const showDropdown =
+    isFocused &&
+    !disabled &&
+    (visibleOptions.length > 0 || loading || Boolean(errorText) || showTypeHint || showNoMatches);
+
+  const selectOption = (option: SuggestionOption) => {
+    onChange(option.value);
+    setIsFocused(false);
+    setActiveIndex(-1);
+  };
+
+  const handleFocus = () => {
+    if (closeMenuTimeoutRef.current != null) {
+      window.clearTimeout(closeMenuTimeoutRef.current);
+      closeMenuTimeoutRef.current = null;
+    }
+    setIsFocused(true);
+  };
+
+  const handleBlur = () => {
+    if (closeMenuTimeoutRef.current != null) {
+      window.clearTimeout(closeMenuTimeoutRef.current);
+    }
+    closeMenuTimeoutRef.current = window.setTimeout(() => {
+      setIsFocused(false);
+      setActiveIndex(-1);
+    }, 120);
+  };
+
+  const activeOption = activeIndex >= 0 && activeIndex < visibleOptions.length ? visibleOptions[activeIndex] : null;
 
   return (
     <div className="space-y-1">
-      <Input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        list={visibleOptions.length > 0 ? listId : undefined}
-        placeholder={placeholder}
-        className={className}
-        disabled={disabled}
-      />
-      {visibleOptions.length > 0 ? (
-        <datalist id={listId}>
-          {visibleOptions.map((option) => (
-            <option key={option.key} value={option.value} label={option.label} />
-          ))}
-        </datalist>
-      ) : null}
+      <div className="relative">
+        <Input
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setIsFocused(true);
+          }}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          onKeyDown={(event) => {
+            if (!showDropdown || visibleOptions.length === 0) {
+              if (event.key === 'Escape') {
+                setIsFocused(false);
+                setActiveIndex(-1);
+              }
+              return;
+            }
+
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setActiveIndex((current) => {
+                if (current < 0) return 0;
+                return (current + 1) % visibleOptions.length;
+              });
+              return;
+            }
+
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setActiveIndex((current) => {
+                if (current < 0) return visibleOptions.length - 1;
+                return current === 0 ? visibleOptions.length - 1 : current - 1;
+              });
+              return;
+            }
+
+            if (event.key === 'Enter' && activeOption) {
+              event.preventDefault();
+              selectOption(activeOption);
+              return;
+            }
+
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setIsFocused(false);
+              setActiveIndex(-1);
+            }
+          }}
+          placeholder={placeholder}
+          className={className}
+          disabled={disabled}
+          autoComplete="off"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showDropdown}
+          aria-controls={showDropdown ? listId : undefined}
+          aria-activedescendant={activeOption ? `${listId}-${activeOption.key}` : undefined}
+        />
+
+        {showDropdown ? (
+          <div
+            id={listId}
+            role="listbox"
+            className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+          >
+            {loading ? <p className="px-3 py-2 text-sm text-slate-500">Loading location suggestions...</p> : null}
+            {!loading && errorText ? <p className="px-3 py-2 text-sm text-red-600">{errorText}</p> : null}
+            {!loading && !errorText && visibleOptions.length > 0 ? (
+              <div className="space-y-1">
+                {visibleOptions.map((option, index) => {
+                  const isActive = index === activeIndex;
+                  return (
+                    <button
+                      key={option.key}
+                      id={`${listId}-${option.key}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      className={cn(
+                        'flex w-full flex-col rounded-xl px-3 py-2 text-left transition',
+                        isActive ? 'bg-slate-900 text-white' : 'bg-transparent text-slate-900 hover:bg-slate-100'
+                      )}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        selectOption(option);
+                      }}
+                      onMouseEnter={() => setActiveIndex(index)}
+                    >
+                      <span className="text-sm font-medium">{option.value}</span>
+                      <span className={cn('text-xs', isActive ? 'text-slate-200' : 'text-slate-500')}>
+                        {option.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {!loading && !errorText && showTypeHint ? (
+              <p className="px-3 py-2 text-sm text-slate-500">
+                Type at least {effectiveMinQueryLength} character{effectiveMinQueryLength === 1 ? '' : 's'} to see suggestions.
+              </p>
+            ) : null}
+            {!loading && !errorText && showNoMatches ? (
+              <p className="px-3 py-2 text-sm text-slate-500">No matching location suggestions found.</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {!disabled && dependencyHint ? (
         <p className="text-xs text-slate-500">{dependencyHint}</p>
       ) : null}
-      {loading ? (
+      {!showDropdown && loading ? (
         <p className="text-xs text-slate-500">Loading location suggestions...</p>
       ) : null}
-      {!loading && errorText ? (
+      {!showDropdown && !loading && errorText ? (
         <p className="text-xs text-red-600">{errorText}</p>
       ) : null}
-      {showTypeHint ? (
+      {!showDropdown && showTypeHint ? (
         <p className="text-xs text-slate-500">
           Type at least {effectiveMinQueryLength} character{effectiveMinQueryLength === 1 ? '' : 's'} to see suggestions.
         </p>
       ) : null}
-      {showNoMatches ? (
+      {!showDropdown && showNoMatches ? (
         <p className="text-xs text-slate-500">No matching location suggestions found.</p>
       ) : null}
     </div>

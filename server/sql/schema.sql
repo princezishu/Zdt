@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
   is_main_admin BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
+  managed_auth_provider VARCHAR(40),
+  managed_auth_subject VARCHAR(255),
+  managed_auth_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  managed_auth_only BOOLEAN NOT NULL DEFAULT FALSE,
+  managed_auth_last_sign_in_at TIMESTAMPTZ,
   kyc_verified BOOLEAN NOT NULL DEFAULT FALSE,
   deactivated_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -42,6 +47,11 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS users_single_main_admin_idx
   ON users (is_main_admin)
   WHERE is_main_admin = TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_managed_auth_identity_unique
+  ON users (managed_auth_provider, managed_auth_subject)
+  WHERE managed_auth_provider IS NOT NULL
+    AND managed_auth_subject IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION enforce_admin_limit()
 RETURNS TRIGGER AS $$
@@ -104,6 +114,20 @@ CREATE TABLE IF NOT EXISTS password_reset_otps (
   expires_at TIMESTAMPTZ NOT NULL,
   attempts SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS login_2fa_challenges (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  challenge_hash VARCHAR(128) NOT NULL UNIQUE,
+  otp_hash VARCHAR(128) NOT NULL,
+  device_id VARCHAR(120) NOT NULL,
+  requested_ip VARCHAR(64) NOT NULL DEFAULT '',
+  requested_user_agent VARCHAR(255) NOT NULL DEFAULT '',
+  attempts SMALLINT NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  verified_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -196,7 +220,16 @@ ALTER TABLE property_requests
   ADD COLUMN IF NOT EXISTS assigned_task_type VARCHAR(24),
   ADD COLUMN IF NOT EXISTS assigned_task_query TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS assigned_by_admin_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS submission_ip VARCHAR(64) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(24) NOT NULL DEFAULT 'pending_review',
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS moderation_notes TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS risk_signals JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS risk_score INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS engagement_score NUMERIC(12,4) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS boost_weight NUMERIC(12,4) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS ranking_score NUMERIC(12,4) NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN
@@ -220,6 +253,17 @@ BEGIN
         assigned_task_type IS NULL
         OR assigned_task_type IN ('call_user', 'add_property', 'handle_query')
       );
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'property_requests_lifecycle_status_check'
+  ) THEN
+    ALTER TABLE property_requests
+      ADD CONSTRAINT property_requests_lifecycle_status_check
+      CHECK (lifecycle_status IN ('draft', 'pending_review', 'approved', 'needs_changes', 'sold', 'rented'));
   END IF;
 END $$;
 
@@ -429,6 +473,8 @@ CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created
 CREATE INDEX IF NOT EXISTS idx_activity_logs_actor_user ON activity_logs(actor_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_action_key ON activity_logs(action_key);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active ON user_sessions(user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_login_2fa_challenges_user_created ON login_2fa_challenges(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_login_2fa_challenges_expires ON login_2fa_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_country ON user_profiles(country);
 CREATE INDEX IF NOT EXISTS idx_main_admin_profile_media_user_created ON main_admin_profile_media(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_main_admin_profile_media_category ON main_admin_profile_media(category, created_at DESC);
@@ -1371,6 +1417,315 @@ CREATE TABLE IF NOT EXISTS boosts (
   )
 );
 
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  plan_id VARCHAR(40) PRIMARY KEY,
+  plan_name VARCHAR(80) NOT NULL,
+  tier VARCHAR(20) NOT NULL,
+  monthly_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+  yearly_price NUMERIC(12,2),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscription_plans_tier_check'
+  ) THEN
+    ALTER TABLE subscription_plans
+      ADD CONSTRAINT subscription_plans_tier_check
+      CHECK (tier IN ('free', 'pro', 'premium', 'enterprise'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS plan_features (
+  id BIGSERIAL PRIMARY KEY,
+  plan_id VARCHAR(40) NOT NULL REFERENCES subscription_plans(plan_id) ON DELETE CASCADE,
+  feature_key VARCHAR(80) NOT NULL,
+  is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  limit_value INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT plan_features_unique UNIQUE (plan_id, feature_key)
+);
+
+ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS plan_id VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(20) NOT NULL DEFAULT 'free',
+  ADD COLUMN IF NOT EXISTS features_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS listing_quota INT NOT NULL DEFAULT 10,
+  ADD COLUMN IF NOT EXISTS boost_credits INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS provider VARCHAR(60) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(120) NOT NULL DEFAULT '';
+
+UPDATE subscriptions
+SET user_id = owner_id
+WHERE user_id IS NULL
+  AND owner_id IS NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscriptions_tier_check'
+  ) THEN
+    ALTER TABLE subscriptions
+      ADD CONSTRAINT subscriptions_tier_check
+      CHECK (subscription_tier IN ('free', 'pro', 'premium', 'enterprise'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscriptions_status_check'
+  ) THEN
+    ALTER TABLE subscriptions
+      ADD CONSTRAINT subscriptions_status_check
+      CHECK (status IN ('active', 'cancelled', 'expired', 'pending_payment'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscriptions_plan_id_fkey'
+  ) THEN
+    ALTER TABLE subscriptions
+      ADD CONSTRAINT subscriptions_plan_id_fkey
+      FOREIGN KEY (plan_id)
+      REFERENCES subscription_plans(plan_id)
+      ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS listing_analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+  actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  event_type VARCHAR(24) NOT NULL,
+  event_value NUMERIC(14,2),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE listing_analytics_events
+  DROP CONSTRAINT IF EXISTS listing_analytics_events_type_check;
+
+ALTER TABLE listing_analytics_events
+  ADD CONSTRAINT listing_analytics_events_type_check
+  CHECK (
+    event_type IN (
+      'view',
+      'save',
+      'contact_click',
+      'phone_unlock',
+      'call_click',
+      'visit_request',
+      'premium_cta',
+      'conversion',
+      'price_change'
+    )
+  );
+
+CREATE TABLE IF NOT EXISTS property_analytics_daily (
+  id BIGSERIAL PRIMARY KEY,
+  property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+  day_date DATE NOT NULL,
+  views_count INT NOT NULL DEFAULT 0,
+  saves_count INT NOT NULL DEFAULT 0,
+  contact_clicks_count INT NOT NULL DEFAULT 0,
+  visit_requests_count INT NOT NULL DEFAULT 0,
+  conversions_count INT NOT NULL DEFAULT 0,
+  price_changes_count INT NOT NULL DEFAULT 0,
+  conversion_ratio NUMERIC(8,2) NOT NULL DEFAULT 0,
+  average_price NUMERIC(14,2),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT property_analytics_daily_unique UNIQUE (property_request_id, day_date)
+);
+
+ALTER TABLE property_analytics_daily
+  ADD COLUMN IF NOT EXISTS phone_unlocks_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS call_clicks_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS premium_cta_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS brochure_requests_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS price_sheet_requests_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS loan_help_requests_count INT NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS user_analytics (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day_date DATE NOT NULL,
+  listings_created INT NOT NULL DEFAULT 0,
+  total_views INT NOT NULL DEFAULT 0,
+  total_saves INT NOT NULL DEFAULT 0,
+  total_contacts INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_analytics_unique UNIQUE (user_id, day_date)
+);
+
+CREATE TABLE IF NOT EXISTS lead_analytics (
+  id BIGSERIAL PRIMARY KEY,
+  property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+  day_date DATE NOT NULL,
+  leads_generated INT NOT NULL DEFAULT 0,
+  lead_to_visit_ratio NUMERIC(8,2) NOT NULL DEFAULT 0,
+  lead_to_sale_ratio NUMERIC(8,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT lead_analytics_unique UNIQUE (property_request_id, day_date)
+);
+
+CREATE TABLE IF NOT EXISTS billing_orders (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  order_kind VARCHAR(32) NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'razorpay',
+  status VARCHAR(24) NOT NULL DEFAULT 'created',
+  currency_code VARCHAR(8) NOT NULL DEFAULT 'INR',
+  amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  provider_order_id VARCHAR(120),
+  provider_payment_id VARCHAR(120),
+  provider_signature VARCHAR(255) NOT NULL DEFAULT '',
+  provider_receipt VARCHAR(120) NOT NULL DEFAULT '',
+  provider_last_event_type VARCHAR(80) NOT NULL DEFAULT '',
+  related_plan_id VARCHAR(40) REFERENCES subscription_plans(plan_id) ON DELETE SET NULL,
+  related_plan_name VARCHAR(120) NOT NULL DEFAULT '',
+  related_listing_reference VARCHAR(80) NOT NULL DEFAULT '',
+  fulfilled_entity_type VARCHAR(32) NOT NULL DEFAULT '',
+  fulfilled_entity_id BIGINT,
+  activated_subscription_id BIGINT REFERENCES subscriptions(id) ON DELETE SET NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  paid_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'billing_orders_kind_check'
+  ) THEN
+    ALTER TABLE billing_orders
+      ADD CONSTRAINT billing_orders_kind_check
+      CHECK (order_kind IN ('subscription', 'sponsored_listing'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'billing_orders_status_check'
+  ) THEN
+    ALTER TABLE billing_orders
+      ADD CONSTRAINT billing_orders_status_check
+      CHECK (status IN ('created', 'authorized', 'paid', 'failed', 'expired', 'cancelled'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS listing_assist_requests (
+  id BIGSERIAL PRIMARY KEY,
+  property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+  requester_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  chat_conversation_id BIGINT REFERENCES chat_conversations(id) ON DELETE SET NULL,
+  assist_type VARCHAR(24) NOT NULL,
+  route_owner VARCHAR(24) NOT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'open',
+  source_context VARCHAR(64) NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  last_requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  fulfilled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_type_check'
+  ) THEN
+    ALTER TABLE listing_assist_requests
+      ADD CONSTRAINT listing_assist_requests_type_check
+      CHECK (assist_type IN ('brochure', 'price_sheet', 'loan_help'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_route_check'
+  ) THEN
+    ALTER TABLE listing_assist_requests
+      ADD CONSTRAINT listing_assist_requests_route_check
+      CHECK (route_owner IN ('owner', 'team_support'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'listing_assist_requests_status_check'
+  ) THEN
+    ALTER TABLE listing_assist_requests
+      ADD CONSTRAINT listing_assist_requests_status_check
+      CHECK (status IN ('open', 'in_progress', 'closed', 'cancelled'));
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS listing_sponsorships (
+  id BIGSERIAL PRIMARY KEY,
+  property_request_id BIGINT NOT NULL REFERENCES property_requests(id) ON DELETE CASCADE,
+  owner_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  billing_order_id BIGINT REFERENCES billing_orders(id) ON DELETE SET NULL,
+  placement VARCHAR(24) NOT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'pending_payment',
+  title_override VARCHAR(180) NOT NULL DEFAULT '',
+  subtitle_override VARCHAR(240) NOT NULL DEFAULT '',
+  description_override TEXT NOT NULL DEFAULT '',
+  image_url TEXT NOT NULL DEFAULT '',
+  badge_text VARCHAR(60) NOT NULL DEFAULT 'Sponsored',
+  cta_label VARCHAR(60) NOT NULL DEFAULT 'Open Listing',
+  target_city VARCHAR(120) NOT NULL DEFAULT '',
+  target_locality VARCHAR(160) NOT NULL DEFAULT '',
+  target_request_type VARCHAR(16) NOT NULL DEFAULT '',
+  target_property_type VARCHAR(40) NOT NULL DEFAULT '',
+  sort_priority INT NOT NULL DEFAULT 100,
+  start_at TIMESTAMPTZ,
+  end_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'listing_sponsorships_placement_check'
+  ) THEN
+    ALTER TABLE listing_sponsorships
+      ADD CONSTRAINT listing_sponsorships_placement_check
+      CHECK (placement IN ('portal_home', 'public_results'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'listing_sponsorships_status_check'
+  ) THEN
+    ALTER TABLE listing_sponsorships
+      ADD CONSTRAINT listing_sponsorships_status_check
+      CHECK (status IN ('pending_payment', 'active', 'expired', 'cancelled'));
+  END IF;
+END $$;
+
 ALTER TABLE leads
   ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'new',
   ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '',
@@ -1383,7 +1738,33 @@ ALTER TABLE rental_leads
 
 CREATE INDEX IF NOT EXISTS owner_profiles_user_idx ON owner_profiles(user_id);
 CREATE INDEX IF NOT EXISTS subscriptions_owner_idx ON subscriptions(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS boosts_owner_idx ON boosts(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS billing_orders_user_created_idx ON billing_orders(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS billing_orders_status_idx ON billing_orders(status, order_kind, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_provider_order_unique
+  ON billing_orders(provider_order_id)
+  WHERE provider_order_id IS NOT NULL AND provider_order_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_provider_payment_unique
+  ON billing_orders(provider_payment_id)
+  WHERE provider_payment_id IS NOT NULL AND provider_payment_id <> '';
+CREATE INDEX IF NOT EXISTS listing_assist_requests_property_idx
+  ON listing_assist_requests(property_request_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS listing_assist_requests_requester_idx
+  ON listing_assist_requests(requester_user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS listing_assist_requests_open_unique
+  ON listing_assist_requests(property_request_id, requester_user_id, assist_type)
+  WHERE status IN ('open', 'in_progress');
+CREATE INDEX IF NOT EXISTS listing_sponsorships_owner_idx
+  ON listing_sponsorships(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS listing_sponsorships_public_idx
+  ON listing_sponsorships(status, placement, sort_priority, created_at DESC);
+CREATE INDEX IF NOT EXISTS listing_sponsorships_property_idx
+  ON listing_sponsorships(property_request_id);
+CREATE INDEX IF NOT EXISTS idx_listing_analytics_events_property_created
+  ON listing_analytics_events(property_request_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_property_analytics_daily_property_date
+  ON property_analytics_daily(property_request_id, day_date DESC);
 CREATE INDEX IF NOT EXISTS properties_owner_idx ON properties(posted_by, created_at DESC);
 CREATE INDEX IF NOT EXISTS rentals_owner_idx ON rentals(posted_by, created_at DESC);
 
@@ -1466,3 +1847,143 @@ INSERT INTO rental_amenities (name, slug) VALUES
   ('Near College', 'near-college')
 ON CONFLICT (slug)
 DO UPDATE SET name = EXCLUDED.name;
+
+ALTER TABLE news_articles
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '10 days');
+
+UPDATE news_articles
+SET expires_at = COALESCE(published_at, created_at, NOW()) + INTERVAL '10 days'
+WHERE expires_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS news_articles_expires_idx
+  ON news_articles (expires_at ASC);
+
+CREATE TABLE IF NOT EXISTS govt_source_registry (
+  id BIGSERIAL PRIMARY KEY,
+  authority_name VARCHAR(180) NOT NULL,
+  source_type VARCHAR(24) NOT NULL DEFAULT 'other'
+    CHECK (source_type IN ('government_portal', 'rera', 'bank_portal', 'municipal', 'court_notice', 'other')),
+  source_url TEXT,
+  authority_scope VARCHAR(120) NOT NULL DEFAULT '',
+  verification_weight INT NOT NULL DEFAULT 5
+    CHECK (verification_weight BETWEEN 0 AND 20),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS govt_source_registry_source_url_unique
+  ON govt_source_registry (source_url)
+  WHERE source_url IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS builder_verification_cases (
+  id BIGSERIAL PRIMARY KEY,
+  company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  requested_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  case_type VARCHAR(32) NOT NULL
+    CHECK (case_type IN ('kyc', 'rera', 'project_document', 'ownership', 'banking', 'site_audit')),
+  status VARCHAR(24) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'under_review', 'approved', 'rejected', 'needs_changes')),
+  priority VARCHAR(12) NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'high')),
+  note TEXT NOT NULL DEFAULT '',
+  public_note VARCHAR(300) NOT NULL DEFAULT '',
+  trust_score_delta INT NOT NULL DEFAULT 0,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+  source_reference_url TEXT,
+  resolved_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS builder_verification_cases_company_status_idx
+  ON builder_verification_cases (company_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS property_verification_cases (
+  id BIGSERIAL PRIMARY KEY,
+  property_id BIGINT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  company_id BIGINT REFERENCES companies(id) ON DELETE CASCADE,
+  requested_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  case_type VARCHAR(32) NOT NULL
+    CHECK (case_type IN ('listing_authenticity', 'ownership', 'pricing', 'location', 'rera', 'media')),
+  status VARCHAR(24) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'under_review', 'approved', 'rejected', 'needs_changes')),
+  priority VARCHAR(12) NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'high')),
+  note TEXT NOT NULL DEFAULT '',
+  public_note VARCHAR(300) NOT NULL DEFAULT '',
+  trust_score_delta INT NOT NULL DEFAULT 0,
+  evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+  source_reference_url TEXT,
+  resolved_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS property_verification_cases_property_status_idx
+  ON property_verification_cases (property_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ownership_verification_checks (
+  id BIGSERIAL PRIMARY KEY,
+  property_id BIGINT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  case_id BIGINT REFERENCES property_verification_cases(id) ON DELETE SET NULL,
+  owner_name VARCHAR(160) NOT NULL,
+  owner_phone VARCHAR(32) NOT NULL DEFAULT '',
+  document_type VARCHAR(80) NOT NULL,
+  check_status VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (check_status IN ('pending', 'verified', 'failed', 'manual_review')),
+  result_summary VARCHAR(500) NOT NULL DEFAULT '',
+  source_authority_id BIGINT REFERENCES govt_source_registry(id) ON DELETE SET NULL,
+  checked_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ownership_verification_checks_property_checked_idx
+  ON ownership_verification_checks (property_id, checked_at DESC);
+
+CREATE TABLE IF NOT EXISTS fake_listing_reports (
+  id BIGSERIAL PRIMARY KEY,
+  property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
+  company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL,
+  property_reference VARCHAR(80) NOT NULL DEFAULT '',
+  reporter_name VARCHAR(120) NOT NULL,
+  reporter_email VARCHAR(190) NOT NULL DEFAULT '',
+  reporter_phone VARCHAR(32) NOT NULL DEFAULT '',
+  reason VARCHAR(32) NOT NULL
+    CHECK (reason IN ('duplicate_listing', 'wrong_price', 'wrong_location', 'ownership_doubt', 'scam_behavior', 'fake_media', 'other')),
+  details TEXT NOT NULL DEFAULT '',
+  source_url TEXT,
+  status VARCHAR(16) NOT NULL DEFAULT 'new'
+    CHECK (status IN ('new', 'reviewing', 'resolved', 'rejected')),
+  reviewed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  resolution_note TEXT NOT NULL DEFAULT '',
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fake_listing_reports_open_idx
+  ON fake_listing_reports (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS fake_listing_reports_property_idx
+  ON fake_listing_reports (property_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS fraud_actions (
+  id BIGSERIAL PRIMARY KEY,
+  report_id BIGINT REFERENCES fake_listing_reports(id) ON DELETE SET NULL,
+  action_key VARCHAR(24) NOT NULL
+    CHECK (action_key IN ('flag_listing', 'warn_builder', 'reject_report', 'resolve_report', 'suspend_listing', 'keep_listing_live')),
+  action_note TEXT NOT NULL DEFAULT '',
+  actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fraud_actions_report_idx
+  ON fraud_actions (report_id, created_at DESC);

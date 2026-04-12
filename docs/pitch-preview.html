@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZDT Realty Founding Round Pitch Preview</title>
+  <style>
+    :root {
+      --bg: #edf2f7;
+      --card: #ffffff;
+      --ink: #0f172a;
+      --muted: #475467;
+      --line: #d0d5dd;
+      --brand: #0b1f44;
+      --brand-2: #1d4ed8;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+      color: var(--ink);
+    }
+
+    .wrap {
+      width: min(1200px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #0b1f44 0%, #163766 55%, #1d4ed8 100%);
+      color: #fff;
+      padding: 28px;
+      border-radius: 24px;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(32px, 5vw, 44px);
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 760px;
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.86);
+    }
+
+    .note {
+      margin-top: 14px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    .slide {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    .slide h2 {
+      margin: 0 0 6px;
+      font-size: 28px;
+    }
+
+    .sub {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .grid.dual {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    img {
+      width: 100%;
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+    }
+
+    .caption {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #344054;
+      font-weight: 600;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 0 0 12px;
+      line-height: 1.5;
+      color: #1d2939;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .closing {
+      background: linear-gradient(135deg, #0b1f44 0%, #0f172a 100%);
+      color: #fff;
+    }
+
+    .closing .sub,
+    .closing li {
+      color: rgba(255, 255, 255, 0.84);
+    }
+
+    @media (max-width: 900px) {
+      .grid,
+      .grid.dual,
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>ZDT Realty</h1>
+      <p>Trusted Real Estate Intelligence + Operations Platform</p>
+      <div class="note">Browser preview version of the founding-round deck. If the `.pptx` does not preview in your IDE, this page will still open normally in any browser.</div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 1</span>
+      <h2>Platform Overview</h2>
+      <p class="sub">The homepage acts as the product map across marketplace, intelligence, services, and operator workflows.</p>
+      <div class="grid">
+        <div>
+          <img src="./pitch-assets/screenshots/01-home.png" alt="Homepage">
+          <div class="caption">Homepage: entry point into every major feature block</div>
+        </div>
+        <div>
+          <ul>
+            <li>ZDT is positioned as more than a listing portal. The landing experience already exposes marketplace, insights, infrastructure, invest, and operator modules.</li>
+            <li>This is useful in your interview because it shows clear product breadth from the first screen.</li>
+            <li>It supports the pitch that the platform is multi-sided and modular by design.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 2</span>
+      <h2>Consumer Marketplace</h2>
+      <p class="sub">The buyer journey includes search, listing evaluation, and conversion actions.</p>
+      <div class="grid">
+        <div>
+          <img src="./pitch-assets/screenshots/02-buy-marketplace.png" alt="Buy marketplace">
+          <div class="caption">Buy marketplace with filters, listing cards, and saved-search flow</div>
+        </div>
+        <div>
+          <ul>
+            <li>Buy and rent are built as full marketplace experiences, not static catalog pages.</li>
+            <li>Users can save searches, shortlist properties, compare options, and move into direct enquiry or visit-request flows.</li>
+            <li>This creates the demand-side engagement layer that supports retention and lead generation.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 3</span>
+      <h2>Decision Intelligence Layer</h2>
+      <p class="sub">A major differentiator is that ZDT supports decisions with market and infrastructure context.</p>
+      <div class="grid dual">
+        <div>
+          <img src="./pitch-assets/screenshots/03-infrastructure-tracker.png" alt="Infrastructure tracker">
+          <div class="caption">Infrastructure tracker with verification controls</div>
+        </div>
+        <div>
+          <img src="./pitch-assets/screenshots/04-insights-market.png" alt="Market insights">
+          <div class="caption">Market tracker with pricing and city trends</div>
+        </div>
+      </div>
+      <div style="margin-top: 16px;">
+        <ul>
+          <li>Infrastructure updates are grouped by verification level and geography.</li>
+          <li>Market insights provide pricing movement, city comparison, and decision-support context.</li>
+          <li>This layer moves ZDT from a browsing product to a decision-support platform.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 4</span>
+      <h2>Trust and Differentiation</h2>
+      <p class="sub">These modules show product differentiation beyond standard property search.</p>
+      <div class="grid dual">
+        <div>
+          <img src="./pitch-assets/screenshots/05-eauction.png" alt="E-auction">
+          <div class="caption">Government and bank e-auction directory</div>
+        </div>
+        <div>
+          <img src="./pitch-assets/screenshots/06-group-deals.png" alt="Group deals">
+          <div class="caption">Group purchase deal flow</div>
+        </div>
+      </div>
+      <div style="margin-top: 16px;">
+        <ul>
+          <li>ZDT exposes high-trust sourcing opportunities such as official e-auction portals.</li>
+          <li>Group deals introduce demand aggregation while keeping compliance boundaries clear.</li>
+          <li>This is a strong interview angle because it shows differentiated product thinking, not generic listing replication.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 5</span>
+      <h2>B2B Growth Engine</h2>
+      <p class="sub">The platform also works as operating software for builders and dealers.</p>
+      <div class="grid">
+        <div>
+          <img src="./pitch-assets/screenshots/07-dealers-builders.png" alt="Dealers and builders">
+          <div class="caption">Dealers &amp; builders proposition and company operating model</div>
+        </div>
+        <div>
+          <ul>
+            <li>Builders and dealers get project tools, team access control, promotions, and trust-building features.</li>
+            <li>This creates subscription, enterprise, and promotion-based revenue opportunities.</li>
+            <li>It also improves supply quality on the consumer side of the platform.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <span class="pill">Slide 6</span>
+      <h2>Owner Monetization Layer</h2>
+      <p class="sub">Owners are treated as growth users with dashboards and monetization hooks.</p>
+      <div class="grid">
+        <div>
+          <img src="./pitch-assets/screenshots/08-owner-dashboard.png" alt="Owner dashboard">
+          <div class="caption">Owner dashboard with listings, leads, views, conversion, and revenue signals</div>
+        </div>
+        <div>
+          <ul>
+            <li>Owners can track listings, leads, views, conversion rate, subscriptions, and boosts from one workspace.</li>
+            <li>This supports direct monetization through plan upgrades and visibility products.</li>
+            <li>It helps position ZDT as a business platform, not only a consumer portal.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide closing">
+      <span class="pill" style="background:#dbeafe;color:#1d4ed8;">Slide 7</span>
+      <h2>Closing Message</h2>
+      <p class="sub">Use this line in the interview:</p>
+      <div class="two-col">
+        <div>
+          <ul>
+            <li>Owner subscriptions and boosts</li>
+            <li>Builder and dealer plans</li>
+            <li>Featured listings and sponsored placements</li>
+            <li>Promotion inventory and premium tools</li>
+            <li>Later enterprise integrations</li>
+          </ul>
+        </div>
+        <div>
+          <p style="font-size:28px;line-height:1.25;font-weight:700;margin:0 0 12px;">ZDT Realty is evolving from a listing portal into a trusted real estate operating system for India.</p>
+          <p style="margin:0;color:rgba(255,255,255,0.84);line-height:1.6;">That is the strongest short positioning for a founding-round or interview pitch.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

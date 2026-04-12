@@ -254,7 +254,7 @@ export async function createGroupDealRequest(payload: GroupDealRequestCreatePayl
 }
 
 export async function adminGetGroupDeals(
-  adminToken: string,
+  _adminToken: string,
   params?: {
     status?: GroupDealStatus;
     q?: string;
@@ -268,17 +268,12 @@ export async function adminGetGroupDeals(
       q: params?.q,
       page: params?.page,
       pageSize: params?.pageSize,
-    })}`,
-    {
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
-    }
+    })}`
   );
 }
 
 export async function adminGetGroupDealRequests(
-  adminToken: string,
+  _adminToken: string,
   params?: {
     status?: GroupDealRequestStatus;
     q?: string;
@@ -292,30 +287,22 @@ export async function adminGetGroupDealRequests(
       q: params?.q,
       page: params?.page,
       pageSize: params?.pageSize,
-    })}`,
-    {
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
-    }
+    })}`
   );
 }
 
 export async function adminCreateGroupDeal(
-  adminToken: string,
+  _adminToken: string,
   payload: GroupDealAdminCreatePayload
 ) {
   return apiRequest<{ item: GroupDealItem }>('/api/group-deals/admin/deals', {
     method: 'POST',
-    headers: {
-      'x-admin-token': adminToken.trim(),
-    },
     body: JSON.stringify(payload),
   });
 }
 
 export async function adminUpdateGroupDeal(
-  adminToken: string,
+  _adminToken: string,
   dealCode: string,
   payload: GroupDealAdminPatchPayload
 ) {
@@ -323,16 +310,13 @@ export async function adminUpdateGroupDeal(
     `/api/group-deals/admin/deals/${encodeURIComponent(String(dealCode || '').trim())}`,
     {
       method: 'PATCH',
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
       body: JSON.stringify(payload),
     }
   );
 }
 
 export async function adminUpdateGroupDealRequest(
-  adminToken: string,
+  _adminToken: string,
   requestId: number,
   payload: {
     status: 'NEW' | 'APPROVED' | 'REJECTED';
@@ -343,9 +327,6 @@ export async function adminUpdateGroupDealRequest(
     `/api/group-deals/admin/requests/${encodeURIComponent(String(requestId))}`,
     {
       method: 'PATCH',
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
       body: JSON.stringify({
         status: payload.status,
         adminNote: String(payload.adminNote || '').trim(),
@@ -355,7 +336,7 @@ export async function adminUpdateGroupDealRequest(
 }
 
 export async function adminApproveCreateGroupDealRequest(
-  adminToken: string,
+  _adminToken: string,
   requestId: number,
   payload?: {
     minBuyers?: number;
@@ -372,9 +353,6 @@ export async function adminApproveCreateGroupDealRequest(
     `/api/group-deals/admin/requests/${encodeURIComponent(String(requestId))}/approve-create-draft`,
     {
       method: 'POST',
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
       body: JSON.stringify({
         minBuyers: payload?.minBuyers,
         maxBuyers: payload?.maxBuyers,
@@ -390,21 +368,16 @@ export async function adminApproveCreateGroupDealRequest(
 }
 
 export async function adminGetGroupDealJoins(
-  adminToken: string,
+  _adminToken: string,
   dealCode: string
 ) {
   return apiRequest<{ dealCode: string; items: GroupDealJoinAdminItem[] }>(
-    `/api/group-deals/admin/deals/${encodeURIComponent(String(dealCode || '').trim())}/joins`,
-    {
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
-    }
+    `/api/group-deals/admin/deals/${encodeURIComponent(String(dealCode || '').trim())}/joins`
   );
 }
 
 export async function adminDownloadGroupDealJoinsCsv(
-  adminToken: string,
+  _adminToken: string,
   dealCode: string
 ) {
   const response = await fetch(
@@ -412,9 +385,7 @@ export async function adminDownloadGroupDealJoinsCsv(
       String(dealCode || '').trim()
     )}/joins?format=csv`,
     {
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
+      credentials: 'include',
     }
   );
 

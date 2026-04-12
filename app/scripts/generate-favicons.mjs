@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 const appRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(appRoot, '..');
 
+const sourcePng = path.join(appRoot, 'public', 'images', 'logo-real.png');
 const sourceSvg = path.join(appRoot, 'public', 'images', 'favicon-mark.svg');
 const outputDirs = [
   path.join(appRoot, 'public'),
@@ -45,7 +46,17 @@ const webManifest = {
 };
 
 async function renderPng(size) {
-  return sharp(sourceSvg)
+  const sourcePath = await fs
+    .access(sourcePng)
+    .then(() => sourcePng)
+    .catch(() => sourceSvg);
+
+  const sharpInput =
+    sourcePath === sourceSvg
+      ? sharp(sourcePath, { density: 300 })
+      : sharp(sourcePath);
+
+  return sharpInput
     .resize(size, size, {
       fit: 'contain',
       background: { r: 0, g: 0, b: 0, alpha: 0 },
@@ -80,7 +91,9 @@ async function writeOutputs(targetDir) {
 }
 
 async function main() {
-  await fs.access(sourceSvg);
+  await fs.access(sourcePng).catch(async () => {
+    await fs.access(sourceSvg);
+  });
   for (const targetDir of outputDirs) {
     await writeOutputs(targetDir);
     console.log(`Generated favicon assets in ${targetDir}`);

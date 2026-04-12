@@ -59,8 +59,9 @@ export default function AdminInfraPreviewPage({ updateId }: AdminInfraPreviewPag
         setItem(null);
         setError(requestError instanceof Error ? requestError.message : 'Could not load update.');
       } finally {
-        if (!active) return;
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
 

@@ -1,5 +1,6 @@
 interface InsightsTabsProps {
   active: 'news' | 'market' | 'projects' | 'compare';
+  visible?: Array<'news' | 'market' | 'projects' | 'compare'>;
 }
 
 const TABS = [
@@ -9,11 +10,13 @@ const TABS = [
   { key: 'compare', label: 'Compare', href: '/insights/compare' },
 ] as const;
 
-export default function InsightsTabs({ active }: InsightsTabsProps) {
+export default function InsightsTabs({ active, visible }: InsightsTabsProps) {
+  const tabs = visible && visible.length > 0 ? TABS.filter((tab) => visible.includes(tab.key)) : TABS;
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap gap-2">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <a
             key={tab.key}
             href={tab.href}

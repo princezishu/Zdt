@@ -80,6 +80,37 @@ export interface MarketCompareResponse {
   dataSource: string;
 }
 
+export interface MarketPlacePriceResponse {
+  query: string;
+  resolvedPlace: string;
+  location: {
+    city: string | null;
+    state: string | null;
+    country: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  };
+  estimate: {
+    priceType?: 'market_snapshot' | 'predicted';
+    isPredicted?: boolean;
+    caption?: string;
+    plotLandPricePerSqftInr?: number;
+    plotLandPricePerSqftUsd?: number;
+    projected12MonthPricePerSqftInr?: number;
+    projected12MonthPricePerSqftUsd?: number;
+    projected12MonthChangePct?: number;
+    landPricePerSqftInr: number;
+    landPricePerSqftUsd: number;
+    confidence: 'high' | 'medium' | 'low';
+    basis: 'matched_city_snapshot' | 'country_adjusted_estimate' | 'global_baseline_estimate';
+    matchedCity: string | null;
+    matchedCityPriceInr: number | null;
+    countryMultiplier: number;
+  };
+  lastUpdated: string | null;
+  dataSource: string;
+}
+
 export interface ProjectBuilderFilter {
   id: string;
   builderName: string;
@@ -198,6 +229,10 @@ export async function getMarketCompare(cities: string[], months = 36) {
   return apiRequest<MarketCompareResponse>(
     `/api/insights/market/compare${buildQuery({ cities: cities.join(','), months })}`
   );
+}
+
+export async function getMarketPlacePrice(place: string) {
+  return apiRequest<MarketPlacePriceResponse>(`/api/insights/market/place-price${buildQuery({ place })}`);
 }
 
 export async function getProjectAnnouncements(params?: {

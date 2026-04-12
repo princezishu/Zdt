@@ -79,7 +79,7 @@ export default function ComparePage({ onOpenDetails, onOpenMessages }: ComparePa
       <div className="page-container zdt-page-stack">
         <div className="zdt-panel-hero rounded-3xl border p-6 shadow-xl">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Compare</p>
-          <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Compare Properties</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">Compare Properties</h1>
           <p className="mt-2 text-sm text-slate-600">
             Shortlist up to 6 properties and compare key metrics side by side.
           </p>

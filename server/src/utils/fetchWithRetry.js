@@ -8,6 +8,23 @@ const DEFAULT_HEADERS = {
   'Cache-Control': 'no-cache',
   Pragma: 'no-cache',
 };
+const RETRYABLE_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'EPIPE',
+  'ECONNABORTED',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_ABORTED',
+]);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,20 +34,26 @@ function isRetryableStatus(status) {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+function toUpper(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase();
+}
+
 function isRetryableError(error) {
-  const message = String(error?.message || '').toUpperCase();
-  const code = String(error?.code || '').toUpperCase();
-  const name = String(error?.name || '').toUpperCase();
+  const message = toUpper(`${error?.message || ''} ${error?.cause?.message || ''}`);
+  const code = toUpper(error?.code || error?.cause?.code);
+  const name = toUpper(error?.name || error?.cause?.name);
 
   return (
-    code === 'ECONNRESET' ||
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNREFUSED' ||
-    code === 'EAI_AGAIN' ||
-    code === 'ENOTFOUND' ||
+    RETRYABLE_ERROR_CODES.has(code) ||
     message.includes('ECONNRESET') ||
     message.includes('TIMED OUT') ||
+    message.includes('TIMEOUT') ||
+    message.includes('SOCKET') ||
     message.includes('NETWORK') ||
+    message.includes('EAI_AGAIN') ||
+    message.includes('ENOTFOUND') ||
     name === 'ABORTERROR'
   );
 }

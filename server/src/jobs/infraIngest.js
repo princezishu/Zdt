@@ -60,7 +60,10 @@ const DEFAULT_PIB_FEEDS = [
 ];
 
 const DEFAULT_ETENDERS_URLS = ['https://etenders.gov.in/eprocure/app'];
-const DEFAULT_EPROCURE_URLS = ['https://eprocure.gov.in/eprocure/app'];
+const DEFAULT_EPROCURE_URLS = [
+  'https://eprocure.gov.in/cppp/latestactivetendersnew/',
+  'https://eprocure.gov.in/eprocure/app',
+];
 const DEFAULT_PPP_URLS = ['https://www.pppinindia.gov.in/all_infrastructure_projects'];
 const DEFAULT_TIMEOUT_MS = 25000;
 const DEFAULT_SOURCE_REQUEST_RETRIES = 2;
@@ -78,6 +81,11 @@ const TRANSIENT_NETWORK_ERROR_CODES = new Set([
   'ENOTFOUND',
   'EHOSTUNREACH',
   'ECONNABORTED',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_ABORTED',
 ]);
 const pibTransientFeedCooldownUntil = new Map();
 const sourceTransientCooldownUntil = new Map();
@@ -196,6 +204,33 @@ function summarizeSourceFetchError(error) {
   return formatIngestError(error);
 }
 
+function expandUrlCandidateVariants(url) {
+  const normalized = normalizeSpace(url);
+  if (!normalized) return [];
+
+  const variants = [normalized];
+
+  try {
+    const parsed = new URL(normalized);
+    if (
+      !parsed.search &&
+      !parsed.hash &&
+      parsed.pathname &&
+      parsed.pathname !== '/' &&
+      !parsed.pathname.endsWith('/')
+    ) {
+      parsed.pathname = `${parsed.pathname}/`;
+      variants.push(parsed.toString());
+    }
+  } catch {
+    if (!normalized.endsWith('/')) {
+      variants.push(`${normalized}/`);
+    }
+  }
+
+  return variants;
+}
+
 async function fetchFromSourceWithFallback({
   sourceKey,
   listingUrl,
@@ -205,7 +240,7 @@ async function fetchFromSourceWithFallback({
   verboseIngestLogs = false,
 }) {
   const urlCandidates = Array.from(
-    new Set([listingUrl, ...fallbackUrls].map((entry) => normalizeSpace(entry)).filter(Boolean))
+    new Set([listingUrl, ...fallbackUrls].flatMap(expandUrlCandidateVariants))
   );
 
   let lastError = null;

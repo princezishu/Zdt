@@ -1,9 +1,7 @@
 import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 import { pool } from '../db.js';
-
-const { JWT_SECRET = '' } = process.env;
+import { authenticateAccessToken } from '../middleware/auth.js';
 
 const NUMERIC_ID_PATTERN = /^\d+$/;
 const UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -344,53 +342,18 @@ async function authenticateSocketUser(token) {
     throw new Error('Missing auth token');
   }
 
-  const payload = jwt.verify(token, JWT_SECRET);
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-  const userRows = await pool.query(
-    `
-      SELECT
-        u.id,
-        u.name,
-        u.email,
-        u.role,
-        u.is_main_admin,
-        u.is_active,
-        u.deactivated_until,
-        s.id AS session_id
-      FROM users u
-      JOIN user_sessions s
-        ON s.user_id = u.id
-       AND s.token_hash = $2
-       AND s.revoked_at IS NULL
-      WHERE u.id = $1
-      LIMIT 1
-    `,
-    [payload.id, tokenHash]
-  );
-
-  if (userRows.rowCount === 0) {
-    throw new Error('Invalid session');
-  }
-
-  const user = userRows.rows[0];
-
-  if (!user.is_active) {
-    throw new Error('Account is deactivated');
-  }
-  if (user.deactivated_until && new Date(user.deactivated_until).getTime() > Date.now()) {
-    throw new Error('Account is temporarily deactivated');
-  }
-
-  await pool.query('UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1', [user.session_id]);
+  const authState = await authenticateAccessToken(token);
+  const user = authState.user;
 
   return {
     id: Number(user.id),
     name: user.name || 'User',
     email: user.email || '',
     role: user.role || 'user',
-    isMainAdmin: Boolean(user.is_main_admin),
-    sessionId: Number(user.session_id),
+    isMainAdmin: Boolean(user.isMainAdmin),
+    sessionId: authState.sessionId ? Number(authState.sessionId) : null,
+    authStrategy: authState.strategy,
+    managedAuthProvider: user.managedAuthProvider || authState.authProvider || null,
   };
 }
 

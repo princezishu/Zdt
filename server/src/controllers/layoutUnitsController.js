@@ -1,8 +1,11 @@
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import { z } from 'zod';
 import { pool } from '../db.js';
+import { buildCloudinaryFolder, uploadToCloudinary } from '../services/cloudinary.js';
+import {
+  IMAGE_AND_PDF_MIME_TYPES,
+  decodeValidatedDataUrl,
+} from '../utils/fileValidation.js';
 
 const UNIT_TYPES = ['Flat', 'Room', 'Shop', 'Office'];
 const UNIT_CATEGORIES = ['Residential', 'Commercial'];
@@ -11,6 +14,19 @@ const UNIT_STATUSES = ['Available', 'Occupied', 'Maintenance'];
 const LAYOUT_UPLOAD_LIMIT_BYTES = 2 * 1024 * 1024;
 const NUMERIC_ID_PATTERN = /^\d+$/;
 const UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function resolveLayoutResourceType(mimeType) {
+  return String(mimeType || '').trim().toLowerCase() === 'application/pdf' ? 'raw' : 'image';
+}
+
+function buildLayoutCloudinaryPublicId(baseId, extension, resourceType) {
+  const normalizedBaseId = String(baseId || '').trim().replace(/\.[^.]+$/, '');
+  const normalizedExtension = String(extension || '').trim().replace(/^\./, '');
+  if (resourceType === 'raw' && normalizedExtension) {
+    return `${normalizedBaseId}.${normalizedExtension}`;
+  }
+  return normalizedBaseId;
+}
 
 function parseRouteEntityId(rawValue) {
   const value = typeof rawValue === 'string' ? rawValue.trim() : String(rawValue || '').trim();
@@ -233,27 +249,17 @@ const listUnitsQuerySchema = z.object({
 });
 
 function decodeLayoutDataUrl(dataUrl) {
-  if (!dataUrl || typeof dataUrl !== 'string') {
+  const decoded = decodeValidatedDataUrl(dataUrl, IMAGE_AND_PDF_MIME_TYPES);
+  if (!decoded) {
     return null;
   }
 
-  const match = /^data:(application\/pdf|image\/png|image\/jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(
-    dataUrl.trim()
-  );
-  if (!match) {
-    return null;
-  }
-
-  const mimeType = match[1];
-  const encoded = match[2];
-  const buffer = Buffer.from(encoded, 'base64');
-  if (!buffer.length) {
-    return null;
-  }
-
-  const extension = mimeType === 'application/pdf' ? 'pdf' : mimeType === 'image/png' ? 'png' : 'jpg';
-  const fileType = mimeType === 'application/pdf' ? 'pdf' : 'image';
-  return { mimeType, extension, fileType, buffer };
+  return {
+    mimeType: decoded.mimeType,
+    extension: decoded.extension,
+    fileType: decoded.mimeType === 'application/pdf' ? 'pdf' : 'image',
+    buffer: decoded.buffer,
+  };
 }
 
 function mapLayoutRow(row) {
@@ -607,15 +613,18 @@ export async function uploadLayout(req, res, next) {
       });
     }
 
-    const uploadDir = path.join(process.cwd(), 'uploads', 'layout-files');
-    fs.mkdirSync(uploadDir, { recursive: true });
     const nonce = crypto.randomBytes(4).toString('hex');
-    const filename = `layout-floor-${payload.floorId}-${Date.now()}-${nonce}.${decoded.extension}`;
-    fs.writeFileSync(path.join(uploadDir, filename), decoded.buffer);
-
-    const urlPath = `/uploads/layout-files/${filename}`;
-    const host = req.get('host') || '';
-    const absoluteUrl = host ? `${req.protocol}://${host}${urlPath}` : urlPath;
+    const resourceType = resolveLayoutResourceType(decoded.mimeType);
+    const uploaded = await uploadToCloudinary(decoded.buffer, {
+      folder: buildCloudinaryFolder('layout-files'),
+      publicId: buildLayoutCloudinaryPublicId(
+        `layout-floor-${payload.floorId}-${Date.now()}-${nonce}`,
+        decoded.extension,
+        resourceType
+      ),
+      resourceType,
+    });
+    const absoluteUrl = uploaded.secureUrl || uploaded.url || '';
 
     const rows = await pool.query(
       `

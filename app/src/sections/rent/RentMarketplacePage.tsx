@@ -1,5 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BadgeCheck, ChevronLeft, ChevronRight, GitCompareArrows, Heart, MapPin, MessageCircle, SearchCheck, ShieldCheck } from 'lucide-react';
+import {
+  BadgeCheck,
+  Car,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  GitCompareArrows,
+  Heart,
+  MapPin,
+  MessageCircle,
+  PawPrint,
+  PhoneCall,
+  SearchCheck,
+  ShieldCheck,
+  SlidersHorizontal,
+  UserCheck,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { apiRequest } from '@/lib/http';
 import { Badge } from '@/components/ui/badge';
@@ -10,9 +26,9 @@ import { PropertyCardsSkeleton } from '@/components/loading/PageSkeletons';
 import { LgdLocationAccuracyNote, LgdLocationInput } from '@/components/realty/LgdLocationInput';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Drawer, DrawerClose, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer';
 import { trackFeatureUsage } from '@/lib/featureUsageApi';
 import { SAVED_RENTALS_CHANGED_EVENT, isSavedRental, removeSavedRental, upsertSavedRental } from '@/lib/rentalsSavedStore';
-import { readIndiaLocationSelection } from '@/lib/indiaLocationSelection';
 import {
   COMPARE_CHANGED_EVENT,
   isCompared,
@@ -21,12 +37,16 @@ import {
   upsertComparedListing,
 } from '@/lib/compareStore';
 import { addSavedSearch } from '@/lib/savedSearchStore';
+import { applySeo } from '@/lib/seo';
+import { openPhoneDialer } from '@/lib/phone';
 
 interface RentMarketplacePageProps {
   onOpenDetails: (propertyId: string) => void;
   onOpenSaved: () => void;
   onOpenMessages: (propertyReference?: string) => void;
   onOpenListProperty: () => void;
+  onOpenDashboard?: () => void;
+  onOpenOwnerDashboard?: () => void;
   onOpenCompare?: () => void;
   onOpenSavedSearches?: () => void;
   initialViewMode?: ViewMode;
@@ -48,18 +68,26 @@ interface RentalListing {
   builtupArea?: number | null;
   furnishedStatus: string;
   tenantPreference?: string;
+  preferredTenant?: string;
+  parking?: string;
+  petsAllowed?: boolean;
   availableFrom: string;
   ownerName?: string;
   builderName?: string;
   companyName?: string;
+  publicContactPhone?: string;
   imageUrls?: string[];
   isVerified: boolean;
   primaryImage: string;
 }
 
-type SortKey = 'recommended' | 'rent_low' | 'rent_high' | 'newest' | 'verified';
+type SortKey = 'relevance' | 'rent_low' | 'rent_high' | 'newest' | 'immediate';
 type ViewMode = 'list' | 'map';
 type GeoPoint = { latitude: number; longitude: number };
+type AvailabilityFilter = 'Any' | 'Immediate' | 'FromDate';
+type BHKFilter = 'Any' | '1' | '2' | '3' | '4+';
+type ParkingFilter = 'Any' | 'Yes' | 'No';
+type PetsFilter = 'Any' | 'Yes' | 'No';
 
 type FiltersState = {
   state: string;
@@ -71,36 +99,42 @@ type FiltersState = {
   maxRent: number;
   minDeposit: number;
   maxDeposit: number;
+  bhk: BHKFilter;
   availableFrom: string;
-  availability: 'Any' | 'Immediate' | 'Future';
+  availability: AvailabilityFilter;
   tenantPreference: string;
   furnishing: string;
+  parking: ParkingFilter;
+  petsAllowed: PetsFilter;
   verifiedOnly: boolean;
   photosOnly: boolean;
   sort: SortKey;
 };
 
 const RENT_API_MAX_LIMIT = 60;
+const RECENT_RENT_LOCATIONS_KEY = 'zdt_recent_rent_locations';
 
 const defaultFilters = (): FiltersState => {
-  const location = readIndiaLocationSelection();
   return {
-    state: location?.state || '',
-    district: location?.district || '',
-    city: location?.place || '',
-    locality: location?.subdistrict || '',
+    state: '',
+    district: '',
+    city: '',
+    locality: '',
     propertyType: 'Any',
     minRent: 4000,
-    maxRent: 120000,
+    maxRent: 150000,
     minDeposit: 0,
-    maxDeposit: 400000,
+    maxDeposit: 500000,
+    bhk: 'Any',
     availableFrom: '',
     availability: 'Any',
     tenantPreference: 'Any',
     furnishing: 'Any',
+    parking: 'Any',
+    petsAllowed: 'Any',
     verifiedOnly: false,
     photosOnly: false,
-    sort: 'recommended',
+    sort: 'relevance',
   };
 };
 
@@ -141,11 +175,110 @@ function formatCoordinateValue(value: number): string {
   return value.toFixed(6);
 }
 
+function readRecentLocations(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_RENT_LOCATIONS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string').slice(0, 5) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentLocation(label: string): string[] {
+  const normalizedLabel = String(label || '').trim();
+  if (!normalizedLabel || typeof window === 'undefined') return readRecentLocations();
+  const next = [normalizedLabel, ...readRecentLocations().filter((entry) => entry !== normalizedLabel)].slice(0, 5);
+  window.localStorage.setItem(RECENT_RENT_LOCATIONS_KEY, JSON.stringify(next));
+  return next;
+}
+
+function parseDateOrNull(value: string): Date | null {
+  const date = new Date(String(value || ''));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isImmediateAvailability(value: string): boolean {
+  const date = parseDateOrNull(value);
+  if (!date) return true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return date <= today;
+}
+
+function getAvailabilitySortValue(value: string): number {
+  const date = parseDateOrNull(value);
+  if (!date) return Number.MIN_SAFE_INTEGER;
+  return Number(date);
+}
+
+function matchesPropertyType(rental: RentalListing, selected: string): boolean {
+  if (selected === 'Any') return true;
+  const typeText = normalize(rental.propertyType || '');
+  if (selected === 'Apartment') return typeText.includes('apartment') || typeText.includes('flat');
+  if (selected === 'Independent House') return typeText.includes('independent') || typeText.includes('house') || typeText.includes('villa');
+  if (selected === 'PG') return typeText.includes('pg') || typeText.includes('room');
+  if (selected === 'Commercial') return typeText.includes('commercial') || typeText.includes('shop') || typeText.includes('office');
+  return true;
+}
+
+function matchesBhk(rental: RentalListing, selected: BHKFilter): boolean {
+  if (selected === 'Any') return true;
+  if (rental.bhk === null || rental.bhk === undefined) return true;
+  if (selected === '4+') return rental.bhk >= 4;
+  return rental.bhk === Number(selected);
+}
+
+function matchesTenantPreference(rental: RentalListing, selected: string): boolean {
+  if (selected === 'Any') return true;
+  const preferenceText = normalize(rental.tenantPreference || rental.preferredTenant || '');
+  if (!preferenceText) return true;
+  if (selected === 'Anyone') return preferenceText.includes('any') || preferenceText.includes('both');
+  return preferenceText.includes(normalize(selected));
+}
+
+function matchesParking(rental: RentalListing, selected: ParkingFilter): boolean {
+  if (selected === 'Any') return true;
+  const parkingText = normalize(rental.parking || '');
+  if (!parkingText) return true;
+  if (selected === 'Yes') return parkingText.includes('yes') || parkingText.includes('available') || parkingText.includes('covered') || parkingText.includes('open');
+  return parkingText.includes('no') || parkingText.includes('none') || parkingText.includes('na');
+}
+
+function matchesPets(rental: RentalListing, selected: PetsFilter): boolean {
+  if (selected === 'Any') return true;
+  if (typeof rental.petsAllowed !== 'boolean') return true;
+  return selected === 'Yes' ? rental.petsAllowed : !rental.petsAllowed;
+}
+
+function getLocationLabelFromFilters(criteria: FiltersState): string {
+  return [criteria.locality, criteria.city, criteria.district, criteria.state]
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function parseRecentLocationLabel(label: string): Partial<FiltersState> {
+  const parts = String(label || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return {};
+  return {
+    locality: parts[0] || '',
+    city: parts[1] || '',
+    district: parts[2] || '',
+    state: parts[3] || '',
+  };
+}
+
 export default function RentMarketplacePage({
   onOpenDetails,
   onOpenSaved,
   onOpenMessages,
   onOpenListProperty,
+  onOpenDashboard,
+  onOpenOwnerDashboard,
   onOpenCompare,
   onOpenSavedSearches,
   initialViewMode = 'list',
@@ -159,6 +292,8 @@ export default function RentMarketplacePage({
   const [total, setTotal] = useState(0);
   const [compareCount, setCompareCount] = useState(() => readComparedListings().length);
   const [page, setPage] = useState(1);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [recentLocations, setRecentLocations] = useState<string[]>(() => readRecentLocations());
   const [manualMapFocusPoint, setManualMapFocusPoint] = useState<GeoPoint | null>(null);
   const [manualMapFocusLabel, setManualMapFocusLabel] = useState('');
   const [mapSearchQuery, setMapSearchQuery] = useState('');
@@ -179,12 +314,35 @@ export default function RentMarketplacePage({
   }, [viewMode]);
 
   useEffect(() => {
+    const cityLabel = applied.city.trim();
+    const titlePrefix = cityLabel ? `Rent Property in ${cityLabel}` : 'Rent Property';
+    const description = cityLabel
+      ? `Browse verified rental listings in ${cityLabel} with filters for budget, availability, furnishing, and tenant preference.`
+      : 'Browse verified rental listings with filters for budget, availability, furnishing, and tenant preference.';
+
+    applySeo({
+      title: `${titlePrefix} | ZDT Realty`,
+      description,
+      canonicalPath: '/rent',
+      type: 'website',
+    });
+  }, [applied.city]);
+
+  useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
+    const apiSort =
+      applied.sort === 'relevance'
+        ? 'recommended'
+        : applied.sort === 'immediate'
+          ? 'newest'
+          : applied.sort;
     params.set('limit', String(RENT_API_MAX_LIMIT));
-    params.set('sort', applied.sort);
+    params.set('sort', apiSort);
+    if (applied.state.trim()) params.set('state', applied.state.trim());
+    if (applied.district.trim()) params.set('district', applied.district.trim());
     if (applied.city.trim()) params.set('city', applied.city.trim());
     if (applied.locality.trim()) params.set('locality', applied.locality.trim());
     params.set('minRent', String(applied.minRent));
@@ -220,44 +378,69 @@ export default function RentMarketplacePage({
       const hasPhotos =
         Boolean(String(rental.primaryImage || '').trim()) ||
         (Array.isArray(rental.imageUrls) && rental.imageUrls.length > 0);
-      const availableDate = new Date(String(rental.availableFrom || ''));
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const isImmediate = Number.isNaN(availableDate.getTime()) || availableDate <= today;
-
+      const selectedDate = parseDateOrNull(applied.availableFrom);
+      const rentalDate = parseDateOrNull(rental.availableFrom);
+      const availableByDate = !selectedDate || !rentalDate || rentalDate <= selectedDate;
       const matchesAvailability =
-        filters.availability === 'Any' ? true : filters.availability === 'Immediate' ? isImmediate : !isImmediate;
+        applied.availability === 'Any'
+          ? true
+          : applied.availability === 'Immediate'
+            ? isImmediateAvailability(rental.availableFrom)
+            : availableByDate;
 
-      const minRentOk = !rental.monthlyRent || rental.monthlyRent >= filters.minRent;
-      const maxRentOk = !rental.monthlyRent || rental.monthlyRent <= filters.maxRent;
-      const minDepOk = !rental.securityDeposit || rental.securityDeposit >= filters.minDeposit;
-      const maxDepOk = !rental.securityDeposit || rental.securityDeposit <= filters.maxDeposit;
+      const minRentOk = !rental.monthlyRent || rental.monthlyRent >= applied.minRent;
+      const maxRentOk = !rental.monthlyRent || rental.monthlyRent <= applied.maxRent;
+      const minDepOk = !rental.securityDeposit || rental.securityDeposit >= applied.minDeposit;
+      const maxDepOk = !rental.securityDeposit || rental.securityDeposit <= applied.maxDeposit;
 
       return (
-        (!filters.state || stateText.includes(normalize(filters.state))) &&
-        (!filters.district || districtText.includes(normalize(filters.district))) &&
-        (!filters.city || cityText.includes(normalize(filters.city))) &&
-        (!filters.locality || localityText.includes(normalize(filters.locality))) &&
-        (filters.propertyType === 'Any' || normalize(rental.propertyType || '').includes(normalize(filters.propertyType.split(' ')[0]))) &&
-        (filters.tenantPreference === 'Any' || normalize(rental.tenantPreference || '').includes(normalize(filters.tenantPreference))) &&
-        (filters.furnishing === 'Any' || normalize(rental.furnishedStatus).includes(normalize(filters.furnishing.split(' ')[0]))) &&
-        (!filters.availableFrom || !rental.availableFrom || new Date(rental.availableFrom) <= new Date(filters.availableFrom)) &&
+        (!applied.state || stateText.includes(normalize(applied.state))) &&
+        (!applied.district || districtText.includes(normalize(applied.district))) &&
+        (!applied.city || cityText.includes(normalize(applied.city))) &&
+        (!applied.locality || localityText.includes(normalize(applied.locality))) &&
+        matchesPropertyType(rental, applied.propertyType) &&
+        matchesBhk(rental, applied.bhk) &&
+        matchesTenantPreference(rental, applied.tenantPreference) &&
+        (applied.furnishing === 'Any' || normalize(rental.furnishedStatus).includes(normalize(applied.furnishing.split(' ')[0]))) &&
         matchesAvailability &&
         minRentOk &&
         maxRentOk &&
         minDepOk &&
         maxDepOk &&
-        (!filters.verifiedOnly || rental.isVerified) &&
-        (!filters.photosOnly || hasPhotos)
+        matchesParking(rental, applied.parking) &&
+        matchesPets(rental, applied.petsAllowed) &&
+        (!applied.verifiedOnly || rental.isVerified) &&
+        (!applied.photosOnly || hasPhotos)
       );
     });
 
-    if (filters.sort === 'rent_low') return [...list].sort((a, b) => Number(a.monthlyRent || 0) - Number(b.monthlyRent || 0));
-    if (filters.sort === 'rent_high') return [...list].sort((a, b) => Number(b.monthlyRent || 0) - Number(a.monthlyRent || 0));
-    if (filters.sort === 'verified') return [...list].sort((a, b) => Number(Boolean(b.isVerified)) - Number(Boolean(a.isVerified)));
-    if (filters.sort === 'newest') return [...list].sort((a, b) => Number(b.id) - Number(a.id));
-    return list;
-  }, [filters, rentals]);
+    const focusTokens = [applied.locality, applied.city, applied.district, applied.state]
+      .map((entry) => normalize(entry))
+      .filter(Boolean);
+    const scoreRental = (rental: RentalListing) => {
+      const haystack = normalize(
+        [rental.locality, rental.area, rental.city, rental.state].filter(Boolean).join(' ')
+      );
+      return focusTokens.reduce((score, token) => (haystack.includes(token) ? score + 1 : score), 0);
+    };
+
+    if (applied.sort === 'rent_low') return [...list].sort((a, b) => Number(a.monthlyRent || 0) - Number(b.monthlyRent || 0));
+    if (applied.sort === 'rent_high') return [...list].sort((a, b) => Number(b.monthlyRent || 0) - Number(a.monthlyRent || 0));
+    if (applied.sort === 'newest') return [...list].sort((a, b) => Number(b.id) - Number(a.id));
+    if (applied.sort === 'immediate') {
+      return [...list].sort((a, b) => {
+        const immediateDiff = Number(isImmediateAvailability(b.availableFrom)) - Number(isImmediateAvailability(a.availableFrom));
+        if (immediateDiff !== 0) return immediateDiff;
+        return getAvailabilitySortValue(a.availableFrom) - getAvailabilitySortValue(b.availableFrom);
+      });
+    }
+    if (focusTokens.length === 0) return list;
+    return [...list].sort((a, b) => {
+      const scoreDiff = scoreRental(b) - scoreRental(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return Number(b.id) - Number(a.id);
+    });
+  }, [applied, rentals]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(filtered.length / pageSize)),
@@ -273,11 +456,11 @@ export default function RentMarketplacePage({
   const showingTo = Math.min(filtered.length, page * pageSize);
 
   const defaultMapFocusLabel = useMemo(() => {
-    const parts = [filters.locality, filters.city, filters.district, filters.state]
+    const parts = [applied.locality, applied.city, applied.district, applied.state]
       .map((entry) => String(entry || '').trim())
       .filter(Boolean);
     return parts.join(', ') || 'India';
-  }, [filters.locality, filters.city, filters.district, filters.state]);
+  }, [applied.locality, applied.city, applied.district, applied.state]);
 
   const mapFocusLabel = useMemo(() => {
     if (manualMapFocusPoint) {
@@ -294,7 +477,7 @@ export default function RentMarketplacePage({
   );
 
   const nearbyRentals = useMemo(() => {
-    const focusTokens = [filters.locality, filters.city, filters.district, filters.state]
+    const focusTokens = [applied.locality, applied.city, applied.district, applied.state]
       .map((entry) => normalize(entry))
       .filter(Boolean);
 
@@ -312,18 +495,47 @@ export default function RentMarketplacePage({
       if (scoreDiff !== 0) return scoreDiff;
       return Number(b.id) - Number(a.id);
     });
-  }, [filters.locality, filters.city, filters.district, filters.state, filtered]);
+  }, [applied.locality, applied.city, applied.district, applied.state, filtered]);
 
-  const applyFilters = () => {
+  const nearbyAreaSuggestions = useMemo(() => {
+    const preferredCity = normalize(filters.city || applied.city);
+    const counts = new Map<string, number>();
+    rentals.forEach((rental) => {
+      if (preferredCity && normalize(rental.city) !== preferredCity) return;
+      const localityName = String(rental.locality || rental.area || '').trim();
+      if (!localityName) return;
+      counts.set(localityName, (counts.get(localityName) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name)
+      .filter((name) => normalize(name) !== normalize(filters.locality))
+      .slice(0, 6);
+  }, [applied.city, filters.city, filters.locality, rentals]);
+
+  const applyFilters = (closeMobile = false) => {
     if (filters.minRent > filters.maxRent) return toast.error('Minimum rent cannot be greater than maximum rent.');
     if (filters.minDeposit > filters.maxDeposit) return toast.error('Minimum deposit cannot be greater than maximum deposit.');
     setApplied(filters);
+    setPage(1);
+    if (closeMobile) setMobileFiltersOpen(false);
+
+    const locationLabel = getLocationLabelFromFilters(filters);
+    if (locationLabel) setRecentLocations(saveRecentLocation(locationLabel));
+
     void trackFeatureUsage({
       featureKey: 'rent_filters_applied',
       context: 'rent_marketplace',
       view: viewMode === 'map' ? 'rent-map' : 'rent',
       detail: `city=${filters.city || '-'};locality=${filters.locality || '-'};type=${filters.propertyType};sort=${filters.sort}`,
     });
+  };
+
+  const resetFilters = () => {
+    const reset = defaultFilters();
+    setFilters(reset);
+    setApplied(reset);
+    setPage(1);
   };
 
   const handleUseCurrentLocation = () => {
@@ -394,7 +606,7 @@ export default function RentMarketplacePage({
 
   useEffect(() => {
     setPage(1);
-  }, [filters, viewMode]);
+  }, [applied, viewMode]);
 
   useEffect(() => {
     if (page <= totalPages) return;
@@ -417,30 +629,71 @@ export default function RentMarketplacePage({
   }, []);
 
   const activeFilterChips = useMemo(() => {
-    const chips: Array<{ key: string; label: string }> = [];
-    if (filters.state.trim()) chips.push({ key: 'state', label: `State: ${filters.state.trim()}` });
-    if (filters.district.trim()) chips.push({ key: 'district', label: `District: ${filters.district.trim()}` });
-    if (filters.city.trim()) chips.push({ key: 'city', label: `City: ${filters.city.trim()}` });
-    if (filters.locality.trim()) chips.push({ key: 'locality', label: `Locality: ${filters.locality.trim()}` });
-    if (filters.propertyType !== 'Any') chips.push({ key: 'propertyType', label: filters.propertyType });
-    if (filters.availability !== 'Any') chips.push({ key: 'availability', label: filters.availability });
-    if (filters.tenantPreference !== 'Any') chips.push({ key: 'tenantPreference', label: filters.tenantPreference });
-    if (filters.furnishing !== 'Any') chips.push({ key: 'furnishing', label: filters.furnishing });
-    if (filters.verifiedOnly) chips.push({ key: 'verifiedOnly', label: 'Verified Only' });
-    if (filters.photosOnly) chips.push({ key: 'photosOnly', label: 'Photos Only' });
-    return chips;
-  }, [filters]);
+    const chips: Array<{ key: keyof FiltersState | 'rentBand' | 'depositBand'; label: string }> = [];
+    if (applied.state.trim()) chips.push({ key: 'state', label: `State: ${applied.state.trim()}` });
+    if (applied.district.trim()) chips.push({ key: 'district', label: `District: ${applied.district.trim()}` });
+    if (applied.city.trim()) chips.push({ key: 'city', label: `City: ${applied.city.trim()}` });
+    if (applied.locality.trim()) chips.push({ key: 'locality', label: `Locality: ${applied.locality.trim()}` });
+    if (applied.propertyType !== 'Any') chips.push({ key: 'propertyType', label: applied.propertyType });
+    if (applied.bhk !== 'Any') chips.push({ key: 'bhk', label: `${applied.bhk} BHK` });
+    if (applied.availability !== 'Any') chips.push({ key: 'availability', label: `Availability: ${applied.availability}` });
+    if (applied.tenantPreference !== 'Any') chips.push({ key: 'tenantPreference', label: `Tenant: ${applied.tenantPreference}` });
+    if (applied.furnishing !== 'Any') chips.push({ key: 'furnishing', label: applied.furnishing });
+    if (applied.parking !== 'Any') chips.push({ key: 'parking', label: `Parking: ${applied.parking}` });
+    if (applied.petsAllowed !== 'Any') chips.push({ key: 'petsAllowed', label: `Pets: ${applied.petsAllowed}` });
+    if (applied.verifiedOnly) chips.push({ key: 'verifiedOnly', label: 'Owner Verified' });
+    if (applied.photosOnly) chips.push({ key: 'photosOnly', label: 'Photos only' });
 
-  const removeFilterChip = (key: string) => {
-    setFilters((prev) => {
+    const reset = defaultFilters();
+    if (applied.minRent !== reset.minRent || applied.maxRent !== reset.maxRent) {
+      chips.push({
+        key: 'rentBand',
+        label: `Rent: INR ${applied.minRent.toLocaleString('en-IN')} - INR ${applied.maxRent.toLocaleString('en-IN')}`,
+      });
+    }
+    if (applied.minDeposit !== reset.minDeposit || applied.maxDeposit !== reset.maxDeposit) {
+      chips.push({
+        key: 'depositBand',
+        label: `Deposit: INR ${applied.minDeposit.toLocaleString('en-IN')} - INR ${applied.maxDeposit.toLocaleString('en-IN')}`,
+      });
+    }
+    return chips;
+  }, [applied]);
+
+  const removeFilterChip = (key: keyof FiltersState | 'rentBand' | 'depositBand') => {
+    const reset = defaultFilters();
+    setApplied((prev) => {
+      if (key === 'rentBand') return { ...prev, minRent: reset.minRent, maxRent: reset.maxRent };
+      if (key === 'depositBand') return { ...prev, minDeposit: reset.minDeposit, maxDeposit: reset.maxDeposit };
       if (key === 'state') return { ...prev, state: '' };
       if (key === 'district') return { ...prev, district: '' };
       if (key === 'city') return { ...prev, city: '' };
       if (key === 'locality') return { ...prev, locality: '' };
       if (key === 'propertyType') return { ...prev, propertyType: 'Any' };
-      if (key === 'availability') return { ...prev, availability: 'Any' };
+      if (key === 'bhk') return { ...prev, bhk: 'Any' };
+      if (key === 'availability') return { ...prev, availability: 'Any', availableFrom: '' };
       if (key === 'tenantPreference') return { ...prev, tenantPreference: 'Any' };
       if (key === 'furnishing') return { ...prev, furnishing: 'Any' };
+      if (key === 'parking') return { ...prev, parking: 'Any' };
+      if (key === 'petsAllowed') return { ...prev, petsAllowed: 'Any' };
+      if (key === 'verifiedOnly') return { ...prev, verifiedOnly: false };
+      if (key === 'photosOnly') return { ...prev, photosOnly: false };
+      return prev;
+    });
+    setFilters((prev) => {
+      if (key === 'rentBand') return { ...prev, minRent: reset.minRent, maxRent: reset.maxRent };
+      if (key === 'depositBand') return { ...prev, minDeposit: reset.minDeposit, maxDeposit: reset.maxDeposit };
+      if (key === 'state') return { ...prev, state: '' };
+      if (key === 'district') return { ...prev, district: '' };
+      if (key === 'city') return { ...prev, city: '' };
+      if (key === 'locality') return { ...prev, locality: '' };
+      if (key === 'propertyType') return { ...prev, propertyType: 'Any' };
+      if (key === 'bhk') return { ...prev, bhk: 'Any' };
+      if (key === 'availability') return { ...prev, availability: 'Any', availableFrom: '' };
+      if (key === 'tenantPreference') return { ...prev, tenantPreference: 'Any' };
+      if (key === 'furnishing') return { ...prev, furnishing: 'Any' };
+      if (key === 'parking') return { ...prev, parking: 'Any' };
+      if (key === 'petsAllowed') return { ...prev, petsAllowed: 'Any' };
       if (key === 'verifiedOnly') return { ...prev, verifiedOnly: false };
       if (key === 'photosOnly') return { ...prev, photosOnly: false };
       return prev;
@@ -448,12 +701,12 @@ export default function RentMarketplacePage({
   };
 
   const handleSaveSearch = () => {
-    const primaryLocation = filters.locality || filters.city || filters.district || filters.state || 'All India';
-    const label = `Rent | ${primaryLocation} | ${filters.propertyType === 'Any' ? 'All types' : filters.propertyType}`;
+    const primaryLocation = applied.locality || applied.city || applied.district || applied.state || 'All India';
+    const label = `Rent | ${primaryLocation} | ${applied.propertyType === 'Any' ? 'All types' : applied.propertyType}`;
     addSavedSearch({
       label,
       targetView: 'rent',
-      criteria: filters,
+      criteria: applied,
     });
     void trackFeatureUsage({
       featureKey: 'saved_search_applied',
@@ -464,38 +717,55 @@ export default function RentMarketplacePage({
     toast.success('Search saved. You can reopen it from Saved Searches.');
   };
 
+  const handleUseRecentLocation = (label: string) => {
+    const nextLocation = parseRecentLocationLabel(label);
+    setFilters((prev) => ({ ...prev, ...nextLocation }));
+  };
+
   return (
-    <section className="pb-16 pt-28 text-slate-900">
-      <div className="page-container space-y-6">
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-6 text-white">
+    <section className="portal-mobile-page pb-16 pt-28 text-slate-900">
+      <div className="page-container portal-mobile-stack space-y-6">
+        <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-gradient-to-r from-sky-900 via-blue-800 to-sky-700 px-6 py-8 text-white">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h1 className="text-3xl font-semibold">Rent Property</h1>
-                <p className="mt-2 text-sm text-slate-200">Find verified rental properties with clear terms and genuine owners.</p>
+              <div className="max-w-3xl">
+                <h1 className="text-3xl font-semibold">Find Verified Rental Homes You Can Trust</h1>
+                <p className="mt-2 text-sm text-sky-100">Browse genuine rental properties from verified owners and builders. No confusion. No fake listings.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-xl border border-white/20 bg-white/10 p-1 text-sm">
-                  <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'list' ? 'bg-white text-slate-900' : 'text-slate-200'}`}>List</button>
-                  <button type="button" onClick={() => setViewMode('map')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'map' ? 'bg-white text-slate-900' : 'text-slate-200'}`}>Map</button>
-                </div>
-                <Button variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={onOpenSaved}>
-                  <Heart className="mr-2 h-4 w-4" />
-                  Saved
+                <Button className="bg-white text-slate-900 hover:bg-slate-100" onClick={() => { setViewMode('list'); applyFilters(); }}>
+                  Browse Rentals
                 </Button>
-                <Button
-                  variant="outline"
-                  className="border-white/30 bg-white/10 text-white hover:bg-white/20"
-                  onClick={onOpenCompare}
-                >
-                  <GitCompareArrows className="mr-2 h-4 w-4" />
-                  Compare ({compareCount})
+                <Button variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20" onClick={onOpenListProperty}>
+                  List Property for Rent
                 </Button>
               </div>
             </div>
+            <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+              <span className="inline-flex items-center gap-1 rounded-full border border-white/25 bg-white/10 px-3 py-1">
+                <BadgeCheck className="h-3.5 w-3.5 text-emerald-200" />
+                Owner Verified
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-white/25 bg-white/10 px-3 py-1">
+                <UserCheck className="h-3.5 w-3.5 text-emerald-200" />
+                Genuine Tenant Leads
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-white/25 bg-white/10 px-3 py-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-200" />
+                Transparent Rental Process
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20" onClick={onOpenDashboard} disabled={!onOpenDashboard}>
+                Tenant Dashboard
+              </Button>
+              <Button size="sm" variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20" onClick={onOpenOwnerDashboard} disabled={!onOpenOwnerDashboard}>
+                Owner Dashboard
+              </Button>
+            </div>
           </div>
 
-          <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-4">
             <LgdLocationInput
               value={filters.state}
               onChange={(value) => setFilters((p) => ({ ...p, state: value }))}
@@ -512,61 +782,98 @@ export default function RentMarketplacePage({
               suggestKind="india"
               indiaValueField="district"
             />
-            <LgdLocationInput value={filters.city} onChange={(value) => setFilters((p) => ({ ...p, city: value }))} placeholder="City / Town" className="h-11" suggestKind="india" indiaValueField="village" />
-            <LgdLocationInput value={filters.locality} onChange={(value) => setFilters((p) => ({ ...p, locality: value }))} placeholder="Area / Locality" className="h-11" suggestKind="india" indiaValueField="subdistrict" />
+            <LgdLocationInput value={filters.city} onChange={(value) => setFilters((p) => ({ ...p, city: value }))} placeholder="City" className="h-11" suggestKind="india" indiaValueField="village" />
+            <LgdLocationInput value={filters.locality} onChange={(value) => setFilters((p) => ({ ...p, locality: value }))} placeholder="Nearby Area / Locality" className="h-11" suggestKind="india" indiaValueField="subdistrict" />
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly Rent: INR {filters.minRent.toLocaleString('en-IN')} - INR {filters.maxRent.toLocaleString('en-IN')}</p>
+              <Slider className="mt-2" min={3000} max={300000} step={500} value={[filters.minRent, filters.maxRent]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minRent: min, maxRent: max }))} />
+            </div>
             <Select value={filters.propertyType} onValueChange={(value) => setFilters((p) => ({ ...p, propertyType: value }))}>
               <SelectTrigger className="h-11"><SelectValue placeholder="Property Type" /></SelectTrigger>
               <SelectContent>
-                {['Any', 'Apartment / Flat', 'Independent House', 'Room / PG', 'Commercial Shop', 'Office Space'].map((v) => (
+                {['Any', 'Apartment', 'Independent House', 'PG', 'Commercial'].map((v) => (
                   <SelectItem key={v} value={v}>
                     {optionLabel(v, 'All property types')}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Monthly Rent: INR {filters.minRent.toLocaleString('en-IN')} - INR {filters.maxRent.toLocaleString('en-IN')}</p>
-              <Slider className="mt-2" min={3000} max={300000} step={500} value={[filters.minRent, filters.maxRent]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minRent: min, maxRent: max }))} />
-            </div>
-            <LgdLocationAccuracyNote className="sm:col-span-2 xl:col-span-3" />
-            <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-3">
-              <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={applyFilters}>Find Rental Property</Button>
+            <Select value={filters.sort} onValueChange={(value: SortKey) => setFilters((p) => ({ ...p, sort: value }))}>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="relevance">Relevance</SelectItem>
+                <SelectItem value="rent_low">Rent: Low to High</SelectItem>
+                <SelectItem value="rent_high">Rent: High to Low</SelectItem>
+                <SelectItem value="newest">Newest Listings</SelectItem>
+                <SelectItem value="immediate">Immediate Availability</SelectItem>
+              </SelectContent>
+            </Select>
+            <LgdLocationAccuracyNote className="sm:col-span-2 xl:col-span-4" />
+
+            {nearbyAreaSuggestions.length > 0 && (
+              <div className="sm:col-span-2 xl:col-span-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Nearby Areas</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {nearbyAreaSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => setFilters((p) => ({ ...p, locality: suggestion }))}
+                      className="portal-mobile-chip rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {recentLocations.length > 0 && (
+              <div className="sm:col-span-2 xl:col-span-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recent Searches</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {recentLocations.map((entry) => (
+                    <button
+                      key={entry}
+                      type="button"
+                      onClick={() => handleUseRecentLocation(entry)}
+                      className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700 transition hover:border-slate-300 hover:bg-white"
+                    >
+                      {entry}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-4">
+              <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={() => { setViewMode('list'); applyFilters(); }}>Browse Rentals</Button>
               <Button variant="outline" className="border-slate-300" onClick={onOpenListProperty}>List Property for Rent</Button>
             </div>
           </div>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm xl:sticky xl:top-24 xl:self-start">
-          <h2 className="text-xl font-semibold text-slate-900">Smart Filters</h2>
+        <div className="hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm xl:sticky xl:top-24 xl:block xl:self-start">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-900">Smart Filters</h2>
+            <SlidersHorizontal className="h-4 w-4 text-slate-500" />
+          </div>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Security Deposit: INR {filters.minDeposit.toLocaleString('en-IN')} - INR {filters.maxDeposit.toLocaleString('en-IN')}</p>
               <Slider className="mt-2" min={0} max={1000000} step={1000} value={[filters.minDeposit, filters.maxDeposit]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minDeposit: min, maxDeposit: max }))} />
             </div>
             <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Available From</p>
-              <Input type="date" value={filters.availableFrom} onChange={(e) => setFilters((p) => ({ ...p, availableFrom: e.target.value }))} className="h-10" />
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Availability</p>
-              <Select value={filters.availability} onValueChange={(value: FiltersState['availability']) => setFilters((p) => ({ ...p, availability: value }))}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Availability" /></SelectTrigger>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">BHK</p>
+              <Select value={filters.bhk} onValueChange={(value: BHKFilter) => setFilters((p) => ({ ...p, bhk: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="BHK" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Any">Any timeline</SelectItem>
-                  <SelectItem value="Immediate">Immediate</SelectItem>
-                  <SelectItem value="Future">Future</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Tenant Preference</p>
-              <Select value={filters.tenantPreference} onValueChange={(value) => setFilters((p) => ({ ...p, tenantPreference: value }))}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Tenant Preference" /></SelectTrigger>
-                <SelectContent>
-                  {['Any', 'Family', 'Bachelor', 'Company Lease'].map((v) => (
-                    <SelectItem key={v} value={v}>{optionLabel(v, 'Any tenant')}</SelectItem>
-                  ))}
+                  <SelectItem value="Any">Any</SelectItem>
+                  <SelectItem value="1">1 BHK</SelectItem>
+                  <SelectItem value="2">2 BHK</SelectItem>
+                  <SelectItem value="3">3 BHK</SelectItem>
+                  <SelectItem value="4+">4+ BHK</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -575,33 +882,68 @@ export default function RentMarketplacePage({
               <Select value={filters.furnishing} onValueChange={(value) => setFilters((p) => ({ ...p, furnishing: value }))}>
                 <SelectTrigger className="h-10"><SelectValue placeholder="Furnishing" /></SelectTrigger>
                 <SelectContent>
-                  {['Any', 'Fully Furnished', 'Semi Furnished', 'Unfurnished'].map((v) => (
+                  {['Any', 'Unfurnished', 'Semi Furnished', 'Fully Furnished'].map((v) => (
                     <SelectItem key={v} value={v}>{optionLabel(v, 'Any furnishing')}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sort</p>
-              <Select value={filters.sort} onValueChange={(value: SortKey) => setFilters((p) => ({ ...p, sort: value }))}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Preferred Tenant</p>
+              <Select value={filters.tenantPreference} onValueChange={(value) => setFilters((p) => ({ ...p, tenantPreference: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Preferred Tenant" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="recommended">Recommended</SelectItem>
-                  <SelectItem value="rent_low">Rent low to high</SelectItem>
-                  <SelectItem value="rent_high">Rent high to low</SelectItem>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="verified">Verified first</SelectItem>
+                  {['Any', 'Family', 'Bachelor', 'Anyone'].map((v) => (
+                    <SelectItem key={v} value={v}>{optionLabel(v, 'Any tenant')}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Parking</p>
+              <Select value={filters.parking} onValueChange={(value: ParkingFilter) => setFilters((p) => ({ ...p, parking: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Parking" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Any">Any</SelectItem>
+                  <SelectItem value="Yes">Available</SelectItem>
+                  <SelectItem value="No">Not required</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Pets Allowed</p>
+              <Select value={filters.petsAllowed} onValueChange={(value: PetsFilter) => setFilters((p) => ({ ...p, petsAllowed: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Pets Allowed" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Any">Any</SelectItem>
+                  <SelectItem value="Yes">Yes</SelectItem>
+                  <SelectItem value="No">No</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Availability</p>
+              <Select value={filters.availability} onValueChange={(value: FiltersState['availability']) => setFilters((p) => ({ ...p, availability: value }))}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Availability" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Any">Any</SelectItem>
+                  <SelectItem value="Immediate">Immediate</SelectItem>
+                  <SelectItem value="FromDate">From date</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Available From</p>
+              <Input type="date" value={filters.availableFrom} onChange={(e) => setFilters((p) => ({ ...p, availableFrom: e.target.value }))} className="h-10" />
+            </div>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">Verified Owner / Builder<Checkbox checked={filters.verifiedOnly} onCheckedChange={(v) => setFilters((p) => ({ ...p, verifiedOnly: Boolean(v) }))} /></label>
+            <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">Owner Verified<Checkbox checked={filters.verifiedOnly} onCheckedChange={(v) => setFilters((p) => ({ ...p, verifiedOnly: Boolean(v) }))} /></label>
             <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm">Photos available<Checkbox checked={filters.photosOnly} onCheckedChange={(v) => setFilters((p) => ({ ...p, photosOnly: Boolean(v) }))} /></label>
           </div>
-          <div className="mt-4 flex gap-2">
-            <Button variant="outline" onClick={() => { const reset = defaultFilters(); setFilters(reset); setApplied(reset); }}>Reset</Button>
-            <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={applyFilters}>Apply Filters</Button>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" onClick={resetFilters}>Reset</Button>
+            <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={() => applyFilters()}>Apply Filters</Button>
           </div>
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Quick Actions</p>
@@ -619,9 +961,15 @@ export default function RentMarketplacePage({
                 <Heart className="mr-2 h-4 w-4" />
                 Saved Rentals
               </Button>
-              <Button variant="outline" onClick={onOpenCompare}>
+              <Button variant="outline" onClick={onOpenCompare} disabled={!onOpenCompare}>
                 <GitCompareArrows className="mr-2 h-4 w-4" />
-                Open Compare ({compareCount})
+                Compare ({compareCount})
+              </Button>
+              <Button variant="outline" onClick={onOpenDashboard} disabled={!onOpenDashboard}>
+                Tenant Dashboard
+              </Button>
+              <Button variant="outline" onClick={onOpenOwnerDashboard} disabled={!onOpenOwnerDashboard}>
+                Owner Dashboard
               </Button>
             </div>
           </div>
@@ -638,9 +986,89 @@ export default function RentMarketplacePage({
               </p>
             )}
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-            Safe communication, no broker pressure
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+              <button type="button" onClick={() => setViewMode('list')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'list' ? 'bg-slate-900 text-white' : 'text-slate-700'}`}>List</button>
+              <button type="button" onClick={() => setViewMode('map')} className={`rounded-lg px-3 py-1.5 ${viewMode === 'map' ? 'bg-slate-900 text-white' : 'text-slate-700'}`}>Map</button>
+            </div>
+            <Drawer open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+              <DrawerTrigger asChild>
+                <Button variant="outline" className="xl:hidden">
+                  <Filter className="mr-2 h-4 w-4" />
+                  Filters & Sort
+                </Button>
+              </DrawerTrigger>
+              <DrawerContent className="max-h-[90vh]">
+                <DrawerHeader>
+                  <DrawerTitle>Filters & Sort</DrawerTitle>
+                </DrawerHeader>
+                <div className="space-y-4 overflow-y-auto px-4 pb-6">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Security Deposit: INR {filters.minDeposit.toLocaleString('en-IN')} - INR {filters.maxDeposit.toLocaleString('en-IN')}</p>
+                    <Slider className="mt-2" min={0} max={1000000} step={1000} value={[filters.minDeposit, filters.maxDeposit]} onValueChange={([min, max]) => setFilters((p) => ({ ...p, minDeposit: min, maxDeposit: max }))} />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">BHK</p>
+                      <Select value={filters.bhk} onValueChange={(value: BHKFilter) => setFilters((p) => ({ ...p, bhk: value }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="BHK" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Any">Any</SelectItem>
+                          <SelectItem value="1">1 BHK</SelectItem>
+                          <SelectItem value="2">2 BHK</SelectItem>
+                          <SelectItem value="3">3 BHK</SelectItem>
+                          <SelectItem value="4+">4+ BHK</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Parking</p>
+                      <Select value={filters.parking} onValueChange={(value: ParkingFilter) => setFilters((p) => ({ ...p, parking: value }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Parking" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Any">Any</SelectItem>
+                          <SelectItem value="Yes">Available</SelectItem>
+                          <SelectItem value="No">Not required</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Pets Allowed</p>
+                      <Select value={filters.petsAllowed} onValueChange={(value: PetsFilter) => setFilters((p) => ({ ...p, petsAllowed: value }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Pets Allowed" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Any">Any</SelectItem>
+                          <SelectItem value="Yes">Yes</SelectItem>
+                          <SelectItem value="No">No</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Availability</p>
+                      <Select value={filters.availability} onValueChange={(value: FiltersState['availability']) => setFilters((p) => ({ ...p, availability: value }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Availability" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Any">Any</SelectItem>
+                          <SelectItem value="Immediate">Immediate</SelectItem>
+                          <SelectItem value="FromDate">From date</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button variant="outline" onClick={resetFilters}>Reset</Button>
+                    <Button className="bg-slate-900 text-white hover:bg-slate-800" onClick={() => applyFilters(true)}>Apply Filters</Button>
+                  </div>
+                  <DrawerClose asChild>
+                    <Button variant="outline">Close</Button>
+                  </DrawerClose>
+                </div>
+              </DrawerContent>
+            </Drawer>
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+              Safe communication, no broker pressure
+            </div>
           </div>
         </div>
         {activeFilterChips.length > 0 && (
@@ -650,7 +1078,7 @@ export default function RentMarketplacePage({
                 key={chip.key}
                 type="button"
                 onClick={() => removeFilterChip(chip.key)}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300"
+                className="portal-mobile-chip rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-300"
               >
                 {chip.label} x
               </button>
@@ -658,9 +1086,9 @@ export default function RentMarketplacePage({
           </div>
         )}
 
-        {loading ? <PropertyCardsSkeleton /> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : viewMode === 'map' ? (
+        {loading ? <PropertyCardsSkeleton /> : error ? <div className="portal-mobile-card rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : viewMode === 'map' ? (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="inline-flex items-center gap-2">
                   <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-brand-gray2 bg-white">
@@ -715,21 +1143,21 @@ export default function RentMarketplacePage({
               />
             </div>
             <aside className="max-h-[520px] space-y-3 overflow-auto pr-1">
-              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                 <p className="text-sm font-semibold text-slate-900">Nearby Rentals</p>
                 <p className="mt-1 text-xs text-slate-500">Ranked by selected location filters.</p>
               </div>
               {nearbyRentals.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+                <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
                   No rentals match current filters. Clear filters to see rentals on map.
                 </div>
               ) : (
-                nearbyRentals.map((r) => <button key={`map-${r.id}`} type="button" onClick={() => onOpenDetails(String(r.id))} className="w-full rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300"><p className="truncate text-sm font-semibold text-slate-900">{r.title}</p><p className="text-xs text-slate-500">{r.locality || r.city}</p><p className="mt-1 text-sm font-semibold text-slate-900">{fmt(r.monthlyRent, '/mo')}</p></button>)
+                nearbyRentals.map((r) => <button key={`map-${r.id}`} type="button" onClick={() => onOpenDetails(String(r.id))} className="portal-mobile-card w-full rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300"><p className="truncate text-sm font-semibold text-slate-900">{r.title}</p><p className="text-xs text-slate-500">{r.locality || r.city}</p><p className="mt-1 text-sm font-semibold text-slate-900">{fmt(r.monthlyRent, '/mo')}</p></button>)
               )}
             </aside>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">No rentals match your selected filters.</div>
+          <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">No rentals match your selected filters.</div>
         ) : (
           <>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{pagedRentals.map((rental) => <RentalCard key={rental.id} rental={rental} onOpenDetails={onOpenDetails} onOpenMessages={onOpenMessages} onOpenCompare={onOpenCompare} />)}</div>
@@ -744,7 +1172,7 @@ export default function RentMarketplacePage({
                   <ChevronLeft className="mr-1 h-4 w-4" />
                   Prev
                 </Button>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                <span className="portal-mobile-chip rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
                   Page {page} / {totalPages}
                 </span>
                 <Button
@@ -763,7 +1191,93 @@ export default function RentMarketplacePage({
         </div>
         </div>
 
-        <p className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">ZDT Realty is an independent real estate platform focused on transparent and verified rental listings.</p>
+        <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xl font-semibold text-slate-900">Owner Listing Flow (For Rent)</h3>
+          <p className="mt-2 text-sm text-slate-600">A guided workflow helps owners and builders list quickly with clear data, privacy controls, and verification checkpoints.</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            {[
+              { step: 'Step 1', title: 'Property Basics', detail: 'Type, location, BHK, and furnishing details.' },
+              { step: 'Step 2', title: 'Rental Details', detail: 'Monthly rent, deposit, availability, and maintenance.' },
+              { step: 'Step 3', title: 'Tenant Preferences', detail: 'Family/Bachelor/Any, pets, and house rules.' },
+              { step: 'Step 4', title: 'Verification', detail: 'Ownership proof and basic ID checks.' },
+              { step: 'Step 5', title: 'Contact & Privacy', detail: 'Phone visibility and lead filtering controls.' },
+            ].map((item) => (
+              <div key={item.title} className="portal-mobile-card rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{item.step}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{item.title}</p>
+                <p className="mt-1 text-xs text-slate-600">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+          <Button className="mt-4 bg-slate-900 text-white hover:bg-slate-800" onClick={onOpenListProperty}>
+            Start Listing for Rent
+          </Button>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900">Lead Quality & Safety</h3>
+            <div className="mt-3 space-y-2 text-sm text-slate-700">
+              <p className="font-medium text-slate-900">For owners:</p>
+              <p>Tenant intent confirmation and limited contact reveal reduce spam and non-serious enquiries.</p>
+              <p>Suspicious users can be reported and blocked from further communication.</p>
+              <p className="pt-2 font-medium text-slate-900">For tenants:</p>
+              <p>Owner Verified badge, clear rent/deposit details, and reporting for fake listings.</p>
+              <p>No hidden charges are promoted through listing standards.</p>
+            </div>
+          </div>
+          <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900">Trust & Transparency</h3>
+            <div className="mt-3 space-y-2 text-sm text-slate-700">
+              <p><span className="font-medium text-slate-900">Owner Verified:</span> identity and ownership proof checks are completed for listed owner profiles.</p>
+              <p><span className="font-medium text-slate-900">Ownership Check - In Progress:</span> documents are submitted and under validation.</p>
+              <p><span className="font-medium text-slate-900">Fake listing controls:</span> suspicious listings are reviewed quickly and removed when required.</p>
+              <p><span className="font-medium text-slate-900">Platform role:</span> ZDT Realty is a platform, not a broker. Final rental transactions happen directly between owner and tenant.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-900">Dashboard Integration</h3>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Tenant Dashboard</p>
+              <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                <li>Saved rentals and shortlisted homes</li>
+                <li>Enquiries sent and response tracking</li>
+                <li>Visit status tracking (future)</li>
+                <li>Alerts for new matching listings</li>
+              </ul>
+              <Button variant="outline" className="mt-3" onClick={onOpenDashboard} disabled={!onOpenDashboard}>
+                Open Tenant Dashboard
+              </Button>
+            </div>
+            <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Owner Dashboard</p>
+              <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                <li>Active rental listings and edits</li>
+                <li>Enquiry management and quality checks</li>
+                <li>Edit or pause listing controls</li>
+                <li>Verification status and updates</li>
+              </ul>
+              <Button variant="outline" className="mt-3" onClick={onOpenOwnerDashboard} disabled={!onOpenOwnerDashboard}>
+                Open Owner Dashboard
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="portal-mobile-panel rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-900">Future-Ready Scalability</h3>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Rental agreements</span>
+            <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Online rent tracking</span>
+            <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Maintenance requests</span>
+            <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Tenant verification upgrades</span>
+          </div>
+        </div>
+
+        <p className="portal-mobile-card rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">ZDT Realty is an early-stage startup focused on verified rental listings and genuine connections.</p>
       </div>
     </section>
   );
@@ -780,6 +1294,9 @@ function RentalCard({ rental, onOpenDetails, onOpenMessages, onOpenCompare }: { 
       : new Date(rental.availableFrom).toLocaleDateString('en-IN')
     : 'Immediate';
   const area = rental.carpetArea || rental.builtupArea || 0;
+  const tenantTag = rental.tenantPreference || rental.preferredTenant || 'Anyone';
+  const parkingLabel = rental.parking || 'Parking details on request';
+  const petsLabel = typeof rental.petsAllowed === 'boolean' ? (rental.petsAllowed ? 'Pets allowed' : 'No pets') : 'Pets policy on request';
 
   useEffect(() => {
     const sync = () => setSaved(isSavedRental(referenceId));
@@ -856,11 +1373,23 @@ function RentalCard({ rental, onOpenDetails, onOpenMessages, onOpenCompare }: { 
     toast.success('Added to compare');
   };
 
+  const handleCallContact = () => {
+    const opened = openPhoneDialer(rental.publicContactPhone);
+    if (!opened) {
+      onOpenMessages(referenceId);
+      toast.info('Phone number unavailable. Opened in-app chat.');
+    }
+  };
+
   return (
-    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <article className="portal-mobile-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="relative">
         <img src={rental.primaryImage || '/images/property-1.jpg'} alt={rental.title} className="h-48 w-full object-cover" loading="lazy" />
-        {rental.isVerified && <Badge className="absolute left-3 top-3 bg-emerald-600 text-white hover:bg-emerald-600"><BadgeCheck className="mr-1 h-3.5 w-3.5" />Verified</Badge>}
+        {rental.isVerified ? (
+          <Badge className="absolute left-3 top-3 bg-emerald-600 text-white hover:bg-emerald-600"><BadgeCheck className="mr-1 h-3.5 w-3.5" />Owner Verified</Badge>
+        ) : (
+          <Badge className="absolute left-3 top-3 bg-slate-100 text-slate-700 hover:bg-slate-100">Verification in progress</Badge>
+        )}
       </div>
       <div className="space-y-3 p-4">
         <h3 className="line-clamp-2 text-base font-semibold text-slate-900">{rental.title}</h3>
@@ -872,17 +1401,29 @@ function RentalCard({ rental, onOpenDetails, onOpenMessages, onOpenCompare }: { 
         <div className="text-xs text-slate-600">
           <p>{area > 0 ? `${area} sq.ft` : 'Area on request'} - {rental.bhk ? `${rental.bhk} BHK` : rental.propertyType || 'Rental'}</p>
           <p>{rental.furnishedStatus || 'Furnishing on request'}</p>
-          <p>Available from {available}</p>
+          <p>Availability: {available}</p>
           <p>{ownerName}</p>
         </div>
-        {rental.isVerified && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" />Verified Owner / Builder</span>}
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <Button className="h-10 bg-slate-900 text-white hover:bg-slate-800" onClick={() => onOpenDetails(referenceId)}>View Details</Button>
-          <Button variant="outline" className="h-10 border-slate-300" onClick={() => onOpenMessages(referenceId)}><MessageCircle className="mr-1 h-3.5 w-3.5" />Contact Owner</Button>
-          <Button variant="outline" className={`h-10 border-slate-300 ${compared ? 'text-blue-700' : ''}`} onClick={toggleCompare}><GitCompareArrows className="mr-1 h-3.5 w-3.5" />{compared ? 'Compared' : 'Compare'}</Button>
-          <Button variant="outline" className={`h-10 border-slate-300 ${saved ? 'text-rose-600' : ''}`} onClick={toggleSave}><Heart className={`mr-1 h-3.5 w-3.5 ${saved ? 'fill-current' : ''}`} />{saved ? 'Saved' : 'Save'}</Button>
+        <div className="flex flex-wrap gap-2">
+          <span className="portal-mobile-chip inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700"><UserCheck className="h-3.5 w-3.5 text-sky-700" />Preferred: {tenantTag}</span>
+          <span className="portal-mobile-chip inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700"><Car className="h-3.5 w-3.5 text-slate-500" />{parkingLabel}</span>
+          <span className="portal-mobile-chip inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700"><PawPrint className="h-3.5 w-3.5 text-slate-500" />{petsLabel}</span>
+          {rental.isVerified && <span className="portal-mobile-chip inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" />Owner Verified</span>}
         </div>
-        {compared && <button type="button" onClick={onOpenCompare} className="w-full rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:border-blue-300">Open compare board</button>}
+        <div className="grid grid-cols-2 gap-2">
+          <Button className="h-11 w-full min-w-0 bg-slate-900 px-3 text-[13px] text-white hover:bg-slate-800" onClick={() => onOpenDetails(referenceId)}>View Details</Button>
+          <Button variant="outline" className="h-11 w-full min-w-0 border-slate-300 px-3 text-[13px]" onClick={() => onOpenMessages(referenceId)}><MessageCircle className="mr-1 h-3.5 w-3.5" />Contact Owner</Button>
+          <Button variant="outline" className="h-11 w-full min-w-0 border-slate-300 px-3 text-[13px]" onClick={handleCallContact}><PhoneCall className="mr-1 h-3.5 w-3.5" />Call Owner</Button>
+          <Button variant="outline" className={`h-11 w-full min-w-0 border-slate-300 px-3 text-[13px] ${saved ? 'text-rose-600' : ''}`} onClick={toggleSave}><Heart className={`mr-1 h-3.5 w-3.5 ${saved ? 'fill-current' : ''}`} />{saved ? 'Saved' : 'Save'}</Button>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button variant="outline" className={`h-11 w-full min-w-0 border-slate-300 px-3 text-[13px] ${compared ? 'text-blue-700' : ''}`} onClick={toggleCompare}><GitCompareArrows className="mr-1 h-3.5 w-3.5" />{compared ? 'Compared' : 'Compare'}</Button>
+          {compared ? (
+            <Button variant="outline" className="h-11 w-full min-w-0 border-blue-200 bg-blue-50 px-3 text-[13px] text-blue-700 hover:bg-blue-100" onClick={onOpenCompare} disabled={!onOpenCompare}>Open Compare</Button>
+          ) : (
+            <div />
+          )}
+        </div>
       </div>
     </article>
   );

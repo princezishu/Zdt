@@ -5,7 +5,7 @@ import type {
   InfraUpdateCategory,
   InfraVerificationLevel,
 } from './infrastructureApi';
-import { readOrCreateDeviceId, readToken } from './session';
+import { readOrCreateDeviceId } from './session';
 
 export type InfraIngestStatus = 'NEW' | 'IGNORED' | 'PUBLISHED';
 
@@ -119,27 +119,19 @@ function toDupeRows(payload: unknown): InfraIngestDupeItem[] {
 
 export async function getInfraIngestItems(
   params: { status?: InfraIngestStatus | ''; q?: string },
-  adminToken: string
+  _adminToken: string
 ) {
   return apiRequest<IngestItemsResponse>(
     `/api/infra-ingest${buildQuery({
       status: params.status || undefined,
       q: params.q?.trim() || undefined,
-    })}`,
-    {
-      headers: {
-        'x-admin-token': adminToken.trim(),
-      },
-    }
+    })}`
   );
 }
 
-export async function ignoreInfraIngestItem(id: number, reason: string, adminToken: string) {
+export async function ignoreInfraIngestItem(id: number, reason: string, _adminToken: string) {
   return apiRequest<{ ok: boolean }>(`/api/infra-ingest/${id}/ignore`, {
     method: 'POST',
-    headers: {
-      'x-admin-token': adminToken.trim(),
-    },
     body: JSON.stringify({
       reason: reason.trim() || undefined,
     }),
@@ -149,21 +141,17 @@ export async function ignoreInfraIngestItem(id: number, reason: string, adminTok
 export async function publishInfraIngestItem(
   id: number,
   payload: InfraIngestPublishPayload,
-  adminToken: string
+  _adminToken: string
 ): Promise<InfraIngestPublishResult> {
   const headers = new Headers({
     'Content-Type': 'application/json',
-    'x-admin-token': adminToken.trim(),
     'X-Device-Id': readOrCreateDeviceId(),
   });
-  const token = readToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
 
   const response = await fetch(`${API_BASE_URL}/api/infra-ingest/${id}/publish`, {
     method: 'POST',
     headers,
+    credentials: 'include',
     body: JSON.stringify({
       state: payload.state.trim(),
       district: payload.district.trim(),

@@ -8,11 +8,47 @@ export interface AuthUser {
   isMainAdmin: boolean;
   phone?: string;
   forcePasswordReset?: boolean;
+  authStrategy?: 'legacy' | 'managed';
+  managedAuthProvider?: string | null;
+  managedAuthOnly?: boolean;
 }
 
 const TOKEN_KEY = 'authToken';
 const USER_KEY = 'authUser';
 const DEVICE_KEY = 'deviceId';
+let volatileToken = '';
+
+function getSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  const sessionStorageRef = getSessionStorage();
+  const sessionToken = sessionStorageRef?.getItem(TOKEN_KEY) || '';
+  if (sessionToken) {
+    volatileToken = sessionToken;
+  } else {
+    const legacyToken = window.localStorage.getItem(TOKEN_KEY) || '';
+    if (legacyToken) {
+      volatileToken = legacyToken;
+      sessionStorageRef?.setItem(TOKEN_KEY, legacyToken);
+      window.localStorage.removeItem(TOKEN_KEY);
+    }
+  }
+
+  const legacyUser = window.localStorage.getItem(USER_KEY) || '';
+  if (legacyUser && sessionStorageRef && !sessionStorageRef.getItem(USER_KEY)) {
+    sessionStorageRef.setItem(USER_KEY, legacyUser);
+    window.localStorage.removeItem(USER_KEY);
+  }
+}
 
 function toUserRole(
   value: unknown,
@@ -76,25 +112,63 @@ export function parseApiUser(raw: unknown): AuthUser | null {
     forcePasswordReset:
       data.forcePasswordReset === true ||
       data.force_password_reset === true,
+    authStrategy:
+      data.authStrategy === 'managed' || data.auth_strategy === 'managed' ? 'managed' : 'legacy',
+    managedAuthProvider:
+      typeof data.managedAuthProvider === 'string'
+        ? data.managedAuthProvider
+        : typeof data.managed_auth_provider === 'string'
+          ? data.managed_auth_provider
+          : null,
+    managedAuthOnly:
+      data.managedAuthOnly === true ||
+      data.managed_auth_only === true,
   };
 }
 
 export function saveSession(token: string, user: AuthUser) {
-  window.localStorage.setItem(TOKEN_KEY, token);
-  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+  volatileToken = String(token || '').trim();
+  const sessionStorageRef = getSessionStorage();
+  if (volatileToken) {
+    sessionStorageRef?.setItem(TOKEN_KEY, volatileToken);
+  } else {
+    sessionStorageRef?.removeItem(TOKEN_KEY);
+  }
+  window.localStorage.removeItem(TOKEN_KEY);
+  sessionStorageRef?.setItem(USER_KEY, JSON.stringify(user));
+  window.localStorage.removeItem(USER_KEY);
+}
+
+export function setSessionToken(token: string) {
+  volatileToken = String(token || '').trim();
+  const sessionStorageRef = getSessionStorage();
+  if (volatileToken) {
+    sessionStorageRef?.setItem(TOKEN_KEY, volatileToken);
+  } else {
+    sessionStorageRef?.removeItem(TOKEN_KEY);
+  }
+  window.localStorage.removeItem(TOKEN_KEY);
 }
 
 export function clearSession() {
+  volatileToken = '';
+  const sessionStorageRef = getSessionStorage();
+  sessionStorageRef?.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(TOKEN_KEY);
+  sessionStorageRef?.removeItem(USER_KEY);
   window.localStorage.removeItem(USER_KEY);
 }
 
 export function readToken(): string {
-  return window.localStorage.getItem(TOKEN_KEY) || '';
+  if (!volatileToken) {
+    volatileToken = getSessionStorage()?.getItem(TOKEN_KEY) || '';
+  }
+  return volatileToken;
 }
 
 export function readStoredUser(): AuthUser | null {
-  const raw = window.localStorage.getItem(USER_KEY);
+  const sessionStorageRef = getSessionStorage();
+  const raw = sessionStorageRef?.getItem(USER_KEY) || window.localStorage.getItem(USER_KEY);
   if (!raw) {
     return null;
   }

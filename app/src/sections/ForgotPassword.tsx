@@ -1,6 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, KeyRound, Mail, Lock, Smartphone } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/api';
+import { clearSession } from '@/lib/session';
+import {
+  clearManagedRecoveryHint,
+  getManagedSession,
+  isManagedRecoveryHintPresent,
+  isSupabaseConfigured,
+  requestManagedPasswordReset,
+  signOutManagedAuth,
+  updateManagedPassword,
+} from '@/lib/supabase';
 
 interface ForgotPasswordProps {
   onBackToLogin: () => void;
@@ -18,8 +28,47 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
   const [devOtp, setDevOtp] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isManagedRecovery, setIsManagedRecovery] = useState(isManagedRecoveryHintPresent());
+
+  const isManagedEmailFlow = channel === 'email' && isSupabaseConfigured();
+  const isManagedRecoveryFlow = isManagedRecovery && isManagedEmailFlow;
 
   const hasIdentifier = channel === 'email' ? Boolean(email.trim()) : Boolean(phone.trim());
+
+  useEffect(() => {
+    let active = true;
+
+    if (!isManagedRecoveryFlow) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void getManagedSession()
+      .then((session) => {
+        if (!active) {
+          return;
+        }
+        if (!session?.access_token) {
+          setIsManagedRecovery(false);
+          setError('Password recovery link is invalid or expired. Request a new reset email.');
+          clearManagedRecoveryHint();
+          return;
+        }
+        setSuccess('Enter a new password to finish resetting your account.');
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setIsManagedRecovery(false);
+        setError('Unable to verify the password recovery session. Request a new reset email.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isManagedRecoveryFlow]);
 
   function switchChannel(nextChannel: 'email' | 'sms') {
     setChannel(nextChannel);
@@ -37,6 +86,14 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
     setIsRequestingOtp(true);
 
     try {
+      if (isManagedEmailFlow) {
+        await requestManagedPasswordReset(email.trim().toLowerCase());
+        setOtpSent(false);
+        setDevOtp('');
+        setSuccess('Password reset email sent. Open the link in your inbox to set a new password.');
+        return;
+      }
+
       const requestBody =
         channel === 'email'
           ? { channel, email: email.trim() }
@@ -69,6 +126,21 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
     setIsResetting(true);
 
     try {
+      if (isManagedRecoveryFlow) {
+        await updateManagedPassword(newPassword);
+        try {
+          await signOutManagedAuth();
+        } catch {
+          // Proceed with local cleanup even if provider sign-out fails.
+        }
+        clearSession();
+        clearManagedRecoveryHint();
+        setSuccess('Password reset successful. Please log in with your new password.');
+        setNewPassword('');
+        setTimeout(() => onBackToLogin(), 900);
+        return;
+      }
+
       const requestBody =
         channel === 'email'
           ? { channel, email: email.trim(), otp, newPassword }
@@ -124,62 +196,79 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
               <button
                 type="button"
                 onClick={() => switchChannel('email')}
+                disabled={isManagedRecoveryFlow}
                 className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                   channel === 'email'
                     ? 'bg-brand-primary text-white'
                     : 'text-brand-gray3 hover:text-brand-primary'
-                }`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 Email
               </button>
               <button
                 type="button"
                 onClick={() => switchChannel('sms')}
+                disabled={isManagedRecoveryFlow}
                 className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                   channel === 'sms'
                     ? 'bg-brand-primary text-white'
                     : 'text-brand-gray3 hover:text-brand-primary'
-                }`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 SMS
               </button>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
-                {channel === 'email' ? 'Email Address' : 'Phone Number'}
-              </label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-brand-gray3 group-focus-within:text-brand-primary">
-                  {channel === 'email' ? (
-                    <Mail className="h-5 w-5" />
-                  ) : (
-                    <Smartphone className="h-5 w-5" />
-                  )}
+            {!isManagedRecoveryFlow ? (
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                  {channel === 'email' ? 'Email Address' : 'Phone Number'}
+                </label>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-brand-gray3 group-focus-within:text-brand-primary">
+                    {channel === 'email' ? (
+                      <Mail className="h-5 w-5" />
+                    ) : (
+                      <Smartphone className="h-5 w-5" />
+                    )}
+                  </div>
+                  <input
+                    type={channel === 'email' ? 'email' : 'tel'}
+                    placeholder={channel === 'email' ? 'name@example.com' : '+15551234567'}
+                    value={channel === 'email' ? email : phone}
+                    onChange={(event) =>
+                      channel === 'email'
+                        ? setEmail(event.target.value)
+                        : setPhone(event.target.value)
+                    }
+                    className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                  />
                 </div>
-                <input
-                  type={channel === 'email' ? 'email' : 'tel'}
-                  placeholder={channel === 'email' ? 'name@example.com' : '+15551234567'}
-                  value={channel === 'email' ? email : phone}
-                  onChange={(event) =>
-                    channel === 'email'
-                      ? setEmail(event.target.value)
-                      : setPhone(event.target.value)
-                  }
-                  className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
-                />
               </div>
-            </div>
+            ) : (
+              <div className="rounded-xl border border-brand-secondary/30 bg-brand-secondary/10 p-3 text-xs text-brand-gray3">
+                Recovery link verified. Set a new password below to finish resetting your account.
+              </div>
+            )}
 
-            <button
-              onClick={requestOtp}
-              disabled={isRequestingOtp || !hasIdentifier}
-              className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {isRequestingOtp ? 'Sending OTP...' : 'Send OTP'} <ArrowRight className="inline h-4 w-4 ml-1" />
-            </button>
+            {!isManagedRecoveryFlow ? (
+              <button
+                onClick={requestOtp}
+                disabled={isRequestingOtp || !hasIdentifier}
+                className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {isRequestingOtp
+                  ? isManagedEmailFlow
+                    ? 'Sending Reset Link...'
+                    : 'Sending OTP...'
+                  : isManagedEmailFlow
+                    ? 'Send Reset Link'
+                    : 'Send OTP'}{' '}
+                <ArrowRight className="inline h-4 w-4 ml-1" />
+              </button>
+            ) : null}
 
-            {otpSent ? (
+            {otpSent && !isManagedEmailFlow ? (
               <>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
@@ -225,6 +314,37 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
                   className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {isResetting ? 'Resetting...' : 'Reset Password'}{' '}
+                  <ArrowRight className="inline h-4 w-4 ml-1" />
+                </button>
+              </>
+            ) : null}
+
+            {isManagedRecoveryFlow ? (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                    New Password
+                  </label>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-brand-gray3 group-focus-within:text-brand-primary">
+                      <Lock className="h-5 w-5" />
+                    </div>
+                    <input
+                      type="password"
+                      placeholder="Minimum 8 characters"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={resetPassword}
+                  disabled={isResetting || newPassword.length < 8}
+                  className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {isResetting ? 'Updating Password...' : 'Update Password'}{' '}
                   <ArrowRight className="inline h-4 w-4 ml-1" />
                 </button>
               </>

@@ -1,14 +1,26 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { pool } from '../db.js';
+import {
+  authenticateManagedAccessToken,
+  isManagedAuthEnabled,
+  ManagedAuthError,
+} from '../services/managedAuth.js';
+import { requireNonEmptyEnv } from '../utils/env.js';
+import {
+  getCurrentSubscription,
+  resolveSubscriptionFeatureAccess,
+} from '../utils/subscriptions.js';
 
-const { JWT_SECRET = '', PERMISSION_CACHE_TTL_MS = '60000' } = process.env;
+const JWT_SECRET = requireNonEmptyEnv('JWT_SECRET');
+const { PERMISSION_CACHE_TTL_MS = '60000' } = process.env;
 const permissionCacheTtlMs = Number.isFinite(Number(PERMISSION_CACHE_TTL_MS))
   ? Math.max(5000, Number(PERMISSION_CACHE_TTL_MS))
   : 60_000;
 const permissionCache = new Map();
 const NUMERIC_ID_PATTERN = /^\d+$/;
 const UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME?.trim() || 'zdt_auth';
 
 function normalizeIpAddress(rawValue) {
   if (!rawValue) return '';
@@ -110,107 +122,323 @@ export function clearPermissionCache() {
   permissionCache.clear();
 }
 
-export async function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const [scheme, token] = header.split(' ');
-
-  if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'Missing or invalid authorization header' });
+function parseCookieHeader(rawCookieHeader) {
+  const cookieMap = new Map();
+  const source = String(rawCookieHeader || '');
+  if (!source) {
+    return cookieMap;
   }
 
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const userRows = await pool.query(
-      `
-        SELECT
-          u.id,
-          u.name,
-          u.email,
-          u.role,
-          u.account_type,
-          u.subscription_tier,
-          u.is_main_admin,
-          u.is_active,
-          u.deactivated_until,
-          s.id AS session_id,
-          COALESCE(
-            ARRAY_REMOVE(
-              ARRAY_AGG(DISTINCT ur.role_key) FILTER (WHERE ur.deleted_at IS NULL),
-              NULL
-            ),
-            ARRAY[]::TEXT[]
-          ) AS role_keys
-        FROM users u
+  const parts = source.split(';');
+  for (const part of parts) {
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = part.slice(0, separatorIndex).trim();
+    const value = part.slice(separatorIndex + 1).trim();
+    if (!key) {
+      continue;
+    }
+    try {
+      cookieMap.set(key, decodeURIComponent(value));
+    } catch {
+      cookieMap.set(key, value);
+    }
+  }
+
+  return cookieMap;
+}
+
+function readCookieValue(req, name) {
+  const explicitCookies = req.cookies;
+  if (explicitCookies && typeof explicitCookies === 'object' && explicitCookies !== null) {
+    const value = explicitCookies[name];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  const parsedCookies = parseCookieHeader(req.headers?.cookie || '');
+  const headerValue = parsedCookies.get(name);
+  if (typeof headerValue === 'string' && headerValue.trim()) {
+    return headerValue.trim();
+  }
+
+  return '';
+}
+
+export function readAccessTokenFromRequest(req) {
+  const header = req.headers.authorization || '';
+  const [scheme, token] = header.split(' ');
+  if (scheme === 'Bearer' && token) {
+    return String(token).trim();
+  }
+
+  return readCookieValue(req, AUTH_COOKIE_NAME);
+}
+
+function createAuthError(message, { status = 401, code = 'auth_error' } = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.isAuthError = true;
+  return error;
+}
+
+function hashAccessToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function loadAuthenticatedUserRow(userId, { tokenHash = '' } = {}) {
+  const hasSessionHash = typeof tokenHash === 'string' && tokenHash.trim().length > 0;
+  const rows = await pool.query(
+    `
+      SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.phone,
+        u.role,
+        u.account_type,
+        u.subscription_tier,
+        u.is_main_admin,
+        u.is_active,
+        u.deactivated_until,
+        u.managed_auth_provider,
+        u.managed_auth_only,
+        ${hasSessionHash ? 's.id AS session_id,' : 'NULL::BIGINT AS session_id,'}
+        COALESCE(
+          ARRAY_REMOVE(
+            ARRAY_AGG(DISTINCT ur.role_key) FILTER (WHERE ur.deleted_at IS NULL),
+            NULL
+          ),
+          ARRAY[]::TEXT[]
+        ) AS role_keys
+      FROM users u
+      ${
+        hasSessionHash
+          ? `
         JOIN user_sessions s
           ON s.user_id = u.id
          AND s.token_hash = $2
          AND s.revoked_at IS NULL
-        LEFT JOIN user_roles ur
-          ON ur.user_id = u.id
-        WHERE u.id = $1
-        GROUP BY
-          u.id,
-          u.name,
-          u.email,
-          u.role,
-          u.account_type,
-          u.subscription_tier,
-          u.is_main_admin,
-          u.is_active,
-          u.deactivated_until,
-          s.id
-        LIMIT 1
-      `,
-      [payload.id, tokenHash]
-    );
+      `
+          : ''
+      }
+      LEFT JOIN user_roles ur
+        ON ur.user_id = u.id
+      WHERE u.id = $1
+      GROUP BY
+        u.id,
+        u.name,
+        u.email,
+        u.phone,
+        u.role,
+        u.account_type,
+        u.subscription_tier,
+        u.is_main_admin,
+        u.is_active,
+        u.deactivated_until,
+        u.managed_auth_provider,
+        u.managed_auth_only
+        ${hasSessionHash ? ', s.id' : ''}
+      LIMIT 1
+    `,
+    hasSessionHash ? [userId, tokenHash] : [userId]
+  );
 
-    if (userRows.rowCount === 0) {
-      return res.status(401).json({ error: 'Invalid session. Please log in again.' });
-    }
+  return rows.rowCount > 0 ? rows.rows[0] : null;
+}
 
-    const user = userRows.rows[0];
-    const roleKeys = resolveUserRoleKeys({
-      role: user.role,
-      isMainAdmin: Boolean(user.is_main_admin),
-      roles: user.role_keys,
+function ensureUserCanAuthenticate(userRow) {
+  if (!userRow) {
+    throw createAuthError('Invalid session. Please log in again.', {
+      status: 401,
+      code: 'invalid_session',
     });
+  }
 
-    if (!user.is_active) {
-      return res.status(403).json({ error: 'Your account is deactivated' });
+  if (!userRow.is_active) {
+    throw createAuthError('Your account is deactivated', {
+      status: 403,
+      code: 'account_deactivated',
+    });
+  }
+
+  if (userRow.deactivated_until && new Date(userRow.deactivated_until).getTime() > Date.now()) {
+    throw createAuthError(
+      `Your account is temporarily deactivated until ${new Date(
+        userRow.deactivated_until
+      ).toLocaleString('en-IN')}.`,
+      {
+        status: 403,
+        code: 'account_temporarily_deactivated',
+      }
+    );
+  }
+}
+
+function buildAuthenticatedUser(userRow) {
+  const roleKeys = resolveUserRoleKeys({
+    role: userRow.role,
+    isMainAdmin: Boolean(userRow.is_main_admin),
+    roles: userRow.role_keys,
+  });
+
+  return {
+    id: userRow.id,
+    name: userRow.name,
+    email: userRow.email,
+    phone: userRow.phone || '',
+    role: userRow.role,
+    roles: roleKeys,
+    accountType: userRow.account_type || 'individual',
+    subscriptionTier: userRow.subscription_tier || 'free',
+    isMainAdmin: Boolean(userRow.is_main_admin),
+    managedAuthProvider: userRow.managed_auth_provider || null,
+    managedAuthOnly: Boolean(userRow.managed_auth_only),
+  };
+}
+
+async function authenticateLegacyAccessToken(token, { updateSessionLastSeen = true } = {}) {
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    throw createAuthError('Invalid or expired token', {
+      status: 401,
+      code: 'invalid_token',
+    });
+  }
+
+  const userRow = await loadAuthenticatedUserRow(payload.id, {
+    tokenHash: hashAccessToken(token),
+  });
+  ensureUserCanAuthenticate(userRow);
+
+  if (updateSessionLastSeen && userRow.session_id) {
+    await pool.query('UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1', [userRow.session_id]);
+  }
+
+  return {
+    user: buildAuthenticatedUser(userRow),
+    strategy: 'legacy',
+    sessionId: userRow.session_id ? Number(userRow.session_id) : null,
+    authProvider: userRow.managed_auth_provider || null,
+  };
+}
+
+async function authenticateManagedToken(token) {
+  const managedResult = await authenticateManagedAccessToken(token);
+  if (!managedResult) {
+    throw createAuthError('Invalid or expired token', {
+      status: 401,
+      code: 'invalid_token',
+    });
+  }
+
+  const userRow = await loadAuthenticatedUserRow(managedResult.localUserId);
+  if (!userRow) {
+    throw createAuthError('Managed auth user could not be resolved locally.', {
+      status: 401,
+      code: 'managed_auth_user_not_found',
+    });
+  }
+
+  ensureUserCanAuthenticate(userRow);
+
+  return {
+    user: buildAuthenticatedUser(userRow),
+    strategy: 'managed',
+    sessionId: null,
+    authProvider:
+      managedResult.authProvider ||
+      managedResult.identity?.provider ||
+      userRow.managed_auth_provider ||
+      null,
+    identity: managedResult.identity || null,
+  };
+}
+
+export async function authenticateAccessToken(token, { updateSessionLastSeen = true } = {}) {
+  if (!token) {
+    throw createAuthError('Authentication required', {
+      status: 401,
+      code: 'auth_required',
+    });
+  }
+
+  let legacyError = null;
+  try {
+    return await authenticateLegacyAccessToken(token, { updateSessionLastSeen });
+  } catch (error) {
+    if (!error?.isAuthError) {
+      throw error;
     }
+    legacyError = error;
+  }
 
-    if (user.deactivated_until && new Date(user.deactivated_until).getTime() > Date.now()) {
-      return res.status(403).json({
-        error: `Your account is temporarily deactivated until ${new Date(
-          user.deactivated_until
-        ).toLocaleString('en-IN')}.`,
-      });
+  if (isManagedAuthEnabled()) {
+    try {
+      return await authenticateManagedToken(token);
+    } catch (error) {
+      if (!(error instanceof ManagedAuthError) && !error?.isAuthError) {
+        throw error;
+      }
+
+      if (error instanceof ManagedAuthError) {
+        if (error.status !== 401 || error.code === 'managed_auth_forbidden_token') {
+          throw error;
+        }
+      } else if (error?.status && error.status !== 401) {
+        throw error;
+      }
     }
+  }
 
-    req.user = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      roles: roleKeys,
-      accountType: user.account_type || 'individual',
-      subscriptionTier: user.subscription_tier || 'free',
-      isMainAdmin: user.is_main_admin,
-    };
+  throw legacyError || createAuthError('Invalid or expired token', {
+    status: 401,
+    code: 'invalid_token',
+  });
+}
 
-    await pool.query('UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1', [user.session_id]);
+export async function requireAuth(req, res, next) {
+  const token = readAccessTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
 
+  try {
+    const authState = await authenticateAccessToken(token);
+    req.user = authState.user;
+    req.authToken = token;
+    req.authStrategy = authState.strategy;
+    req.authProvider = authState.authProvider || authState.user.managedAuthProvider || null;
+    req.authSessionId = authState.sessionId;
     return next();
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    const status = Number(error?.status || 401);
+    const responseBody = {
+      error: error?.message || 'Invalid or expired token',
+    };
+
+    if (typeof error?.code === 'string' && error.code) {
+      responseBody.code = error.code;
+    }
+
+    return res.status(status).json(responseBody);
   }
 }
 
 export function requireRole(...allowedRoles) {
   return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     const userRoleKeys = resolveUserRoleKeys(req.user);
-    const isAllowed = Boolean(req.user) && userRoleKeys.some((roleKey) => allowedRoles.includes(roleKey));
+    const isAllowed = userRoleKeys.some((roleKey) => allowedRoles.includes(roleKey));
     if (!isAllowed) {
       void logDeniedAccess(req, {
         reason: 'role_mismatch',
@@ -226,8 +454,12 @@ export function requireRole(...allowedRoles) {
 export const requireRoles = requireRole;
 
 export function requireMainAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   const userRoleKeys = resolveUserRoleKeys(req.user);
-  if (!req.user || (!req.user.isMainAdmin && !userRoleKeys.includes('main_admin'))) {
+  if (!req.user.isMainAdmin && !userRoleKeys.includes('main_admin')) {
     void logDeniedAccess(req, {
       reason: 'main_admin_required',
     });
@@ -346,38 +578,10 @@ async function loadActiveSubscription(req) {
     return null;
   }
 
-  const rows = await pool.query(
-    `
-      SELECT
-        s.id,
-        s.plan_id,
-        s.subscription_tier,
-        s.features_json,
-        s.listing_quota,
-        s.boost_credits,
-        s.end_date
-      FROM subscriptions s
-      WHERE s.user_id = $1
-        AND s.is_active = TRUE
-        AND (s.end_date IS NULL OR s.end_date >= CURRENT_DATE)
-      ORDER BY s.updated_at DESC, s.created_at DESC
-      LIMIT 1
-    `,
-    [req.user.id]
-  );
-
-  req.activeSubscription = rows.rowCount > 0 ? rows.rows[0] : null;
+  req.activeSubscription = await getCurrentSubscription(pool, req.user.id, {
+    allowFallbackPlan: true,
+  });
   return req.activeSubscription;
-}
-
-function toFeatureEnabled(value) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value > 0;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    return normalized === 'true' || normalized === '1' || normalized === 'enabled' || normalized === 'yes';
-  }
-  return null;
 }
 
 export function checkSubscriptionFeature(featureKey) {
@@ -407,74 +611,47 @@ export function checkSubscriptionFeature(featureKey) {
         });
       }
 
-      let featureEnabled = null;
-      let featureLimit = null;
-      const featuresObject =
-        activeSubscription.features_json &&
-        typeof activeSubscription.features_json === 'object' &&
-        !Array.isArray(activeSubscription.features_json)
-          ? activeSubscription.features_json
-          : {};
+      const featureAccess = resolveSubscriptionFeatureAccess(activeSubscription, normalizedFeature);
 
-      if (Object.prototype.hasOwnProperty.call(featuresObject, normalizedFeature)) {
-        featureEnabled = toFeatureEnabled(featuresObject[normalizedFeature]);
-      }
-
-      if (featureEnabled === null) {
-        const featureRows = await pool.query(
-          `
-            SELECT is_enabled, limit_value
-            FROM plan_features
-            WHERE plan_id = $1
-              AND feature_key = $2
-            LIMIT 1
-          `,
-          [activeSubscription.plan_id, normalizedFeature]
-        );
-
-        if (featureRows.rowCount > 0) {
-          featureEnabled = Boolean(featureRows.rows[0].is_enabled);
-          featureLimit = featureRows.rows[0].limit_value === null ? null : Number(featureRows.rows[0].limit_value);
-        }
-      }
-
-      if (!featureEnabled) {
+      if (!featureAccess.enabled) {
         void logDeniedAccess(req, {
           reason: 'subscription_feature_missing',
           metadata: {
             requiredFeature: normalizedFeature,
-            planId: activeSubscription.plan_id,
-            subscriptionTier: activeSubscription.subscription_tier,
+            planId: activeSubscription.planId,
+            subscriptionTier: activeSubscription.subscriptionTier,
           },
         });
         return res.status(403).json({
           error: `Your plan does not include ${normalizedFeature}.`,
+          code: 'subscription_feature_missing',
           missingFeature: normalizedFeature,
-          subscriptionTier: activeSubscription.subscription_tier,
-          planId: activeSubscription.plan_id,
+          subscriptionTier: activeSubscription.subscriptionTier,
+          planId: activeSubscription.planId,
         });
       }
 
-      if (normalizedFeature === 'boost_listing' && Number(activeSubscription.boost_credits || 0) <= 0) {
+      if (normalizedFeature === 'boost_listing' && Number(activeSubscription.boostCredits || 0) <= 0) {
         void logDeniedAccess(req, {
           reason: 'subscription_boost_credits_exhausted',
           metadata: {
             requiredFeature: normalizedFeature,
-            planId: activeSubscription.plan_id,
-            boostCredits: Number(activeSubscription.boost_credits || 0),
+            planId: activeSubscription.planId,
+            boostCredits: Number(activeSubscription.boostCredits || 0),
           },
         });
         return res.status(403).json({
           error: 'No boost credits left in your active subscription.',
+          code: 'subscription_boost_credits_exhausted',
           missingFeature: normalizedFeature,
         });
       }
 
       req.subscriptionAccess = {
         featureKey: normalizedFeature,
-        planId: activeSubscription.plan_id,
-        subscriptionTier: activeSubscription.subscription_tier,
-        limitValue: featureLimit,
+        planId: activeSubscription.planId,
+        subscriptionTier: activeSubscription.subscriptionTier,
+        limitValue: featureAccess.limitValue,
       };
       return next();
     } catch (error) {
