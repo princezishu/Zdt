@@ -124,7 +124,17 @@ export const supabaseClient = Object.freeze({
 });
 
 export function isSupabaseConfigured() {
-  return Boolean(supabaseConfig.projectUrl && supabaseConfig.jwtIssuer);
+  // Require both the project URL (for JWT issuer derivation) and the anon key
+  // (needed for /auth/v1/user REST calls used in HS256 token validation).
+  return Boolean(supabaseConfig.projectUrl && supabaseConfig.jwtIssuer && supabaseConfig.anonKey);
+}
+
+/**
+ * Returns true if Supabase Auth is fully ready for both JWT verification
+ * strategies (JWKS RS256 and HS256 via REST API).
+ */
+export function isSupabaseAuthReady() {
+  return isSupabaseConfigured();
 }
 
 export function hasSupabaseAdminCredentials() {

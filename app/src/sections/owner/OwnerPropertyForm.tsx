@@ -40,6 +40,7 @@ export interface OwnerPropertyFormState {
   groupDiscountValue: string;
   groupDealNote: string;
   amenities: string[];
+  imageFile: File | null;
   imageUrls: string;
   videoUrl: string;
   tourUrl: string;
@@ -93,6 +94,7 @@ const defaultState: OwnerPropertyFormState = {
   groupDiscountValue: '',
   groupDealNote: '',
   amenities: [],
+  imageFile: null,
   imageUrls: '',
   videoUrl: '',
   tourUrl: '',
@@ -573,8 +575,24 @@ export default function OwnerPropertyForm({
 
         {step === 5 && (
           <div className="grid gap-4 lg:grid-cols-2">
+            {mode === 'create' ? (
+              <div className="lg:col-span-2">
+                <label className="text-xs font-semibold uppercase text-slate-500">Upload Primary Image</label>
+                <Input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="mt-2 h-10"
+                  onChange={(event) => updateField('imageFile', event.target.files?.[0] || null)}
+                />
+                <p className="mt-2 text-xs text-slate-500">
+                  {form.imageFile
+                    ? `${form.imageFile.name} will be uploaded to Cloudinary when you publish this listing.`
+                    : 'Choose one PNG, JPEG, or WebP image to upload directly with the property.'}
+                </p>
+              </div>
+            ) : null}
             <div className="lg:col-span-2">
-              <label className="text-xs font-semibold uppercase text-slate-500">Images (comma separated URLs)</label>
+              <label className="text-xs font-semibold uppercase text-slate-500">Additional Image URLs (comma separated)</label>
               <Textarea
                 value={form.imageUrls}
                 onChange={(event) => updateField('imageUrls', event.target.value)}

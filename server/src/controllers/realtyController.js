@@ -5,16 +5,8 @@ import { z } from 'zod';
 import { pool } from '../db.js';
 import { hasPermission, requireAuth, requirePermission, requireRole } from '../middleware/auth.js';
 import { createRateLimiter } from '../middleware/rateLimit.js';
-import { hasSupabaseAdminCredentials } from '../config/supabase.js';
 import {
-  SupabaseDatabaseError,
-  createPropertyViaSupabase,
-  fetchPropertyDetailsViaSupabase,
-  listPropertiesViaSupabase,
-} from '../services/supabaseDatabase.js';
-import {
-  buildCloudinaryFolder,
-  uploadToCloudinary,
+  uploadPropertyImageToCloudinary,
 } from '../services/cloudinary.js';
 
 const router = Router();
@@ -100,10 +92,47 @@ function writePropertyListCache(cacheKey, value) {
   });
 }
 
-function logSupabaseFallback(context, error) {
-  const code = typeof error?.code === 'string' && error.code ? error.code : 'unknown';
-  const message = error instanceof Error ? error.message : String(error || 'Unknown error');
-  console.warn(`[SUPABASE_DB] ${context} fallback to SQL (${code}): ${message}`);
+function clearPropertyListCache() {
+  propertyListCache.clear();
+}
+
+function resolveAuthenticatedPropertyOwnerId(req) {
+  const authenticatedUserId = Number(req.authenticatedUserId ?? req.user?.id ?? 0);
+  if (!Number.isFinite(authenticatedUserId) || authenticatedUserId <= 0) {
+    return 0;
+  }
+  return authenticatedUserId;
+}
+
+function parsePropertyIdParam(rawValue) {
+  const propertyId = Number(rawValue);
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    return 0;
+  }
+  return propertyId;
+}
+
+async function uploadRealtyPropertyImage(file) {
+  if (!file?.buffer || file.buffer.length === 0) {
+    return '';
+  }
+
+  try {
+    const uploaded = await uploadPropertyImageToCloudinary(
+      file.buffer,
+      `property-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+    );
+    return uploaded.secureUrl || uploaded.url || '';
+  } catch (error) {
+    const uploadError = new Error('Property image upload failed.');
+    uploadError.status = 502;
+    uploadError.code = 'property_image_upload_failed';
+    uploadError.metadata = {
+      provider: 'cloudinary',
+      reason: error instanceof Error ? error.message : 'unknown_upload_error',
+    };
+    throw uploadError;
+  }
 }
 
 let groupDealsTableCache = {
@@ -233,6 +262,166 @@ function parseCommaList(value) {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function mergeMultipartPayload(input) {
+  const source =
+    input && typeof input === 'object' && !Array.isArray(input)
+      ? { ...input }
+      : {};
+
+  if (typeof source.payload === 'string' && source.payload.trim()) {
+    try {
+      const parsed = JSON.parse(source.payload);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        delete source.payload;
+        return {
+          ...parsed,
+          ...source,
+        };
+      }
+    } catch {
+      // Ignore invalid payload JSON and fall back to raw multipart fields.
+    }
+  }
+
+  return source;
+}
+
+function normalizeOptionalNumberish(value, { allowNull = false } = {}) {
+  if (value === undefined) return undefined;
+  if (value === null) return allowNull ? null : undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.toLowerCase() === 'null') {
+      return allowNull ? null : undefined;
+    }
+  }
+  return value;
+}
+
+function normalizeBooleanInput(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return value;
+}
+
+function normalizeStringArrayInput(value) {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => String(entry || '').split(','))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized || normalized.toLowerCase() === 'null') {
+    return [];
+  }
+
+  if (normalized.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      }
+    } catch {
+      return value;
+    }
+  }
+
+  return normalized
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeNumberArrayInput(value) {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => String(entry || '').split(','))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized || normalized.toLowerCase() === 'null') {
+    return [];
+  }
+
+  if (normalized.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      }
+    } catch {
+      return value;
+    }
+  }
+
+  return normalized
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeObjectInput(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized || normalized.toLowerCase() === 'null') {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeCreatePropertyInput(input) {
+  const source = mergeMultipartPayload(input);
+
+  return {
+    ...source,
+    companyId: normalizeOptionalNumberish(source.companyId),
+    projectId: normalizeOptionalNumberish(source.projectId),
+    price: normalizeOptionalNumberish(source.price, { allowNull: true }),
+    pricePerSqft: normalizeOptionalNumberish(source.pricePerSqft, { allowNull: true }),
+    rentPerMonth: normalizeOptionalNumberish(source.rentPerMonth, { allowNull: true }),
+    rentDeposit: normalizeOptionalNumberish(source.rentDeposit, { allowNull: true }),
+    latitude: normalizeOptionalNumberish(source.latitude, { allowNull: true }),
+    longitude: normalizeOptionalNumberish(source.longitude, { allowNull: true }),
+    areaSqft: normalizeOptionalNumberish(source.areaSqft, { allowNull: true }),
+    carpetArea: normalizeOptionalNumberish(source.carpetArea, { allowNull: true }),
+    builtupArea: normalizeOptionalNumberish(source.builtupArea, { allowNull: true }),
+    superBuiltupArea: normalizeOptionalNumberish(source.superBuiltupArea, { allowNull: true }),
+    bedrooms: normalizeOptionalNumberish(source.bedrooms, { allowNull: true }),
+    bathrooms: normalizeOptionalNumberish(source.bathrooms, { allowNull: true }),
+    floorNumber: normalizeOptionalNumberish(source.floorNumber, { allowNull: true }),
+    totalFloors: normalizeOptionalNumberish(source.totalFloors, { allowNull: true }),
+    isCorner: normalizeBooleanInput(source.isCorner),
+    isVaastu: normalizeBooleanInput(source.isVaastu),
+    isNegotiable: normalizeBooleanInput(source.isNegotiable),
+    isPrelaunch: normalizeBooleanInput(source.isPrelaunch),
+    isVerified: normalizeBooleanInput(source.isVerified),
+    isFeatured: normalizeBooleanInput(source.isFeatured),
+    imageUrls: normalizeStringArrayInput(source.imageUrls),
+    amenityIds: normalizeNumberArrayInput(source.amenityIds),
+    layoutDetails: normalizeObjectInput(source.layoutDetails),
+  };
 }
 
 function clampInt(value, min, max, fallback = 0) {
@@ -628,6 +817,87 @@ function canActAsBuilderDealer(membership) {
   return COMPANY_TYPES.includes(membership.companyType);
 }
 
+function hasUserRole(user, roleKey) {
+  if (!user || !roleKey) return false;
+  if (String(user.role || '').trim() === roleKey) {
+    return true;
+  }
+  return Array.isArray(user.roles) && user.roles.includes(roleKey);
+}
+
+function canCreateOwnerLinkedProperty(user) {
+  return hasUserRole(user, 'owner') || hasUserRole(user, 'agent');
+}
+
+async function ensureOwnerPropertyCompany(userId) {
+  const existingProfileRows = await pool.query(
+    `
+      SELECT company_id
+      FROM owner_profiles
+      WHERE user_id = $1
+      LIMIT 1
+    `,
+    [userId]
+  );
+  const existingCompanyId = Number(existingProfileRows.rows[0]?.company_id || 0);
+  if (existingCompanyId > 0) {
+    return existingCompanyId;
+  }
+
+  const userRows = await pool.query(
+    `
+      SELECT name, email
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [userId]
+  );
+  const user = userRows.rows[0] || {
+    name: 'Owner',
+    email: '',
+  };
+
+  const code = `owner-${userId}`;
+  const companyRows = await pool.query(
+    `
+      INSERT INTO companies (
+        code,
+        name,
+        company_type,
+        email,
+        created_by_user_id
+      )
+      VALUES ($1, $2, 'owner', $3, $4)
+      ON CONFLICT (code)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        email = EXCLUDED.email,
+        updated_at = NOW()
+      RETURNING id
+    `,
+    [code, `${user.name} Properties`, user.email || '', userId]
+  );
+  const companyId = Number(companyRows.rows[0]?.id || 0);
+  if (companyId <= 0) {
+    throw new Error('Failed to create owner company profile.');
+  }
+
+  await pool.query(
+    `
+      INSERT INTO owner_profiles (user_id, company_id)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        company_id = EXCLUDED.company_id,
+        updated_at = NOW()
+    `,
+    [userId, companyId]
+  );
+
+  return companyId;
+}
+
 async function ensureCompanyShadow(companyId) {
   await pool.query(
     `
@@ -730,6 +1000,8 @@ function mapPropertySummary(row) {
   const images = Array.isArray(row.image_urls) ? row.image_urls : [];
   const parsedLayout = propertyLayoutDetailsSchema.safeParse(row.layout_details || {});
   const publicContactPhone = String(row.public_contact_phone || row.phone || '').trim();
+  const postedBy = row.posted_by ? Number(row.posted_by) : null;
+  const createdByUserId = row.created_by_user_id ? Number(row.created_by_user_id) : null;
   return {
     id: Number(row.id),
     companyId: Number(row.company_id),
@@ -772,11 +1044,14 @@ function mapPropertySummary(row) {
     viewCount: Number(row.view_count || 0),
     availabilityDate: row.availability_date,
     imageUrls: images,
+    imageUrl: images[0] || '',
     primaryImage: images[0] || '',
     description: row.description || '',
     layoutDetails: parsedLayout.success ? parsedLayout.data : { floors: [] },
     amenities: Array.isArray(row.amenities) ? row.amenities : [],
-    postedBy: row.posted_by ? Number(row.posted_by) : null,
+    postedBy,
+    ownerId: postedBy || createdByUserId,
+    createdByUserId,
     companyName: row.company_name || '',
     companyType: row.company_type || '',
     companyPropertyCount: Number(row.company_property_count || 0),
@@ -2592,16 +2867,6 @@ const createPropertySchema = z
         message: 'Rent listing requires rentPerMonth',
       });
     }
-    if (
-      (payload.propertyType === 'Apartment' || payload.propertyType === 'Commercial') &&
-      (!payload.layoutDetails || payload.layoutDetails.floors.length === 0)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['layoutDetails'],
-        message: 'Apartment/Commercial listings require floor and unit block details',
-      });
-    }
   });
 
 const updatePropertySchema = z.object({
@@ -2765,20 +3030,6 @@ router.get('/properties', publicSearchLimiter, async (req, res, next) => {
     const cached = readPropertyListCache(cacheKey);
     if (cached) {
       return res.json(cached);
-    }
-
-    try {
-      const supabasePayload = await listPropertiesViaSupabase(query);
-      if (supabasePayload) {
-        const payload = {
-          ...supabasePayload,
-          properties: supabasePayload.properties.map(mapPropertySummary),
-        };
-        writePropertyListCache(cacheKey, payload);
-        return res.json(payload);
-      }
-    } catch (error) {
-      logSupabaseFallback('list properties', error);
     }
 
     const whereParts = ['1 = 1'];
@@ -3025,29 +3276,9 @@ router.get('/properties', publicSearchLimiter, async (req, res, next) => {
 
 router.get('/properties/:propertyId', async (req, res, next) => {
   try {
-    const propertyId = Number(req.params.propertyId);
-    if (!Number.isFinite(propertyId) || propertyId <= 0) {
+    const propertyId = parsePropertyIdParam(req.params.propertyId);
+    if (!propertyId) {
       return res.status(400).json({ error: 'Invalid property id' });
-    }
-
-    try {
-      const supabasePayload = await fetchPropertyDetailsViaSupabase(propertyId, {
-        incrementViewCount: true,
-      });
-      if (supabasePayload) {
-        if (!supabasePayload.property) {
-          return res.status(404).json({ error: 'Property not found' });
-        }
-        return res.json({
-          property: {
-            ...mapPropertySummary(supabasePayload.property),
-            company: supabasePayload.property.company,
-          },
-          priceHistory: supabasePayload.priceHistory,
-        });
-      }
-    } catch (error) {
-      logSupabaseFallback('fetch property details', error);
     }
 
     await pool.query(
@@ -3100,33 +3331,47 @@ router.post('/properties', requireAuth, (req, res, next) => {
         return res.status(400).json({ error: uploadError.message || 'Invalid image upload.' });
       }
 
-      const payload = createPropertySchema.parse(req.body || {});
-      const membership = await getCompanyMembership(req.user.id);
+      const authenticatedUserId = resolveAuthenticatedPropertyOwnerId(req);
+      if (!authenticatedUserId) {
+        return res.status(401).json({
+          error: 'Authentication required',
+          code: 'auth_required',
+        });
+      }
+
+      const payload = createPropertySchema.parse(normalizeCreatePropertyInput(req.body || {}));
+      const membership = await getCompanyMembership(authenticatedUserId);
       const canManageCompany = await hasPermission(req, 'manage_company');
+      const canUseBuilderCompany = canActAsBuilderDealer(membership);
+      const canUseOwnerCompany = canCreateOwnerLinkedProperty(req.user);
 
-      if (!canActAsBuilderDealer(membership) && !canManageCompany) {
-        return res.status(403).json({ error: 'Only builder/dealer accounts can create properties' });
+      if (!canUseBuilderCompany && !canManageCompany && !canUseOwnerCompany) {
+        return res.status(403).json({
+          error: 'Only owner, agent, builder, or admin accounts can create properties',
+        });
       }
 
-      const companyId = payload.companyId || membership?.companyId;
-      if (!companyId) {
-        return res.status(400).json({ error: 'companyId is required' });
-      }
+      let companyId = Number(payload.companyId || membership?.companyId || 0);
+      if (canUseBuilderCompany || canManageCompany) {
+        if (!companyId) {
+          return res.status(400).json({ error: 'companyId is required' });
+        }
 
-      if (!canManageCompany && membership?.companyId !== companyId) {
-        return res.status(403).json({ error: 'Property can only be added to your own company' });
+        if (!canManageCompany && membership?.companyId !== companyId) {
+          return res.status(403).json({ error: 'Property can only be added to your own company' });
+        }
+
+        await ensureCompanyShadow(companyId);
+      } else {
+        const ownerCompanyId = await ensureOwnerPropertyCompany(authenticatedUserId);
+        if (companyId && companyId !== ownerCompanyId) {
+          return res.status(403).json({ error: 'Property can only be linked to your own owner profile' });
+        }
+        companyId = ownerCompanyId;
       }
 
       // --- Upload image to Cloudinary if provided ---
-      let uploadedImageUrl = '';
-      if (req.file && req.file.buffer && req.file.buffer.length > 0) {
-        const uploaded = await uploadToCloudinary(req.file.buffer, {
-          folder: buildCloudinaryFolder('property-images'),
-          publicId: `property-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
-          resourceType: 'image',
-        });
-        uploadedImageUrl = uploaded.secureUrl || uploaded.url || '';
-      }
+      const uploadedImageUrl = await uploadRealtyPropertyImage(req.file);
 
       // Merge uploaded image URL into imageUrls
       const imageUrls = [...(payload.imageUrls || [])];
@@ -3134,42 +3379,7 @@ router.post('/properties', requireAuth, (req, res, next) => {
         imageUrls.unshift(uploadedImageUrl);
       }
 
-      await ensureCompanyShadow(companyId);
       const amenityIds = [...new Set((payload.amenityIds || []).map((id) => Number(id)).filter((id) => id > 0))];
-
-      try {
-        const supabaseProperty = await createPropertyViaSupabase({
-          companyId,
-          payload: { ...payload, imageUrls },
-          amenityIds,
-          userId: req.user.id,
-          authStrategy: req.authStrategy || '',
-          accessToken: req.authToken || '',
-        });
-        if (supabaseProperty) {
-          propertyListCache.clear();
-          return res.status(201).json({
-            property: {
-              ...mapPropertySummary(supabaseProperty),
-              company: supabaseProperty.company,
-            },
-          });
-        }
-      } catch (error) {
-        const canTrustSupabaseValidation =
-          req.authStrategy === 'managed' || hasSupabaseAdminCredentials();
-        if (
-          canTrustSupabaseValidation &&
-          error instanceof SupabaseDatabaseError &&
-          ['company_not_found', 'invalid_project_company', 'invalid_amenity_ids'].includes(error.code)
-        ) {
-          return res.status(Number(error.status || 400)).json({ error: error.message });
-        }
-        if (error instanceof SupabaseDatabaseError && error.code === 'supabase_partial_write') {
-          return next(error);
-        }
-        logSupabaseFallback('create property', error);
-      }
 
       const companyRows = await pool.query('SELECT id FROM companies WHERE id = $1 LIMIT 1', [companyId]);
       if (companyRows.rowCount === 0) {
@@ -3291,8 +3501,8 @@ router.post('/properties', requireAuth, (req, res, next) => {
           imageUrls,
           payload.description || '',
           JSON.stringify(payload.layoutDetails || { floors: [] }),
-          req.user.id,
-          req.user.id,
+          authenticatedUserId,
+          authenticatedUserId,
         ]
       );
 
@@ -3309,7 +3519,7 @@ router.post('/properties', requireAuth, (req, res, next) => {
       }
 
       const property = await fetchPropertyDetails(propertyId);
-      propertyListCache.clear();
+      clearPropertyListCache();
       return res.status(201).json({ property });
     } catch (error) {
       return next(error);
@@ -3361,11 +3571,10 @@ router.post('/properties/:propertyId/upload-image', requireAuth, (req, res, next
       }
 
       // Upload to Cloudinary
-      const uploaded = await uploadToCloudinary(req.file.buffer, {
-        folder: buildCloudinaryFolder('property-images'),
-        publicId: `property-${propertyId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
-        resourceType: 'image',
-      });
+      const uploaded = await uploadPropertyImageToCloudinary(
+        req.file.buffer,
+        `property-${propertyId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+      );
       const imageUrl = uploaded.secureUrl || uploaded.url || '';
 
       // Append URL to property record

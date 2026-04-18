@@ -3,9 +3,11 @@ import crypto from 'crypto';
 import { pool } from '../db.js';
 import {
   authenticateManagedAccessToken,
+  authenticateSupabaseAccessToken,
   isManagedAuthEnabled,
   ManagedAuthError,
 } from '../services/managedAuth.js';
+import { isSupabaseConfigured } from '../config/supabase.js';
 import { requireNonEmptyEnv } from '../utils/env.js';
 import {
   getCurrentSubscription,
@@ -168,11 +170,27 @@ function readCookieValue(req, name) {
   return '';
 }
 
+function readManagedTokenHeader(req) {
+  const headerValue = req.headers?.['x-managed-auth-token'];
+  if (Array.isArray(headerValue)) {
+    return String(headerValue[0] || '').trim();
+  }
+  if (typeof headerValue === 'string' && headerValue.trim()) {
+    return headerValue.trim();
+  }
+  return '';
+}
+
 export function readAccessTokenFromRequest(req) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
   if (scheme === 'Bearer' && token) {
     return String(token).trim();
+  }
+
+  const managedHeaderToken = readManagedTokenHeader(req);
+  if (managedHeaderToken) {
+    return managedHeaderToken;
   }
 
   return readCookieValue(req, AUTH_COOKIE_NAME);
@@ -280,6 +298,7 @@ function ensureUserCanAuthenticate(userRow) {
 }
 
 function buildAuthenticatedUser(userRow) {
+  const normalizedUserId = Number(userRow.id);
   const roleKeys = resolveUserRoleKeys({
     role: userRow.role,
     isMainAdmin: Boolean(userRow.is_main_admin),
@@ -287,7 +306,7 @@ function buildAuthenticatedUser(userRow) {
   });
 
   return {
-    id: userRow.id,
+    id: Number.isFinite(normalizedUserId) && normalizedUserId > 0 ? normalizedUserId : userRow.id,
     name: userRow.name,
     email: userRow.email,
     phone: userRow.phone || '',
@@ -361,6 +380,38 @@ async function authenticateManagedToken(token) {
   };
 }
 
+async function authenticateSupabaseToken(token) {
+  const managedResult = await authenticateSupabaseAccessToken(token);
+  if (!managedResult) {
+    throw createAuthError('Invalid or expired token', {
+      status: 401,
+      code: 'invalid_token',
+    });
+  }
+
+  const userRow = await loadAuthenticatedUserRow(managedResult.localUserId);
+  if (!userRow) {
+    throw createAuthError('Managed auth user could not be resolved locally.', {
+      status: 401,
+      code: 'managed_auth_user_not_found',
+    });
+  }
+
+  ensureUserCanAuthenticate(userRow);
+
+  return {
+    user: buildAuthenticatedUser(userRow),
+    strategy: 'managed',
+    sessionId: null,
+    authProvider:
+      managedResult.authProvider ||
+      managedResult.identity?.provider ||
+      userRow.managed_auth_provider ||
+      'supabase',
+    identity: managedResult.identity || null,
+  };
+}
+
 export async function authenticateAccessToken(token, { updateSessionLastSeen = true } = {}) {
   if (!token) {
     throw createAuthError('Authentication required', {
@@ -397,6 +448,24 @@ export async function authenticateAccessToken(token, { updateSessionLastSeen = t
     }
   }
 
+  if (!isManagedAuthEnabled() && isSupabaseConfigured()) {
+    try {
+      return await authenticateSupabaseToken(token);
+    } catch (error) {
+      if (!(error instanceof ManagedAuthError) && !error?.isAuthError) {
+        throw error;
+      }
+
+      if (error instanceof ManagedAuthError) {
+        if (error.status !== 401 || error.code === 'managed_auth_forbidden_token') {
+          throw error;
+        }
+      } else if (error?.status && error.status !== 401) {
+        throw error;
+      }
+    }
+  }
+
   throw legacyError || createAuthError('Invalid or expired token', {
     status: 401,
     code: 'invalid_token',
@@ -406,16 +475,29 @@ export async function authenticateAccessToken(token, { updateSessionLastSeen = t
 export async function requireAuth(req, res, next) {
   const token = readAccessTokenFromRequest(req);
   if (!token) {
-    return res.status(401).json({ error: 'Authentication required' });
+    return res.status(401).json({ error: 'Authentication required', code: 'auth_required' });
   }
 
   try {
     const authState = await authenticateAccessToken(token);
+    const managedIdentity = authState.identity || null;
     req.user = authState.user;
     req.authToken = token;
     req.authStrategy = authState.strategy;
     req.authProvider = authState.authProvider || authState.user.managedAuthProvider || null;
     req.authSessionId = authState.sessionId;
+    req.authIdentity = managedIdentity;
+    req.supabaseUser =
+      authState.strategy === 'managed' && managedIdentity
+        ? {
+            ...managedIdentity,
+            id: managedIdentity.subject,
+            sub: managedIdentity.subject,
+          }
+        : null;
+    req.authenticatedUserId = Number.isFinite(Number(authState.user?.id))
+      ? Number(authState.user.id)
+      : null;
     return next();
   } catch (error) {
     const status = Number(error?.status || 401);

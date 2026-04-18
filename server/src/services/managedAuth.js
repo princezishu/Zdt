@@ -426,6 +426,15 @@ export async function authenticateManagedAccessToken(token) {
   };
 }
 
+export async function authenticateSupabaseAccessToken(token) {
+  const identity = await verifySupabaseAccessToken(token);
+  const resolution = await resolveManagedAuthUser(identity);
+  return {
+    ...resolution,
+    identity,
+  };
+}
+
 export async function linkManagedIdentityToUser(userId, token) {
   const identity = await verifyManagedAccessToken(token);
   if (!identity) {

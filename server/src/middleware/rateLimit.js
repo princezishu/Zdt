@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { buildErrorResponse } from '../utils/errorResponses.js';
 
 const REDIS_RETRY_COOLDOWN_MS = 60_000;
 const REDIS_LOG_COOLDOWN_MS = 15_000;
@@ -214,7 +215,11 @@ export function createRateLimiter({
     if (result.count > max) {
       const retryAfterSeconds = Math.max(1, Math.ceil((result.resetAt - now) / 1000));
       res.setHeader('Retry-After', String(retryAfterSeconds));
-      return res.status(429).json({ error: message });
+      return res.status(429).json(buildErrorResponse({
+        req,
+        message,
+        code: 'rate_limit_exceeded',
+      }));
     }
 
     return next();

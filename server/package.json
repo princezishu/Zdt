@@ -12,6 +12,7 @@
     "cleanup:demo:keep-main-admin": "node scripts/cleanup-demo-data-keep-main-admin.js",
     "fix:chat-sender-names": "node scripts/backfill-chat-sender-names.js",
     "sql:run": "node scripts/run-sql-file.js",
+    "schema:supabase": "node scripts/apply-schema-supabase.js",
     "migrate:rbac:phase1": "node scripts/run-sql-file.js sql/migrations/20260218_rbac_user_roles_phase1.sql",
     "migrate:uuid:expand": "node scripts/run-sql-file.js sql/migrations/20260218_uuid_phase3_expand_core.sql",
     "migrate:uuid:bridge": "node scripts/run-sql-file.js sql/migrations/20260218_uuid_phase3_backfill_bridge_core.sql",

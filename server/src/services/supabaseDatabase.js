@@ -592,6 +592,14 @@ export async function createPropertyViaSupabase({
   authStrategy = '',
   accessToken = '',
 }) {
+  const createdByUserId = Number(userId);
+  if (!Number.isFinite(createdByUserId) || createdByUserId <= 0) {
+    throw new SupabaseDatabaseError('Authentication required', {
+      status: 401,
+      code: 'auth_required',
+    });
+  }
+
   const client = getWriteClient({
     authStrategy,
     accessToken,
@@ -679,8 +687,8 @@ export async function createPropertyViaSupabase({
       image_urls: payload.imageUrls || [],
       description: payload.description || '',
       layout_details: payload.layoutDetails || { floors: [] },
-      posted_by: userId,
-      created_by_user_id: userId,
+      posted_by: createdByUserId,
+      created_by_user_id: createdByUserId,
     })
     .select('id')
     .single();

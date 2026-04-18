@@ -1,11 +1,12 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import {
+  describeDatabaseConnection,
+  resolveDatabaseConnectionConfig,
+} from './config/database.js';
 
 dotenv.config();
-
-const requiredEnv = ['DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME', 'DB_PORT'];
-const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
 const DEFAULT_AMENITIES = [
   'Parking',
@@ -65,43 +66,14 @@ const LISTING_LIFECYCLE_STATUSES = [
   'rented',
 ];
 
-if (missingEnv.length > 0) {
-  console.error(`Missing env variables: ${missingEnv.join(', ')}`);
-  process.exit(1);
-}
-
-function readBooleanEnv(name, fallback = false) {
-  const value = String(process.env[name] || '').trim().toLowerCase();
-  if (!value) return fallback;
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-const dbSslEnabled = readBooleanEnv('DB_SSL', false);
-const dbSslRejectUnauthorized = readBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true);
-const dbSslCa = String(process.env.DB_SSL_CA || '').trim();
-const dbConfig = {
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  port: Number(process.env.DB_PORT),
-};
-
-if (dbSslEnabled) {
-  dbConfig.ssl = {
-    rejectUnauthorized: dbSslRejectUnauthorized,
-  };
-  if (dbSslCa) {
-    dbConfig.ssl.ca = dbSslCa.replace(/\\n/g, '\n');
-  }
-}
-
+const databaseConnection = resolveDatabaseConnectionConfig();
+const databaseConnectionInfo = describeDatabaseConnection(databaseConnection);
 const dbPoolMax = Math.max(5, Math.min(50,
   Number(process.env.DB_POOL_MAX || 20) || 20
 ));
 
 export const pool = new Pool({
-  ...dbConfig,
+  ...databaseConnection.pgConfig,
   max: dbPoolMax,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
@@ -9335,11 +9307,30 @@ export async function ensureCollaborationTables() {
 pool
   .connect()
   .then((client) => {
-    console.log('Connected to PostgreSQL database');
+    const target = [
+      databaseConnectionInfo.host,
+      databaseConnectionInfo.port,
+      databaseConnectionInfo.database,
+    ]
+      .filter(Boolean)
+      .join(':')
+      .replace(/:(?=[^:]+$)/, '/');
+    const providerLabel =
+      databaseConnectionInfo.provider === 'supabase'
+        ? 'Supabase PostgreSQL'
+        : 'PostgreSQL';
+    console.log(
+      `[DB] Connected to ${providerLabel} via ${databaseConnectionInfo.source}${
+        target ? ` (${target})` : ''
+      }`
+    );
     client.release();
   })
   .catch((err) => {
-    console.error('PostgreSQL connection error:', err.message);
+    console.error(
+      `[DB] ${databaseConnectionInfo.provider === 'supabase' ? 'Supabase PostgreSQL' : 'PostgreSQL'} connection error:`,
+      err.message
+    );
     process.exit(1);
   });
 

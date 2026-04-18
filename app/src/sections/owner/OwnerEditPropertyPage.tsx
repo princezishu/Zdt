@@ -106,6 +106,7 @@ export default function OwnerEditPropertyPage({ propertyId, onBack }: OwnerEditP
               : String(property.groupDeal.groupDiscountValue),
           groupDealNote: property.groupDeal?.groupDealNote || '',
           amenities: property.layoutDetails?.amenities || [],
+          imageFile: null,
           imageUrls: property.imageUrls?.join(', ') || '',
           videoUrl: property.layoutDetails?.media?.videoUrl || '',
           tourUrl: property.layoutDetails?.media?.tourUrl || '',

@@ -38,48 +38,69 @@ export default function OwnerAddPropertyPage({
   const handleSubmit = async (payload: OwnerPropertyFormState) => {
     try {
       if (payload.listingMode === 'sale') {
-        await apiRequest('/api/owner/properties', {
-          method: 'POST',
-          body: JSON.stringify({
-            title: payload.title,
-            description: payload.description,
-            propertyType: payload.propertyType,
-            bhk: payload.bhk ? Number(payload.bhk) : undefined,
-            areaSqft: payload.areaSqft ? Number(payload.areaSqft) : undefined,
-            carpetArea: payload.carpetArea ? Number(payload.carpetArea) : undefined,
-            facing: payload.facing,
-            floorNumber: payload.floorNumber ? Number(payload.floorNumber) : undefined,
-            totalFloors: payload.totalFloors ? Number(payload.totalFloors) : undefined,
-            state: payload.state,
-            city: payload.city,
-            locality: payload.locality,
-            address: payload.address,
-            latitude: toOptionalCoordinate(payload.latitude, -90, 90),
-            longitude: toOptionalCoordinate(payload.longitude, -180, 180),
-            price: payload.price ? Number(payload.price.replace(/,/g, '')) : undefined,
-            pricePerSqft: payload.pricePerSqft ? Number(payload.pricePerSqft) : undefined,
-            groupInventoryCount: toOptionalNumber(payload.groupInventoryCount),
-            groupDealMinBuyers: toOptionalNumber(payload.groupDealMinBuyers),
-            groupDealMaxBuyers: payload.groupDealMaxBuyers ? toOptionalNumber(payload.groupDealMaxBuyers) : null,
-            groupDiscountType: payload.groupDiscountType,
-            groupDiscountValue:
-              payload.groupDiscountType === 'NONE' || payload.groupDiscountType === 'CONFIRM_LATER'
-                ? null
-                : payload.groupDiscountValue
-                  ? toOptionalNumber(payload.groupDiscountValue) ?? null
-                  : null,
-            groupDealNote: payload.groupDealNote,
-            isNegotiable: payload.isNegotiable,
-            reraNumber: payload.reraNumber,
-            possessionStatus: payload.possessionStatus,
-            amenities: payload.amenities,
-            imageUrls: payload.imageUrls
+        const formData = new FormData();
+        const appendValue = (key: string, value: string | number | boolean | null | undefined) => {
+          if (value === undefined || value === null || value === '') {
+            return;
+          }
+          formData.append(key, String(value));
+        };
+
+        appendValue('title', payload.title);
+        appendValue('description', payload.description);
+        appendValue('propertyType', payload.propertyType);
+        appendValue('bhk', payload.bhk ? Number(payload.bhk) : undefined);
+        appendValue('areaSqft', payload.areaSqft ? Number(payload.areaSqft) : undefined);
+        appendValue('carpetArea', payload.carpetArea ? Number(payload.carpetArea) : undefined);
+        appendValue('facing', payload.facing);
+        appendValue('floorNumber', payload.floorNumber ? Number(payload.floorNumber) : undefined);
+        appendValue('totalFloors', payload.totalFloors ? Number(payload.totalFloors) : undefined);
+        appendValue('state', payload.state);
+        appendValue('city', payload.city);
+        appendValue('locality', payload.locality);
+        appendValue('address', payload.address);
+        appendValue('latitude', toOptionalCoordinate(payload.latitude, -90, 90));
+        appendValue('longitude', toOptionalCoordinate(payload.longitude, -180, 180));
+        appendValue('price', payload.price ? Number(payload.price.replace(/,/g, '')) : undefined);
+        appendValue('pricePerSqft', payload.pricePerSqft ? Number(payload.pricePerSqft) : undefined);
+        appendValue('groupInventoryCount', toOptionalNumber(payload.groupInventoryCount));
+        appendValue('groupDealMinBuyers', toOptionalNumber(payload.groupDealMinBuyers));
+        appendValue(
+          'groupDealMaxBuyers',
+          payload.groupDealMaxBuyers ? toOptionalNumber(payload.groupDealMaxBuyers) : null
+        );
+        appendValue('groupDiscountType', payload.groupDiscountType);
+        appendValue(
+          'groupDiscountValue',
+          payload.groupDiscountType === 'NONE' || payload.groupDiscountType === 'CONFIRM_LATER'
+            ? null
+            : payload.groupDiscountValue
+              ? toOptionalNumber(payload.groupDiscountValue) ?? null
+              : null
+        );
+        appendValue('groupDealNote', payload.groupDealNote);
+        appendValue('isNegotiable', payload.isNegotiable);
+        appendValue('reraNumber', payload.reraNumber);
+        appendValue('possessionStatus', payload.possessionStatus);
+        formData.append('amenities', JSON.stringify(payload.amenities));
+        formData.append(
+          'imageUrls',
+          JSON.stringify(
+            payload.imageUrls
               .split(',')
               .map((url) => url.trim())
-              .filter(Boolean),
-            videoUrl: payload.videoUrl,
-            tourUrl: payload.tourUrl,
-          }),
+              .filter(Boolean)
+          )
+        );
+        appendValue('videoUrl', payload.videoUrl);
+        appendValue('tourUrl', payload.tourUrl);
+        if (payload.imageFile) {
+          formData.append('image', payload.imageFile);
+        }
+
+        await apiRequest('/api/owner/properties', {
+          method: 'POST',
+          body: formData,
         });
         await refreshAccess();
         onOpenListings();

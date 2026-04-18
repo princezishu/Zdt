@@ -15,36 +15,16 @@ import cors from 'cors';
 import compression from 'compression';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import crypto from 'crypto';
 import { createServer } from 'http';
 import net from 'net';
 import { createRateLimiter } from './middleware/rateLimit.js';
-import authRoutes from './routes/auth.js';
-import workflowRoutes from './routes/workflow.js';
-import chatRoutes from './routes/chat.js';
-import eauctionRoutes from './routes/eauction.js';
-import builderRoutes from './routes/builder.js';
-import realtyRoutes from './routes/realty.js';
-import layoutUnitsRoutes from './routes/layoutUnits.js';
-import apartmentComplexRoutes, {
-  runApartmentRentAutoReminderJob,
-} from './routes/apartmentComplex.js';
-import insightsRoutes from './routes/insights.js';
-import materialsRoutes from './routes/materials.js';
-import promotionsRoutes from './routes/promotions.js';
-import aiAssistantRoutes from './routes/aiAssistant.js';
-import rentalsRoutes from './routes/rentals.js';
-import ownerRoutes from './routes/owner.js';
-import dalalCoinRoutes from './routes/dalalCoin.js';
-import supportRoutes from './routes/support.js';
-import locationsRoutes from './routes/locations.js';
-import infraUpdatesRoutes from './routes/infraUpdates.js';
-import infraSubscriptionsRoutes from './routes/infraSubscriptions.js';
-import infraIngestRoutes from './routes/infraIngest.js';
-import tenderIntelligenceRoutes from './routes/tenderIntelligence.js';
-import groupDealsRoutes from './routes/groupDeals.js';
-import investSignalsRoutes from './routes/investSignals.js';
-import collaborationsRoutes from './routes/collaborations.js';
-import verificationRoutes from './modules/verification/routes.js';
+import { disableApiCaching } from './middleware/apiNoStore.js';
+import { handleApiNotFound } from './middleware/apiNotFound.js';
+import { handleBodyParserError } from './middleware/bodyParserError.js';
+import { normalizeApiErrorResponses } from './middleware/errorResponseEnvelope.js';
+import { handleApplicationError } from './middleware/errorHandler.js';
+import { registerRoutes } from './routes/index.js';
 import { initializeChatRealtime } from './services/chatRealtime.js';
 import { startPropertyAnalyticsScheduler } from './services/analytics/jobs.js';
 import { ensureInsightsSourceSeeds, startInsightsScheduler } from './services/insights/jobs.js';
@@ -57,6 +37,7 @@ import {
 } from './services/queue/index.js';
 import cron from 'node-cron';
 import { runInfraIngestJob } from './jobs/infraIngest.js';
+import { runApartmentRentAutoReminderJob } from './controllers/apartmentComplexController.js';
 import {
   ensureApartmentComplexTables,
   ensureAuthTables,
@@ -76,7 +57,6 @@ import {
   ensureDalalCoinTables,
   ensureVerificationTables,
   pool,
-  pingDb,
   reactivateExpiredTemporaryDeactivations,
 } from './db.js';
 import {
@@ -85,6 +65,8 @@ import {
   readListEnv,
   readStringEnv,
 } from './utils/env.js';
+import { buildErrorResponse } from './utils/errorResponses.js';
+import { isManagedAuthEnabled, getManagedAuthProvider } from './services/managedAuth.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -101,11 +83,13 @@ if (trustProxyRaw) {
   }
 }
 
-const PORT = readIntegerEnv('PORT', 5000, { min: 1, max: 65535 });
+const DEFAULT_PORT = 5000;
+const PORT = readIntegerEnv('PORT', DEFAULT_PORT, { min: 1, max: 65535 });
 const HOST = readStringEnv('HOST', '0.0.0.0');
 const CORS_ALLOW_ALL = readBooleanEnv('CORS_ALLOW_ALL', true);
 const API_V1_PREFIX = '/api/v1';
 const FORCE_HTTPS = readBooleanEnv('FORCE_HTTPS', false);
+const PORT_SOURCE = String(process.env.PORT || '').trim() ? 'process.env.PORT' : `default:${DEFAULT_PORT}`;
 
 function isAddressInUseError(error) {
   return Boolean(error && typeof error === 'object' && error.code === 'EADDRINUSE');
@@ -271,6 +255,16 @@ function isRequestOriginAllowed(origin) {
   return Boolean(allowedOrigins.includes(origin) || isDevLanOrigin);
 }
 
+function resolveRequestId(value) {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim().slice(0, 120);
+  }
+  if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim()) {
+    return value[0].trim().slice(0, 120);
+  }
+  return crypto.randomUUID();
+}
+
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -278,6 +272,13 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
+
+app.use((req, res, next) => {
+  const requestId = resolveRequestId(req.headers['x-request-id']);
+  req.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
 
 app.use((req, res, next) => {
   if (!FORCE_HTTPS) {
@@ -299,7 +300,11 @@ app.use((req, res, next) => {
     return res.redirect(301, target);
   }
 
-  return res.status(400).json({ error: 'HTTPS required' });
+  return res.status(400).json(buildErrorResponse({
+    req,
+    message: 'HTTPS required',
+    code: 'https_required',
+  }));
 });
 
 app.use(
@@ -341,6 +346,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(normalizeApiErrorResponses);
+
 function shouldCaptureRawJsonBody(url = '') {
   const normalizedUrl = String(url || '').toLowerCase();
   return (
@@ -364,24 +371,7 @@ app.use(express.json({
 }));
 
 // Catch JSON parse errors from express.json() and return user-friendly response.
-app.use((err, req, res, next) => {
-  if (err?.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'Invalid JSON in request body.' });
-  }
-  if (err?.type === 'entity.too.large') {
-    return res.status(413).json({ error: 'Request body is too large. Maximum is 5 MB.' });
-  }
-  return next(err);
-});
-
-app.get('/health', async (req, res) => {
-  try {
-    await pingDb();
-    return res.json({ ok: true });
-  } catch (error) {
-    return res.status(503).json({ ok: false });
-  }
-});
+app.use(handleBodyParserError);
 
 const authLoginRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
@@ -399,187 +389,19 @@ const globalApiRateLimiter = createRateLimiter({
 });
 
 // Prevent proxy/browser caching of JSON API responses
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path.startsWith('/workflow')) {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.setHeader('Pragma', 'no-cache');
-  }
-  next();
-});
+app.use(disableApiCaching);
 
-app.use('/auth', authLoginRateLimiter, authRoutes);
-app.use(`${API_V1_PREFIX}/auth`, authLoginRateLimiter, authRoutes);
-app.use('/workflow', globalApiRateLimiter, workflowRoutes);
-app.use(`${API_V1_PREFIX}/workflow`, globalApiRateLimiter, workflowRoutes);
-app.use('/chat', globalApiRateLimiter, chatRoutes);
-app.use(`${API_V1_PREFIX}/chat`, globalApiRateLimiter, chatRoutes);
-app.use('/api/eauction', globalApiRateLimiter, eauctionRoutes);
-app.use(`${API_V1_PREFIX}/eauction`, globalApiRateLimiter, eauctionRoutes);
-app.use('/api', globalApiRateLimiter, layoutUnitsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, layoutUnitsRoutes);
-app.use('/api/apartment-complex', globalApiRateLimiter, apartmentComplexRoutes);
-app.use(`${API_V1_PREFIX}/apartment-complex`, globalApiRateLimiter, apartmentComplexRoutes);
-app.use('/api/materials', globalApiRateLimiter, materialsRoutes);
-app.use(`${API_V1_PREFIX}/materials`, globalApiRateLimiter, materialsRoutes);
-app.use('/api/promotions', globalApiRateLimiter, promotionsRoutes);
-app.use(`${API_V1_PREFIX}/promotions`, globalApiRateLimiter, promotionsRoutes);
-app.use('/api/ai', globalApiRateLimiter, aiAssistantRoutes);
-app.use(`${API_V1_PREFIX}/ai`, globalApiRateLimiter, aiAssistantRoutes);
-app.use('/api/support', globalApiRateLimiter, supportRoutes);
-app.use(`${API_V1_PREFIX}/support`, globalApiRateLimiter, supportRoutes);
-app.use('/api', globalApiRateLimiter, insightsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, insightsRoutes);
-app.use('/api', globalApiRateLimiter, realtyRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, realtyRoutes);
-app.use('/api/rentals', globalApiRateLimiter, rentalsRoutes);
-app.use(`${API_V1_PREFIX}/rentals`, globalApiRateLimiter, rentalsRoutes);
-app.use('/api/owner', globalApiRateLimiter, ownerRoutes);
-app.use(`${API_V1_PREFIX}/owner`, globalApiRateLimiter, ownerRoutes);
-app.use('/api/dalal-coin', globalApiRateLimiter, dalalCoinRoutes);
-app.use(`${API_V1_PREFIX}/dalal-coin`, globalApiRateLimiter, dalalCoinRoutes);
-app.use('/api/dalal-coins', globalApiRateLimiter, dalalCoinRoutes);
-app.use(`${API_V1_PREFIX}/dalal-coins`, globalApiRateLimiter, dalalCoinRoutes);
-app.use('/api', globalApiRateLimiter, locationsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, locationsRoutes);
-app.use('/api', globalApiRateLimiter, infraUpdatesRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, infraUpdatesRoutes);
-app.use('/api', globalApiRateLimiter, infraSubscriptionsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, infraSubscriptionsRoutes);
-app.use('/api', globalApiRateLimiter, infraIngestRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, infraIngestRoutes);
-app.use('/api', globalApiRateLimiter, tenderIntelligenceRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, tenderIntelligenceRoutes);
-app.use('/api', globalApiRateLimiter, groupDealsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, groupDealsRoutes);
-app.use('/api', globalApiRateLimiter, investSignalsRoutes);
-app.use(API_V1_PREFIX, globalApiRateLimiter, investSignalsRoutes);
-app.use('/api/verification', globalApiRateLimiter, verificationRoutes);
-app.use(`${API_V1_PREFIX}/verification`, globalApiRateLimiter, verificationRoutes);
-app.use('/api/collaborations', globalApiRateLimiter, collaborationsRoutes);
-app.use(`${API_V1_PREFIX}/collaborations`, globalApiRateLimiter, collaborationsRoutes);
-app.use('/builder', globalApiRateLimiter, builderRoutes);
-app.use(`${API_V1_PREFIX}/builder`, globalApiRateLimiter, builderRoutes);
-app.use('/realty', globalApiRateLimiter, realtyRoutes);
-app.use(`${API_V1_PREFIX}/realty`, globalApiRateLimiter, realtyRoutes);
+registerRoutes(app, {
+  apiV1Prefix: API_V1_PREFIX,
+  authLoginRateLimiter,
+  globalApiRateLimiter,
+});
 
 // Catch-all 404 for unmatched API routes.
-app.use('/api', (req, res) => {
-  res.status(404).json({ error: 'Endpoint not found', path: req.originalUrl });
-});
-app.use(API_V1_PREFIX, (req, res) => {
-  res.status(404).json({ error: 'Endpoint not found', path: req.originalUrl });
-});
+app.use('/api', handleApiNotFound);
+app.use(API_V1_PREFIX, handleApiNotFound);
 
-app.use((err, req, res, next) => {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const requestContext = `${req.method} ${(req.originalUrl || req.url || '').slice(0, 80)}`;
-
-  // Guard against double-send.
-  if (res.headersSent) {
-    console.error(`[ERROR] Headers already sent for ${requestContext}:`, err);
-    return next(err);
-  }
-
-  // CORS errors from the cors() middleware.
-  if (err?.message?.startsWith?.('CORS blocked')) {
-    console.warn(`[CORS] ${err.message} — ${requestContext}`);
-    return res.status(403).json({ error: 'Origin not allowed.' });
-  }
-
-  if (err?.name === 'ZodError') {
-    const payload = {
-      error: 'Invalid request',
-    };
-    if (!isProduction) {
-      payload.details = err.issues.map((issue) => ({
-        path: issue.path.join('.'),
-        message: issue.message,
-      }));
-    }
-    return res.status(400).json(payload);
-  }
-
-  const customStatus = Number(err?.status || 0);
-  if (Number.isFinite(customStatus) && customStatus >= 400 && customStatus < 600) {
-    const payload = {
-      error:
-        typeof err?.message === 'string' && err.message.trim()
-          ? err.message
-          : 'Request could not be completed.',
-    };
-
-    if (typeof err?.code === 'string' && err.code) {
-      payload.code = err.code;
-    }
-
-    if (err?.metadata && typeof err.metadata === 'object' && !Array.isArray(err.metadata)) {
-      payload.metadata = err.metadata;
-    }
-
-    if (customStatus >= 500) {
-      console.error(`[ERROR] ${requestContext} → ${customStatus}:`, err.message);
-    }
-
-    return res.status(customStatus).json(payload);
-  }
-
-  const pgCode = typeof err?.code === 'string' ? err.code : '';
-  const pgConstraint = typeof err?.constraint === 'string' ? err.constraint : '';
-
-  if (pgCode === '23505') {
-    if (pgConstraint === 'rooms_building_floor_room_label_unique') {
-      return res.status(409).json({
-        error: 'Room name/number already exists on this floor. Use a different label.',
-      });
-    }
-
-    if (pgConstraint === 'rent_payments_room_month_unique') {
-      return res.status(409).json({
-        error: 'Rent record already exists for this room and month.',
-      });
-    }
-
-    return res.status(409).json({
-      error: 'Duplicate data conflict. Please change the input and try again.',
-    });
-  }
-
-  if (pgCode === '23503') {
-    return res.status(400).json({
-      error: 'Related record not found or cannot be referenced.',
-    });
-  }
-
-  if (pgCode === '23514') {
-    return res.status(400).json({
-      error: 'Invalid value for one or more fields.',
-    });
-  }
-
-  if (pgCode === '22P02') {
-    return res.status(400).json({
-      error: 'Invalid input format.',
-    });
-  }
-
-  if (pgCode === '42P08') {
-    return res.status(400).json({
-      error: 'Invalid parameter type in request handling.',
-    });
-  }
-
-  if (pgCode === 'P0001') {
-    return res.status(409).json({
-      error:
-        !isProduction && typeof err?.message === 'string' && err.message.trim()
-          ? err.message
-          : 'Operation violates configured system limits.',
-    });
-  }
-
-  console.error(`[ERROR] Unhandled server error for ${requestContext}:`, err);
-  return res.status(500).json({ error: 'Server error' });
-});
+app.use(handleApplicationError);
 
 async function startServer() {
   try {
@@ -603,7 +425,13 @@ async function startServer() {
     await ensureGroupDealsTables();
     await ensureCollaborationTables();
     await ensureInsightsSourceSeeds();
-    startInsightsScheduler();
+    const insightsSchedulerEnabled =
+      String(process.env.ENABLE_INSIGHTS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
+    if (insightsSchedulerEnabled) {
+      startInsightsScheduler();
+    } else {
+      console.log('[Insights] Scheduler disabled. Set ENABLE_INSIGHTS_SCHEDULER=true to activate.');
+    }
     const apartmentAutoAlertEnabled =
       String(process.env.APARTMENT_RENT_AUTO_ALERT_ENABLED || 'true').trim().toLowerCase() !==
       'false';
@@ -778,12 +606,18 @@ async function startServer() {
       markQueueSystemDisabled(queuePolicy.reason);
       console.log(`[QUEUE] ${queuePolicy.reason}`);
     }
-    startPropertyAnalyticsScheduler({
-      intervalMs: 15 * 60 * 1000,
-      onTick: async () => {
-        await enqueueAnalyticsAggregation();
-      },
-    });
+    const analyticsSchedulerEnabled =
+      String(process.env.ENABLE_ANALYTICS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
+    if (analyticsSchedulerEnabled) {
+      startPropertyAnalyticsScheduler({
+        intervalMs: 15 * 60 * 1000,
+        onTick: async () => {
+          await enqueueAnalyticsAggregation();
+        },
+      });
+    } else {
+      console.log('[ANALYTICS] Scheduler disabled. Set ENABLE_ANALYTICS_SCHEDULER=true to activate.');
+    }
 
     const intervalMs = 5 * 60 * 1000;
     const runReactivationSweep = async () => {
@@ -814,6 +648,20 @@ async function startServer() {
 
     httpServer.listen(serverListenOptions, () => {
       console.log(`API + realtime listening on ${listenConfig.displayHost}:${PORT}`);
+      console.log(
+        `[SERVER] Startup config: host=${listenConfig.displayHost}, port=${PORT} (${PORT_SOURCE}), cors=${CORS_ALLOW_ALL ? 'allow-all' : `allow-list:${allowedOrigins.length}`}.`
+      );
+
+      // Log Supabase Auth status so the operator can confirm integration is live.
+      if (isManagedAuthEnabled()) {
+        const provider = getManagedAuthProvider();
+        const autoLink = String(process.env.MANAGED_AUTH_AUTO_LINK_BY_EMAIL || '').trim().toLowerCase() === 'true'
+          ? ' (auto-link by email ON)'
+          : ' (auto-link by email OFF)';
+        console.log(`[AUTH] Supabase Auth active as primary provider: ${provider}${autoLink}`);
+      } else {
+        console.warn('[AUTH] Supabase Auth is NOT enabled. Set MANAGED_AUTH_PROVIDER=supabase and SUPABASE_ANON_KEY to activate managed auth.');
+      }
     });
 
     // Graceful shutdown on termination signals.

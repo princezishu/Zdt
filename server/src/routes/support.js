@@ -1,1 +1,6 @@
-export { default } from '../controllers/supportController.js';
+import supportController from '../controllers/supportController.js';
+import { createControllerRoute } from './createControllerRoute.js';
+
+const router = createControllerRoute(supportController);
+
+export default router;

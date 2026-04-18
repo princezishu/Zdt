@@ -85,6 +85,14 @@ export async function uploadToCloudinary(
   });
 }
 
+export async function uploadPropertyImageToCloudinary(buffer, publicId) {
+  return uploadToCloudinary(buffer, {
+    folder: buildCloudinaryFolder('property-images'),
+    publicId,
+    resourceType: 'image',
+  });
+}
+
 /**
  * Delete a file from Cloudinary by its public ID.
  */

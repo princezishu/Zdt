@@ -1,3 +1,4 @@
+import multer from 'multer';
 import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../db.js';
@@ -9,7 +10,11 @@ import {
   listOwnerBillingOrders,
   mapBillingOrderRow,
 } from '../services/ownerBilling.js';
-import { resolveCloudinaryUrl } from '../services/cloudinary.js';
+import {
+  resolveCloudinaryUrl,
+  uploadPropertyImageToCloudinary,
+  uploadToCloudinary,
+} from '../services/cloudinary.js';
 import {
   getDalalCoinWallet,
 } from '../services/dalalCoinMvp.js';
@@ -57,6 +62,26 @@ const JWT_SECRET = requireNonEmptyEnv('JWT_SECRET');
 const MEDIA_SIGNING_SECRET =
   process.env.MEDIA_SIGNING_SECRET?.trim() ||
   `${JWT_SECRET}:media`;
+const OWNER_PROPERTY_IMAGE_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
+const OWNER_PROPERTY_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+const ownerPropertyImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: OWNER_PROPERTY_IMAGE_UPLOAD_LIMIT_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (OWNER_PROPERTY_IMAGE_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error('Invalid file type. Upload PNG, JPEG, or WebP images only.'));
+  },
+});
+
+const OWNER_IMAGE_URL_SCHEMA = z.string().trim().url().max(1000);
 
 const OWNER_PROPERTY_SCHEMA = z.object({
   title: z.string().trim().min(4).max(220),
@@ -86,7 +111,7 @@ const OWNER_PROPERTY_SCHEMA = z.object({
   groupDiscountValue: z.union([z.coerce.number().positive(), z.null()]).optional().default(null),
   groupDealNote: z.string().trim().max(500).optional().default(''),
   amenities: z.array(z.string().trim().max(80)).optional().default([]),
-  imageUrls: z.array(z.string().trim().max(1000)).optional().default([]),
+  imageUrls: z.array(OWNER_IMAGE_URL_SCHEMA).optional().default([]),
   videoUrl: z.string().trim().max(1200).optional().default(''),
   tourUrl: z.string().trim().max(1200).optional().default(''),
 });
@@ -119,7 +144,7 @@ const OWNER_PROPERTY_UPDATE_SCHEMA = z.object({
   groupDiscountValue: z.union([z.coerce.number().positive(), z.null()]).optional(),
   groupDealNote: z.string().trim().max(500).optional(),
   amenities: z.array(z.string().trim().max(80)).optional(),
-  imageUrls: z.array(z.string().trim().max(1000)).optional(),
+  imageUrls: z.array(OWNER_IMAGE_URL_SCHEMA).optional(),
   videoUrl: z.string().trim().max(1200).optional(),
   tourUrl: z.string().trim().max(1200).optional(),
 });
@@ -241,6 +266,108 @@ function toNullableNumber(value) {
   if (value === undefined || value === null || value === '') return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function mergeMultipartPayload(input) {
+  const source =
+    input && typeof input === 'object' && !Array.isArray(input)
+      ? { ...input }
+      : {};
+
+  if (typeof source.payload === 'string' && source.payload.trim()) {
+    try {
+      const parsed = JSON.parse(source.payload);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        delete source.payload;
+        return {
+          ...parsed,
+          ...source,
+        };
+      }
+    } catch {
+      // Fall back to individual multipart fields when payload is not valid JSON.
+    }
+  }
+
+  return source;
+}
+
+function normalizeOptionalNumberish(value, { allowNull = false } = {}) {
+  if (value === undefined) return undefined;
+  if (value === null) return allowNull ? null : undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.toLowerCase() === 'null') {
+      return allowNull ? null : undefined;
+    }
+  }
+  return value;
+}
+
+function normalizeBooleanInput(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return value;
+}
+
+function normalizeStringArrayInput(value) {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => String(entry || '').split(','))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized || normalized.toLowerCase() === 'null') {
+    return [];
+  }
+
+  if (normalized.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      }
+    } catch {
+      return value;
+    }
+  }
+
+  return normalized
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeOwnerPropertyInput(input) {
+  const source = mergeMultipartPayload(input);
+
+  return {
+    ...source,
+    bhk: normalizeOptionalNumberish(source.bhk),
+    areaSqft: normalizeOptionalNumberish(source.areaSqft),
+    carpetArea: normalizeOptionalNumberish(source.carpetArea),
+    floorNumber: normalizeOptionalNumberish(source.floorNumber),
+    totalFloors: normalizeOptionalNumberish(source.totalFloors),
+    latitude: normalizeOptionalNumberish(source.latitude),
+    longitude: normalizeOptionalNumberish(source.longitude),
+    price: normalizeOptionalNumberish(source.price),
+    pricePerSqft: normalizeOptionalNumberish(source.pricePerSqft),
+    groupInventoryCount: normalizeOptionalNumberish(source.groupInventoryCount),
+    groupDealMinBuyers: normalizeOptionalNumberish(source.groupDealMinBuyers),
+    groupDealMaxBuyers: normalizeOptionalNumberish(source.groupDealMaxBuyers, { allowNull: true }),
+    groupDiscountValue: normalizeOptionalNumberish(source.groupDiscountValue, { allowNull: true }),
+    isNegotiable: normalizeBooleanInput(source.isNegotiable),
+    amenities: normalizeStringArrayInput(source.amenities),
+    imageUrls: normalizeStringArrayInput(source.imageUrls),
+  };
 }
 
 function toNullableDate(value) {
@@ -458,6 +585,7 @@ async function resolveCheckoutPlan(lookup) {
 }
 
 function mapOwnerProperty(row) {
+  const imageUrls = Array.isArray(row.image_urls) ? row.image_urls : [];
   const groupDeal = extractGroupDealConfigFromLayout(row.layout_details || {});
   return {
     id: Number(row.id),
@@ -485,12 +613,37 @@ function mapOwnerProperty(row) {
     isVerified: Boolean(row.is_verified),
     isFeatured: Boolean(row.is_featured),
     viewCount: Number(row.view_count || 0),
-    imageUrls: Array.isArray(row.image_urls) ? row.image_urls : [],
+    imageUrls,
+    imageUrl: imageUrls[0] || '',
+    primaryImage: imageUrls[0] || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     layoutDetails: row.layout_details || {},
     groupDeal,
   };
+}
+
+async function uploadOwnerPropertyImage(file, userId) {
+  if (!file?.buffer || file.buffer.length === 0) {
+    return '';
+  }
+
+  try {
+    const uploaded = await uploadPropertyImageToCloudinary(
+      file.buffer,
+      `owner-property-${Date.now()}-${userId}-${Math.random().toString(16).slice(2, 10)}`
+    );
+    return uploaded.secureUrl || uploaded.url || '';
+  } catch (error) {
+    const uploadError = new Error('Property image upload failed.');
+    uploadError.status = 502;
+    uploadError.code = 'property_image_upload_failed';
+    uploadError.metadata = {
+      provider: 'cloudinary',
+      reason: error instanceof Error ? error.message : 'unknown_upload_error',
+    };
+    throw uploadError;
+  }
 }
 
 router.post('/checkout/webhook/razorpay', async (req, res, next) => {
@@ -1220,125 +1373,143 @@ router.get('/properties/:id', async (req, res, next) => {
   }
 });
 
-router.post('/properties', async (req, res, next) => {
-  try {
-    const payload = OWNER_PROPERTY_SCHEMA.parse(req.body || {});
-    const profile = await ensureOwnerProfile(req.user.id);
-    await assertListingQuotaAvailable(pool, req.user.id);
+router.post('/properties', (req, res, next) => {
+  ownerPropertyImageUpload.single('image')(req, res, async (uploadError) => {
+    try {
+      if (uploadError) {
+        if (uploadError instanceof multer.MulterError && uploadError.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            error: `Image is too large. Maximum size is ${Math.floor(OWNER_PROPERTY_IMAGE_UPLOAD_LIMIT_BYTES / (1024 * 1024))} MB.`,
+          });
+        }
+        return res.status(400).json({ error: uploadError.message || 'Invalid image upload.' });
+      }
 
-    const fullAddress = [payload.address, payload.locality, payload.city].filter(Boolean).join(', ');
-    const groupDealConfig = normalizeListingGroupDealConfig(payload);
-    const layoutDetails = mergeLayoutDetailsWithGroupDeal({
-      amenities: payload.amenities || [],
-      media: { videoUrl: payload.videoUrl || '', tourUrl: payload.tourUrl || '' },
-    }, groupDealConfig);
+      const payload = OWNER_PROPERTY_SCHEMA.parse(normalizeOwnerPropertyInput(req.body || {}));
+      const profile = await ensureOwnerProfile(req.user.id);
+      await assertListingQuotaAvailable(pool, req.user.id);
 
-    const inserted = await pool.query(
-      `
-        INSERT INTO properties (
-          company_id,
-          title,
-          property_type,
-          listing_type,
-          price,
-          price_per_sqft,
-          state,
-          city,
-          area,
-          locality,
-          address,
-          full_address,
-          latitude,
-          longitude,
-          area_sqft,
-          carpet_area,
-          bedrooms,
-          floor_number,
-          total_floors,
-          facing,
-          possession_status,
-          rera_number,
-          is_negotiable,
-          image_urls,
-          description,
-          layout_details,
-          posted_by,
-          created_by_user_id
-        )
-        VALUES (
-          $1,$2,$3,'sale',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
-        )
-        RETURNING *
-      `,
-      [
-        profile.company_id,
-        payload.title,
-        payload.propertyType,
-        toNullableNumber(payload.price),
-        toNullableNumber(payload.pricePerSqft),
-        payload.state || payload.city,
-        payload.city,
-        payload.locality || payload.city,
-        payload.locality || '',
-        payload.address || '',
-        fullAddress,
-        toNullableNumber(payload.latitude),
-        toNullableNumber(payload.longitude),
-        toNullableNumber(payload.areaSqft),
-        toNullableNumber(payload.carpetArea),
-        payload.bhk ?? null,
-        payload.floorNumber ?? null,
-        payload.totalFloors ?? null,
-        payload.facing || 'NA',
-        payload.possessionStatus || 'ready',
-        payload.reraNumber || '',
-        Boolean(payload.isNegotiable),
-        payload.imageUrls || [],
-        payload.description || '',
-        layoutDetails,
-        req.user.id,
-        req.user.id,
-      ]
-    );
+      const uploadedImageUrl = await uploadOwnerPropertyImage(req.file, req.user.id);
 
-    const companyRows = await pool.query(
-      `
-        SELECT name, is_verified
-        FROM companies
-        WHERE id = $1
-        LIMIT 1
-      `,
-      [Number(profile.company_id)]
-    );
-    const company = companyRows.rows[0] || { name: 'Seller', is_verified: false };
-    await syncAutoGroupDealForProperty(pool, {
-      propertyId: Number(inserted.rows[0].id),
-      listingType: 'sale',
-      title: payload.title,
-      state: payload.state || payload.city,
-      city: payload.city,
-      propertyType: payload.propertyType,
-      bedrooms: payload.bhk ?? null,
-      basePrice: payload.price ?? null,
-      builderName: company.name || 'Seller',
-      builderVerified: Boolean(company.is_verified),
-      groupDealConfig,
-    });
+      const imageUrls = [...(payload.imageUrls || [])];
+      if (uploadedImageUrl) {
+        imageUrls.unshift(uploadedImageUrl);
+      }
 
-    await pool.query(
-      `
-        UPDATE owner_profiles
-        SET total_listings = COALESCE(total_listings, 0) + 1,
-            updated_at = NOW()
-        WHERE user_id = $1
-      `,
-      [req.user.id]
-    );
+      const fullAddress = [payload.address, payload.locality, payload.city].filter(Boolean).join(', ');
+      const groupDealConfig = normalizeListingGroupDealConfig(payload);
+      const layoutDetails = mergeLayoutDetailsWithGroupDeal({
+        amenities: payload.amenities || [],
+        media: { videoUrl: payload.videoUrl || '', tourUrl: payload.tourUrl || '' },
+      }, groupDealConfig);
 
-    return res.status(201).json({ property: mapOwnerProperty(inserted.rows[0]) });
-  } catch (error) {
-    return next(error);
-  }
+      const inserted = await pool.query(
+        `
+          INSERT INTO properties (
+            company_id,
+            title,
+            property_type,
+            listing_type,
+            price,
+            price_per_sqft,
+            state,
+            city,
+            area,
+            locality,
+            address,
+            full_address,
+            latitude,
+            longitude,
+            area_sqft,
+            carpet_area,
+            bedrooms,
+            floor_number,
+            total_floors,
+            facing,
+            possession_status,
+            rera_number,
+            is_negotiable,
+            image_urls,
+            description,
+            layout_details,
+            posted_by,
+            created_by_user_id
+          )
+          VALUES (
+            $1,$2,$3,'sale',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+          )
+          RETURNING *
+        `,
+        [
+          profile.company_id,
+          payload.title,
+          payload.propertyType,
+          toNullableNumber(payload.price),
+          toNullableNumber(payload.pricePerSqft),
+          payload.state || payload.city,
+          payload.city,
+          payload.locality || payload.city,
+          payload.locality || '',
+          payload.address || '',
+          fullAddress,
+          toNullableNumber(payload.latitude),
+          toNullableNumber(payload.longitude),
+          toNullableNumber(payload.areaSqft),
+          toNullableNumber(payload.carpetArea),
+          payload.bhk ?? null,
+          payload.floorNumber ?? null,
+          payload.totalFloors ?? null,
+          payload.facing || 'NA',
+          payload.possessionStatus || 'ready',
+          payload.reraNumber || '',
+          Boolean(payload.isNegotiable),
+          imageUrls,
+          payload.description || '',
+          layoutDetails,
+          req.user.id,
+          req.user.id,
+        ]
+      );
+
+      const companyRows = await pool.query(
+        `
+          SELECT name, is_verified
+          FROM companies
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [Number(profile.company_id)]
+      );
+      const company = companyRows.rows[0] || { name: 'Seller', is_verified: false };
+      await syncAutoGroupDealForProperty(pool, {
+        propertyId: Number(inserted.rows[0].id),
+        listingType: 'sale',
+        title: payload.title,
+        state: payload.state || payload.city,
+        city: payload.city,
+        propertyType: payload.propertyType,
+        bedrooms: payload.bhk ?? null,
+        basePrice: payload.price ?? null,
+        builderName: company.name || 'Seller',
+        builderVerified: Boolean(company.is_verified),
+        groupDealConfig,
+      });
+
+      await pool.query(
+        `
+          UPDATE owner_profiles
+          SET total_listings = COALESCE(total_listings, 0) + 1,
+              updated_at = NOW()
+          WHERE user_id = $1
+        `,
+        [req.user.id]
+      );
+
+      return res.status(201).json({ property: mapOwnerProperty(inserted.rows[0]) });
+    } catch (error) {
+      return next(error);
+    }
+  });
 });
 
 router.put('/properties/:id', async (req, res, next) => {
