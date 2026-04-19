@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
-    "build": "node ./scripts/generate-sitemap.mjs && tsc -b && vite build",
+    "build": "node ./scripts/generate-sitemap.mjs && node ./node_modules/typescript/bin/tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
