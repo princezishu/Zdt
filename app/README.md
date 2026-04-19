@@ -1,73 +1,65 @@
-# React + TypeScript + Vite
+# ZDT Realty Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This directory contains the React + TypeScript + Vite frontend for ZDT Realty. It is designed to deploy on Vercel from the `app/` directory of the repository.
 
-Currently, two official plugins are available:
+## Local commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
+npm run build
+npm test
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Vercel deployment
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+1. Push the repository to GitHub.
+2. In Vercel, create a new project and import the GitHub repository.
+3. When Vercel asks for the project location, set the Root Directory to `app`.
+4. Confirm the build settings:
+   - Framework Preset: `Vite`
+   - Install Command: `npm install`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+   - Node.js Version: any version matching `^20.19.0 || >=22.12.0`
+5. Add the environment variables from [`app/.env.example`](./.env.example).
+6. Click Deploy.
+7. If the final production domain changes after the first deploy, update:
+   - `VITE_SITE_URL`
+   - `VITE_SUPABASE_AUTH_REDIRECT_URL`
+   - `VITE_SUPABASE_PASSWORD_RESET_REDIRECT_URL`
+8. Redeploy after any environment variable change.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Environment variables
+
+Required for normal production behavior:
+
+- `VITE_API_URL`: Public backend base URL used by the frontend in production.
+- `VITE_SITE_URL`: Public frontend URL used for sitemap generation and canonical tags.
+
+Required when managed auth is enabled:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_AUTH_REDIRECT_URL`
+- `VITE_SUPABASE_PASSWORD_RESET_REDIRECT_URL`
+
+Optional integrations and feature flags:
+
+- `VITE_GOOGLE_MAPS_API_KEY`: Enables map markers on buy/rent map pages.
+- `VITE_ENABLE_GROUP_DEALS`: Defaults to `true`.
+- `VITE_WHATSAPP_NUMBER`: Primary public WhatsApp number.
+- `VITE_CONSTRUCTION_WHATSAPP_NUMBER`
+- `VITE_CONSTRUCT_WHATSAPP_NUMBER`
+- `VITE_CONSTRUCTION_WHATSAPP_TEXT`
+- `VITE_SUPPORT_UPI_QR_URL`
+- `VITE_API_VERSION_PREFIX`: Defaults to `/api/v1`.
+
+## Post-deploy smoke test
+
+- Verify `/`, `/buy`, `/rent`, `/buy-map`, and `/rent-map` load.
+- Verify API-backed pages hit the deployed backend instead of localhost.
+- Verify login, OAuth, and password reset flows if Supabase auth is enabled.
+- Verify deep links refresh correctly on nested routes.
+- Verify Google Maps pages either render normally with a key or show the expected fallback state without one.
+- Verify WhatsApp CTA links open the expected number.
