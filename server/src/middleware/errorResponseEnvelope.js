@@ -3,6 +3,11 @@ import {
   getRequestContext,
   normalizeErrorResponse,
 } from '../utils/errorResponses.js';
+import {
+  captureServerError,
+  hasCapturedServerError,
+  markServerErrorCaptured,
+} from '../utils/sentry.js';
 
 export function normalizeApiErrorResponses(req, res, next) {
   const originalJson = res.json.bind(res);
@@ -18,6 +23,28 @@ export function normalizeApiErrorResponses(req, res, next) {
       payload: body,
       status: statusCode,
     });
+
+    if (statusCode === 500 && !hasCapturedServerError(res)) {
+      const eventId = captureServerError(
+        new Error('Server error response sent directly from a route handler.'),
+        {
+          req,
+          handled: true,
+          tags: {
+            source: 'route_response',
+            status_code: '500',
+          },
+          extra: {
+            response: normalizedBody,
+          },
+          mechanismType: 'express.route_response',
+        }
+      );
+
+      if (eventId) {
+        markServerErrorCaptured(res);
+      }
+    }
 
     if (statusCode >= 500 && normalizedBody !== body) {
       console.error(

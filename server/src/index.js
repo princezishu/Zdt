@@ -1,13 +1,38 @@
 import 'dotenv/config';
+import {
+  captureServerError,
+  flushSentry,
+  initializeSentry,
+} from './utils/sentry.js';
 
 // ── Process-level crash guards (must be first) ──
 process.on('uncaughtException', (error) => {
   console.error('[FATAL] Uncaught exception — the process will exit:', error);
-  process.exit(1);
+  captureServerError(error, {
+    handled: false,
+    level: 'fatal',
+    tags: {
+      source: 'process',
+      signal: 'uncaughtException',
+    },
+    mechanismType: 'process.uncaughtException',
+  });
+  void flushSentry(2000).finally(() => {
+    process.exit(1);
+  });
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled promise rejection:', reason);
+  captureServerError(reason, {
+    handled: false,
+    level: 'error',
+    tags: {
+      source: 'process',
+      signal: 'unhandledRejection',
+    },
+    mechanismType: 'process.unhandledRejection',
+  });
 });
 
 import express from 'express';
@@ -67,6 +92,8 @@ import {
 } from './utils/env.js';
 import { buildErrorResponse } from './utils/errorResponses.js';
 import { isManagedAuthEnabled, getManagedAuthProvider } from './services/managedAuth.js';
+
+initializeSentry();
 
 const app = express();
 app.disable('x-powered-by');
@@ -694,6 +721,16 @@ async function startServer() {
     } catch (error) {
       startupFailure = error;
       console.error('[SERVER] Startup tasks failed after listen:', error);
+      captureServerError(error, {
+        handled: false,
+        level: 'fatal',
+        tags: {
+          source: 'startup',
+          phase: 'post-listen',
+        },
+        mechanismType: 'server.startup',
+      });
+      await flushSentry(2000);
       process.exit(1);
     }
 
@@ -719,6 +756,16 @@ async function startServer() {
 
   } catch (error) {
     console.error('[SERVER] Failed to start:', error);
+    captureServerError(error, {
+      handled: false,
+      level: 'fatal',
+      tags: {
+        source: 'startup',
+        phase: 'pre-listen',
+      },
+      mechanismType: 'server.startup',
+    });
+    await flushSentry(2000);
     process.exit(1);
   }
 }

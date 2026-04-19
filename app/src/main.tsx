@@ -5,6 +5,8 @@ import './styles/app-utilities.css'
 import './styles/portal-mobile.css'
 import App from './App.tsx'
 import { Toaster } from '@/components/ui/sonner'
+import { initializeSentry, Sentry } from '@/lib/sentry'
+import { initializeGoogleAnalytics } from '@/lib/googleAnalytics'
 
 const isEdgeBrowser =
   typeof navigator !== 'undefined' &&
@@ -14,9 +16,40 @@ if (isEdgeBrowser) {
   document.documentElement.classList.add('is-edge')
 }
 
-createRoot(document.getElementById('root')!).render(
+initializeSentry()
+initializeGoogleAnalytics()
+
+const root = createRoot(document.getElementById('root')!, {
+  onUncaughtError: Sentry.reactErrorHandler((error, errorInfo) => {
+    console.error('[APP] React root error:', {
+      error,
+      componentStack: errorInfo.componentStack,
+    })
+  }),
+})
+
+root.render(
   <StrictMode>
-    <App />
+    <Sentry.ErrorBoundary
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-white px-6 text-center text-slate-900">
+          <div className="max-w-md space-y-3">
+            <h1 className="text-2xl font-semibold">Something went wrong.</h1>
+            <p className="text-sm text-slate-600">
+              Please refresh the page and try again.
+            </p>
+          </div>
+        </div>
+      }
+      onError={(error, componentStack) => {
+        console.error('[APP] React error boundary caught an error:', {
+          error,
+          componentStack,
+        })
+      }}
+    >
+      <App />
+    </Sentry.ErrorBoundary>
     <Toaster richColors position="top-right" />
   </StrictMode>,
 )

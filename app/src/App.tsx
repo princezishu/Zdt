@@ -30,6 +30,7 @@ import {
   signOutManagedAuth,
   subscribeToManagedAuthChanges,
 } from '@/lib/supabase';
+import { trackGoogleAnalyticsPageView } from '@/lib/googleAnalytics';
 
 type StrategicModuleView =
   | 'area-insights'
@@ -79,6 +80,16 @@ function App() {
   useEffect(() => {
     currentViewRef.current = currentView;
   }, [currentView]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      trackGoogleAnalyticsPageView();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [routeState]);
 
   useEffect(() => {
     let active = true;

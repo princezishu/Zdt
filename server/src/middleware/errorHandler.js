@@ -3,6 +3,10 @@ import {
   describeError,
   getRequestContext,
 } from '../utils/errorResponses.js';
+import {
+  captureServerError,
+  markServerErrorCaptured,
+} from '../utils/sentry.js';
 
 function sendErrorResponse(
   req,
@@ -29,10 +33,26 @@ function sendErrorResponse(
 export function handleApplicationError(err, req, res, next) {
   const isProduction = process.env.NODE_ENV === 'production';
   const requestContext = getRequestContext(req);
+  const captureAndMark = (error, options = {}) => {
+    const eventId = captureServerError(error, { req, ...options });
+    if (eventId) {
+      markServerErrorCaptured(res);
+    }
+    return eventId;
+  };
 
   // Guard against double-send.
   if (res.headersSent) {
     console.error(`[ERROR] Headers already sent for ${requestContext}.`, describeError(err));
+    captureAndMark(err, {
+      handled: false,
+      tags: {
+        source: 'express',
+        status_code: String(Number(err?.status || 500) || 500),
+        response_state: 'headers_sent',
+      },
+      mechanismType: 'express.error_handler',
+    });
     return next(err);
   }
 
@@ -78,6 +98,14 @@ export function handleApplicationError(err, req, res, next) {
         `[ERROR] ${requestContext} -> ${customStatus}: ${message}`,
         describeError(err)
       );
+      captureAndMark(err, {
+        handled: false,
+        tags: {
+          source: 'express',
+          status_code: String(customStatus),
+        },
+        mechanismType: 'express.error_handler',
+      });
     } else {
       console.warn(`[WARN] ${requestContext} -> ${customStatus}: ${message}`);
     }
@@ -166,6 +194,14 @@ export function handleApplicationError(err, req, res, next) {
     `[ERROR] Unhandled server error for ${requestContext}.`,
     describeError(err)
   );
+  captureAndMark(err, {
+    handled: false,
+    tags: {
+      source: 'express',
+      status_code: '500',
+    },
+    mechanismType: 'express.error_handler',
+  });
   return sendErrorResponse(req, res, 500, {
     message: 'Server error',
     code: 'server_error',
