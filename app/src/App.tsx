@@ -31,6 +31,7 @@ import {
   subscribeToManagedAuthChanges,
 } from '@/lib/supabase';
 import { trackGoogleAnalyticsPageView } from '@/lib/googleAnalytics';
+import { Analytics } from '@vercel/analytics/react';
 
 type StrategicModuleView =
   | 'area-insights'
@@ -591,7 +592,8 @@ function App() {
   };
 
   return (
-    <AppChrome
+    <>
+      <AppChrome
       isLoaded={isLoaded}
       shellVisibility={shellVisibility}
       headerProps={headerProps}
@@ -641,7 +643,9 @@ function App() {
         onConsumeInitialConversationId={() => setMessagePageConversationSeed(null)}
         onConsumeInitialDraftMessage={() => setMessagePageDraftSeed('')}
       />
-    </AppChrome>
+      </AppChrome>
+      <Analytics />
+    </>
   );
 }
 
