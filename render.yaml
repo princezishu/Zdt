@@ -1,0 +1,99 @@
+services:
+  - type: web
+    name: zdt-realty-backend
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # Core runtime
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: FORCE_HTTPS
+        value: "true"
+      - key: CORS_ALLOW_ALL
+        value: "true"
+
+      # Database
+      - key: SUPABASE_DB_POOLER_URL
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+
+      # Auth and security
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: MEDIA_SIGNING_SECRET
+        generateValue: true
+      - key: MANAGED_AUTH_PROVIDER
+        value: supabase
+      - key: MANAGED_AUTH_AUTO_LINK_BY_EMAIL
+        value: "true"
+      - key: SUPABASE_PROJECT_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+
+      # Media upload
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_UPLOAD_FOLDER
+        value: zdt
+
+      # Optional bootstrap/admin defaults
+      - key: MAIN_ADMIN_NAME
+        sync: false
+      - key: MAIN_ADMIN_EMAIL
+        sync: false
+      - key: MAIN_ADMIN_PASSWORD
+        sync: false
+      - key: MAIN_ADMIN_PHONE
+        sync: false
+
+      # Optional feature integrations
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: SUPPORT_UPI_QR_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ENABLE_REDIS_QUEUE
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
