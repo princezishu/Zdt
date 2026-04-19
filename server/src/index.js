@@ -71,6 +71,8 @@ import { isManagedAuthEnabled, getManagedAuthProvider } from './services/managed
 const app = express();
 app.disable('x-powered-by');
 const httpServer = createServer(app);
+let startupReady = false;
+let startupFailure = null;
 const trustProxyRaw = readStringEnv('TRUST_PROXY', '1');
 if (trustProxyRaw) {
   const lowerValue = trustProxyRaw.toLowerCase();
@@ -391,6 +393,22 @@ const globalApiRateLimiter = createRateLimiter({
 // Prevent proxy/browser caching of JSON API responses
 app.use(disableApiCaching);
 
+app.use((req, res, next) => {
+  if (req.path === '/health') {
+    return next();
+  }
+
+  if (startupFailure) {
+    return res.status(503).json(buildErrorResponse({
+      req,
+      message: 'Server startup failed. Check backend logs and retry the deployment.',
+      code: 'service_startup_failed',
+    }));
+  }
+
+  return next();
+});
+
 registerRoutes(app, {
   apiV1Prefix: API_V1_PREFIX,
   authLoginRateLimiter,
@@ -403,240 +421,30 @@ app.use(API_V1_PREFIX, handleApiNotFound);
 
 app.use(handleApplicationError);
 
+async function completeStartupTasks() {
+  await ensureAuthTables();
+  await ensureBuilderCompanyTables();
+  await ensureVerificationTables();
+  await ensureLayoutUnitTables();
+  await ensureEAuctionTables();
+  await ensureApartmentComplexTables();
+  await ensureBuildingMaterialsTables();
+  await ensureSitePromotionsTables();
+  await ensureSupportProgramTables();
+  await ensureOwnerTables();
+  await ensureDalalCoinTables();
+  await ensureInsightsTables();
+  await ensureInfrastructureTables();
+  await ensureTenderIntelligenceTables();
+  await ensureTenderIntelligenceSourceSeeds();
+  await ensureGroupDealsTables();
+  await ensureCollaborationTables();
+  await ensureInsightsSourceSeeds();
+}
+
 async function startServer() {
   try {
     const listenConfig = await waitForPortAvailability(HOST, Number(PORT));
-
-    await ensureAuthTables();
-    await ensureBuilderCompanyTables();
-    await ensureVerificationTables();
-    await ensureLayoutUnitTables();
-    await ensureEAuctionTables();
-    await ensureApartmentComplexTables();
-    await ensureBuildingMaterialsTables();
-    await ensureSitePromotionsTables();
-    await ensureSupportProgramTables();
-    await ensureOwnerTables();
-    await ensureDalalCoinTables();
-    await ensureInsightsTables();
-    await ensureInfrastructureTables();
-    await ensureTenderIntelligenceTables();
-    await ensureTenderIntelligenceSourceSeeds();
-    await ensureGroupDealsTables();
-    await ensureCollaborationTables();
-    await ensureInsightsSourceSeeds();
-    const insightsSchedulerEnabled =
-      String(process.env.ENABLE_INSIGHTS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
-    if (insightsSchedulerEnabled) {
-      startInsightsScheduler();
-    } else {
-      console.log('[Insights] Scheduler disabled. Set ENABLE_INSIGHTS_SCHEDULER=true to activate.');
-    }
-    const apartmentAutoAlertEnabled =
-      String(process.env.APARTMENT_RENT_AUTO_ALERT_ENABLED || 'true').trim().toLowerCase() !==
-      'false';
-    if (apartmentAutoAlertEnabled) {
-      const apartmentAutoAlertCron =
-        String(process.env.APARTMENT_RENT_AUTO_ALERT_CRON || '15 9 * * *').trim() ||
-        '15 9 * * *';
-      const apartmentAutoAlertTimezone =
-        String(process.env.APARTMENT_RENT_AUTO_ALERT_TIMEZONE || 'Asia/Kolkata').trim() ||
-        'Asia/Kolkata';
-
-      try {
-        cron.schedule(
-          apartmentAutoAlertCron,
-          () => {
-            void runApartmentRentAutoReminderJob({ trigger: 'cron' })
-              .then((result) => {
-                if ((result?.deliveredCount || 0) > 0 || (result?.candidateCount || 0) > 0) {
-                  console.log(
-                    `[APARTMENT] Auto rent reminders: candidates=${result.candidateCount}, delivered=${result.deliveredCount}, failed=${result.failedCount}, skipped=${result.skippedCount}.`
-                  );
-                }
-              })
-              .catch((error) => {
-                console.error('[APARTMENT] Auto rent reminder job failed:', error);
-              });
-          },
-          { timezone: apartmentAutoAlertTimezone }
-        );
-        setTimeout(() => {
-          void runApartmentRentAutoReminderJob({ trigger: 'startup' }).catch((error) => {
-            console.error('[APARTMENT] Startup auto rent reminder run failed:', error);
-          });
-        }, 12000);
-        console.log(
-          `[APARTMENT] Auto rent reminder scheduler enabled (${apartmentAutoAlertCron}, ${apartmentAutoAlertTimezone}).`
-        );
-      } catch (scheduleError) {
-        console.error(
-          `[APARTMENT] Invalid APARTMENT_RENT_AUTO_ALERT_CRON value: ${apartmentAutoAlertCron}.`,
-          scheduleError
-        );
-      }
-    } else {
-      console.log('[APARTMENT] Auto rent reminder scheduler disabled.');
-    }
-
-    if (String(process.env.ENABLE_INGEST_JOBS || '').trim().toLowerCase() === 'true') {
-      void runInfraIngestJob(pool).catch((error) => {
-        console.error('[INFRA INGEST] Boot run failed:', error);
-      });
-      cron.schedule('0 */6 * * *', () => {
-        void runInfraIngestJob(pool).catch((error) => {
-          console.error('[INFRA INGEST] Scheduled run failed:', error);
-        });
-      });
-      console.log('Ingest jobs enabled (PIB -> inbox, tender sources optional)');
-    } else {
-      console.log('Ingest jobs disabled. Set ENABLE_INGEST_JOBS=true to enable.');
-    }
-
-    const tenderIntelligenceDailyRefreshCron = String(
-      process.env.TENDER_INTELLIGENCE_DAILY_REFRESH_CRON || '15 6 * * *'
-    ).trim();
-    const tenderIntelligenceDailyRefreshTimezone = String(
-      process.env.TENDER_INTELLIGENCE_DAILY_REFRESH_TIMEZONE || 'Asia/Kolkata'
-    ).trim() || 'Asia/Kolkata';
-    const ingestJobsEnabled = String(process.env.ENABLE_INGEST_JOBS || '').trim().toLowerCase() === 'true';
-    const runTenderSync = async (trigger) => {
-      try {
-        const result = await runTenderIntelligenceSyncJob(pool);
-        if (result.inserted > 0 || result.updated > 0 || result.deleted > 0) {
-          console.log(
-            `[TENDER INTELLIGENCE] ${trigger}: processed=${result.processed}, inserted=${result.inserted}, updated=${result.updated}, deleted=${result.deleted}.`
-          );
-        }
-      } catch (error) {
-        console.error(`[TENDER INTELLIGENCE] ${trigger} sync failed:`, error);
-      }
-    };
-    try {
-      cron.schedule(
-        tenderIntelligenceDailyRefreshCron,
-        () => {
-          void (async () => {
-            try {
-              if (ingestJobsEnabled) {
-                await runInfraIngestJob(pool);
-              }
-              await runTenderSync('daily');
-            } catch (error) {
-              console.error('[TENDER INTELLIGENCE] Daily refresh failed:', error);
-            }
-          })();
-        },
-        { timezone: tenderIntelligenceDailyRefreshTimezone }
-      );
-      console.log(
-        `[TENDER INTELLIGENCE] Daily-only refresh scheduled (${tenderIntelligenceDailyRefreshCron}, ${tenderIntelligenceDailyRefreshTimezone}).`
-      );
-    } catch (scheduleError) {
-      console.error(
-        `[TENDER INTELLIGENCE] Invalid daily refresh cron: ${tenderIntelligenceDailyRefreshCron}.`,
-        scheduleError
-      );
-    }
-
-    const eauctionSyncEnabled =
-      String(process.env.EAUCTION_SYNC_ENABLED || 'true').trim().toLowerCase() !== 'false';
-    const eauctionStartupSyncEnabled =
-      String(process.env.EAUCTION_SYNC_STARTUP_ENABLED || 'true').trim().toLowerCase() !== 'false';
-    const eauctionSyncCron = String(process.env.EAUCTION_SYNC_CRON || '45 6 * * *').trim() || '45 6 * * *';
-    const eauctionSyncTimezone = String(process.env.EAUCTION_SYNC_TIMEZONE || 'Asia/Kolkata').trim() || 'Asia/Kolkata';
-    const runEAuctionSync = async (trigger) => {
-      try {
-        const result = await runEAuctionSyncJob(pool);
-        const hasMeaningfulChange =
-          result.inserted > 0 ||
-          result.updated > 0 ||
-          result.deactivated > 0 ||
-          (result.errors || []).length > 0;
-        if (hasMeaningfulChange) {
-          console.log(
-            `[EAUCTION] ${trigger}: processed=${result.processed}, inserted=${result.inserted}, updated=${result.updated}, deactivated=${result.deactivated}, sourcesChecked=${result.sourcesChecked}, sourcesHealthy=${result.sourcesHealthy}, errors=${result.errors.length}.`
-          );
-        }
-        if ((result.errors || []).length > 0) {
-          for (const message of result.errors) {
-            console.warn(`[EAUCTION] ${trigger}: ${message}`);
-          }
-        }
-      } catch (error) {
-        console.error(`[EAUCTION] ${trigger} sync failed:`, error);
-      }
-    };
-
-    if (eauctionSyncEnabled) {
-      try {
-        cron.schedule(
-          eauctionSyncCron,
-          () => {
-            void runEAuctionSync('daily');
-          },
-          { timezone: eauctionSyncTimezone }
-        );
-        console.log(`[EAUCTION] Daily refresh scheduled (${eauctionSyncCron}, ${eauctionSyncTimezone}).`);
-      } catch (scheduleError) {
-        console.error(`[EAUCTION] Invalid daily refresh cron: ${eauctionSyncCron}.`, scheduleError);
-      }
-
-      if (eauctionStartupSyncEnabled) {
-        setTimeout(() => {
-          void runEAuctionSync('startup');
-        }, 15000);
-        console.log('[EAUCTION] Startup refresh scheduled.');
-      } else {
-        console.log('[EAUCTION] Startup refresh disabled.');
-      }
-    } else {
-      console.log('[EAUCTION] Sync disabled.');
-    }
-
-    const queuePolicy = resolveQueueStartupPolicy();
-    if (queuePolicy.shouldInitialize) {
-      const queueStatus = await initializeQueueSystem();
-      if (queueStatus.enabled) {
-        console.log('[QUEUE] Redis + BullMQ initialized');
-      } else {
-        console.warn(`[QUEUE] Disabled: ${queueStatus.reason}. Analytics will run inline.`);
-      }
-    } else if (queuePolicy.reason) {
-      markQueueSystemDisabled(queuePolicy.reason);
-      console.log(`[QUEUE] ${queuePolicy.reason}`);
-    }
-    const analyticsSchedulerEnabled =
-      String(process.env.ENABLE_ANALYTICS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
-    if (analyticsSchedulerEnabled) {
-      startPropertyAnalyticsScheduler({
-        intervalMs: 15 * 60 * 1000,
-        onTick: async () => {
-          await enqueueAnalyticsAggregation();
-        },
-      });
-    } else {
-      console.log('[ANALYTICS] Scheduler disabled. Set ENABLE_ANALYTICS_SCHEDULER=true to activate.');
-    }
-
-    const intervalMs = 5 * 60 * 1000;
-    const runReactivationSweep = async () => {
-      try {
-        const result = await reactivateExpiredTemporaryDeactivations();
-        if (result.reactivated > 0) {
-          console.log(`[AUTH] Reactivated ${result.reactivated} account(s) after temporary deactivation.`);
-        }
-      } catch (error) {
-        console.error('Temporary deactivation sweep failed:', error);
-      }
-    };
-
-    void runReactivationSweep();
-    setInterval(runReactivationSweep, intervalMs);
-
-    initializeChatRealtime(httpServer, {
-      isOriginAllowed: isRequestOriginAllowed,
-    });
 
     const serverListenOptions = {
       port: Number(PORT),
@@ -646,10 +454,14 @@ async function startServer() {
       serverListenOptions.ipv6Only = listenConfig.ipv6Only;
     }
 
+    initializeChatRealtime(httpServer, {
+      isOriginAllowed: isRequestOriginAllowed,
+    });
+
     httpServer.listen(serverListenOptions, () => {
       console.log(`API + realtime listening on ${listenConfig.displayHost}:${PORT}`);
       console.log(
-        `[SERVER] Startup config: host=${listenConfig.displayHost}, port=${PORT} (${PORT_SOURCE}), cors=${CORS_ALLOW_ALL ? 'allow-all' : `allow-list:${allowedOrigins.length}`}.`
+        `[SERVER] Startup config: host=${listenConfig.displayHost}, port=${PORT} (${PORT_SOURCE}), cors=${CORS_ALLOW_ALL ? 'allow-all' : `allow-list:${allowedOrigins.length}`}, ready=${startupReady}.`
       );
 
       // Log Supabase Auth status so the operator can confirm integration is live.
@@ -663,6 +475,227 @@ async function startServer() {
         console.warn('[AUTH] Supabase Auth is NOT enabled. Set MANAGED_AUTH_PROVIDER=supabase and SUPABASE_ANON_KEY to activate managed auth.');
       }
     });
+
+    try {
+      await completeStartupTasks();
+
+      const insightsSchedulerEnabled =
+        String(process.env.ENABLE_INSIGHTS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
+      if (insightsSchedulerEnabled) {
+        startInsightsScheduler();
+      } else {
+        console.log('[Insights] Scheduler disabled. Set ENABLE_INSIGHTS_SCHEDULER=true to activate.');
+      }
+      const apartmentAutoAlertEnabled =
+        String(process.env.APARTMENT_RENT_AUTO_ALERT_ENABLED || 'true').trim().toLowerCase() !==
+        'false';
+      if (apartmentAutoAlertEnabled) {
+        const apartmentAutoAlertCron =
+          String(process.env.APARTMENT_RENT_AUTO_ALERT_CRON || '15 9 * * *').trim() ||
+          '15 9 * * *';
+        const apartmentAutoAlertTimezone =
+          String(process.env.APARTMENT_RENT_AUTO_ALERT_TIMEZONE || 'Asia/Kolkata').trim() ||
+          'Asia/Kolkata';
+
+        try {
+          cron.schedule(
+            apartmentAutoAlertCron,
+            () => {
+              void runApartmentRentAutoReminderJob({ trigger: 'cron' })
+                .then((result) => {
+                  if ((result?.deliveredCount || 0) > 0 || (result?.candidateCount || 0) > 0) {
+                    console.log(
+                      `[APARTMENT] Auto rent reminders: candidates=${result.candidateCount}, delivered=${result.deliveredCount}, failed=${result.failedCount}, skipped=${result.skippedCount}.`
+                    );
+                  }
+                })
+                .catch((error) => {
+                  console.error('[APARTMENT] Auto rent reminder job failed:', error);
+                });
+            },
+            { timezone: apartmentAutoAlertTimezone }
+          );
+          setTimeout(() => {
+            void runApartmentRentAutoReminderJob({ trigger: 'startup' }).catch((error) => {
+              console.error('[APARTMENT] Startup auto rent reminder run failed:', error);
+            });
+          }, 12000);
+          console.log(
+            `[APARTMENT] Auto rent reminder scheduler enabled (${apartmentAutoAlertCron}, ${apartmentAutoAlertTimezone}).`
+          );
+        } catch (scheduleError) {
+          console.error(
+            `[APARTMENT] Invalid APARTMENT_RENT_AUTO_ALERT_CRON value: ${apartmentAutoAlertCron}.`,
+            scheduleError
+          );
+        }
+      } else {
+        console.log('[APARTMENT] Auto rent reminder scheduler disabled.');
+      }
+
+      if (String(process.env.ENABLE_INGEST_JOBS || '').trim().toLowerCase() === 'true') {
+        void runInfraIngestJob(pool).catch((error) => {
+          console.error('[INFRA INGEST] Boot run failed:', error);
+        });
+        cron.schedule('0 */6 * * *', () => {
+          void runInfraIngestJob(pool).catch((error) => {
+            console.error('[INFRA INGEST] Scheduled run failed:', error);
+          });
+        });
+        console.log('Ingest jobs enabled (PIB -> inbox, tender sources optional)');
+      } else {
+        console.log('Ingest jobs disabled. Set ENABLE_INGEST_JOBS=true to enable.');
+      }
+
+      const tenderIntelligenceDailyRefreshCron = String(
+        process.env.TENDER_INTELLIGENCE_DAILY_REFRESH_CRON || '15 6 * * *'
+      ).trim();
+      const tenderIntelligenceDailyRefreshTimezone = String(
+        process.env.TENDER_INTELLIGENCE_DAILY_REFRESH_TIMEZONE || 'Asia/Kolkata'
+      ).trim() || 'Asia/Kolkata';
+      const ingestJobsEnabled = String(process.env.ENABLE_INGEST_JOBS || '').trim().toLowerCase() === 'true';
+      const runTenderSync = async (trigger) => {
+        try {
+          const result = await runTenderIntelligenceSyncJob(pool);
+          if (result.inserted > 0 || result.updated > 0 || result.deleted > 0) {
+            console.log(
+              `[TENDER INTELLIGENCE] ${trigger}: processed=${result.processed}, inserted=${result.inserted}, updated=${result.updated}, deleted=${result.deleted}.`
+            );
+          }
+        } catch (error) {
+          console.error(`[TENDER INTELLIGENCE] ${trigger} sync failed:`, error);
+        }
+      };
+      try {
+        cron.schedule(
+          tenderIntelligenceDailyRefreshCron,
+          () => {
+            void (async () => {
+              try {
+                if (ingestJobsEnabled) {
+                  await runInfraIngestJob(pool);
+                }
+                await runTenderSync('daily');
+              } catch (error) {
+                console.error('[TENDER INTELLIGENCE] Daily refresh failed:', error);
+              }
+            })();
+          },
+          { timezone: tenderIntelligenceDailyRefreshTimezone }
+        );
+        console.log(
+          `[TENDER INTELLIGENCE] Daily-only refresh scheduled (${tenderIntelligenceDailyRefreshCron}, ${tenderIntelligenceDailyRefreshTimezone}).`
+        );
+      } catch (scheduleError) {
+        console.error(
+          `[TENDER INTELLIGENCE] Invalid daily refresh cron: ${tenderIntelligenceDailyRefreshCron}.`,
+          scheduleError
+        );
+      }
+
+      const eauctionSyncEnabled =
+        String(process.env.EAUCTION_SYNC_ENABLED || 'true').trim().toLowerCase() !== 'false';
+      const eauctionStartupSyncEnabled =
+        String(process.env.EAUCTION_SYNC_STARTUP_ENABLED || 'true').trim().toLowerCase() !== 'false';
+      const eauctionSyncCron = String(process.env.EAUCTION_SYNC_CRON || '45 6 * * *').trim() || '45 6 * * *';
+      const eauctionSyncTimezone = String(process.env.EAUCTION_SYNC_TIMEZONE || 'Asia/Kolkata').trim() || 'Asia/Kolkata';
+      const runEAuctionSync = async (trigger) => {
+        try {
+          const result = await runEAuctionSyncJob(pool);
+          const hasMeaningfulChange =
+            result.inserted > 0 ||
+            result.updated > 0 ||
+            result.deactivated > 0 ||
+            (result.errors || []).length > 0;
+          if (hasMeaningfulChange) {
+            console.log(
+              `[EAUCTION] ${trigger}: processed=${result.processed}, inserted=${result.inserted}, updated=${result.updated}, deactivated=${result.deactivated}, sourcesChecked=${result.sourcesChecked}, sourcesHealthy=${result.sourcesHealthy}, errors=${result.errors.length}.`
+            );
+          }
+          if ((result.errors || []).length > 0) {
+            for (const message of result.errors) {
+              console.warn(`[EAUCTION] ${trigger}: ${message}`);
+            }
+          }
+        } catch (error) {
+          console.error(`[EAUCTION] ${trigger} sync failed:`, error);
+        }
+      };
+
+      if (eauctionSyncEnabled) {
+        try {
+          cron.schedule(
+            eauctionSyncCron,
+            () => {
+              void runEAuctionSync('daily');
+            },
+            { timezone: eauctionSyncTimezone }
+          );
+          console.log(`[EAUCTION] Daily refresh scheduled (${eauctionSyncCron}, ${eauctionSyncTimezone}).`);
+        } catch (scheduleError) {
+          console.error(`[EAUCTION] Invalid daily refresh cron: ${eauctionSyncCron}.`, scheduleError);
+        }
+
+        if (eauctionStartupSyncEnabled) {
+          setTimeout(() => {
+            void runEAuctionSync('startup');
+          }, 15000);
+          console.log('[EAUCTION] Startup refresh scheduled.');
+        } else {
+          console.log('[EAUCTION] Startup refresh disabled.');
+        }
+      } else {
+        console.log('[EAUCTION] Sync disabled.');
+      }
+
+      const queuePolicy = resolveQueueStartupPolicy();
+      if (queuePolicy.shouldInitialize) {
+        const queueStatus = await initializeQueueSystem();
+        if (queueStatus.enabled) {
+          console.log('[QUEUE] Redis + BullMQ initialized');
+        } else {
+          console.warn(`[QUEUE] Disabled: ${queueStatus.reason}. Analytics will run inline.`);
+        }
+      } else if (queuePolicy.reason) {
+        markQueueSystemDisabled(queuePolicy.reason);
+        console.log(`[QUEUE] ${queuePolicy.reason}`);
+      }
+      const analyticsSchedulerEnabled =
+        String(process.env.ENABLE_ANALYTICS_SCHEDULER || 'false').trim().toLowerCase() === 'true';
+      if (analyticsSchedulerEnabled) {
+        startPropertyAnalyticsScheduler({
+          intervalMs: 15 * 60 * 1000,
+          onTick: async () => {
+            await enqueueAnalyticsAggregation();
+          },
+        });
+      } else {
+        console.log('[ANALYTICS] Scheduler disabled. Set ENABLE_ANALYTICS_SCHEDULER=true to activate.');
+      }
+
+      const intervalMs = 5 * 60 * 1000;
+      const runReactivationSweep = async () => {
+        try {
+          const result = await reactivateExpiredTemporaryDeactivations();
+          if (result.reactivated > 0) {
+            console.log(`[AUTH] Reactivated ${result.reactivated} account(s) after temporary deactivation.`);
+          }
+        } catch (error) {
+          console.error('Temporary deactivation sweep failed:', error);
+        }
+      };
+
+      void runReactivationSweep();
+      setInterval(runReactivationSweep, intervalMs);
+
+      startupReady = true;
+      startupFailure = null;
+      console.log('[SERVER] Startup tasks completed. API routes are now fully ready.');
+    } catch (error) {
+      startupFailure = error;
+      console.error('[SERVER] Startup tasks failed after listen:', error);
+      process.exit(1);
+    }
 
     // Graceful shutdown on termination signals.
     const gracefulShutdown = (signal) => {

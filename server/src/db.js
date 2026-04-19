@@ -80,8 +80,15 @@ export const pool = new Pool({
   allowExitOnIdle: false,
 });
 
-export async function pingDb() {
-  await pool.query('SELECT 1');
+export async function pingDb(timeoutMs = 5_000) {
+  await Promise.race([
+    pool.query('SELECT 1'),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Database ping timed out after ${timeoutMs}ms.`));
+      }, timeoutMs);
+    }),
+  ]);
 }
 
 export async function reactivateExpiredTemporaryDeactivations(limit = 25) {
