@@ -80,6 +80,29 @@ export const pool = new Pool({
   allowExitOnIdle: false,
 });
 
+// ── Prevent idle-connection drops from crashing the process ──
+// Supabase (and many managed PostgreSQL hosts) terminate idle connections
+// after a timeout.  Without this handler the pg Pool emits an unhandled
+// 'error' event which Node.js treats as an uncaught exception → crash.
+pool.on('error', (err) => {
+  const code = err && typeof err === 'object' ? err.code || '' : '';
+  // ECONNRESET / EPIPE / ECONNABORTED / Connection terminated unexpectedly
+  // are all normal for dropped idle connections — just log and let the pool
+  // transparently create a fresh connection on the next query.
+  const isTransient =
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ECONNABORTED' ||
+    code === 'ENOTFOUND' ||
+    /connection terminated/i.test(String(err?.message || ''));
+
+  if (isTransient) {
+    console.warn('[DB] Idle connection dropped (will reconnect automatically):', code || err?.message);
+  } else {
+    console.error('[DB] Unexpected pool error:', err);
+  }
+});
+
 export async function pingDb(timeoutMs = 5_000) {
   await Promise.race([
     pool.query('SELECT 1'),
@@ -9311,35 +9334,49 @@ export async function ensureCollaborationTables() {
   `);
 }
 
-pool
-  .connect()
-  .then((client) => {
-    const target = [
-      databaseConnectionInfo.host,
-      databaseConnectionInfo.port,
-      databaseConnectionInfo.database,
-    ]
-      .filter(Boolean)
-      .join(':')
-      .replace(/:(?=[^:]+$)/, '/');
-    const providerLabel =
-      databaseConnectionInfo.provider === 'supabase'
-        ? 'Supabase PostgreSQL'
-        : 'PostgreSQL';
-    console.log(
-      `[DB] Connected to ${providerLabel} via ${databaseConnectionInfo.source}${
-        target ? ` (${target})` : ''
-      }`
-    );
-    client.release();
-  })
-  .catch((err) => {
-    console.error(
-      `[DB] ${databaseConnectionInfo.provider === 'supabase' ? 'Supabase PostgreSQL' : 'PostgreSQL'} connection error:`,
-      err.message
-    );
-    process.exit(1);
-  });
+async function testDatabaseConnection(maxRetries = 3) {
+  const providerLabel =
+    databaseConnectionInfo.provider === 'supabase'
+      ? 'Supabase PostgreSQL'
+      : 'PostgreSQL';
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const client = await pool.connect();
+      const target = [
+        databaseConnectionInfo.host,
+        databaseConnectionInfo.port,
+        databaseConnectionInfo.database,
+      ]
+        .filter(Boolean)
+        .join(':')
+        .replace(/:(?=[^:]+$)/, '/');
+      console.log(
+        `[DB] Connected to ${providerLabel} via ${databaseConnectionInfo.source}${
+          target ? ` (${target})` : ''
+        }`
+      );
+      client.release();
+      return;
+    } catch (err) {
+      if (attempt < maxRetries) {
+        const delayMs = Math.min(2000 * Math.pow(2, attempt - 1), 10_000);
+        console.warn(
+          `[DB] ${providerLabel} connection attempt ${attempt}/${maxRetries} failed: ${err.message}. Retrying in ${delayMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      } else {
+        console.error(
+          `[DB] ${providerLabel} connection failed after ${maxRetries} attempts:`,
+          err.message
+        );
+        process.exit(1);
+      }
+    }
+  }
+}
+
+testDatabaseConnection();
 
 export default pool;
 
