@@ -7,9 +7,6 @@
     "dev:nodemon": "nodemon src/index.js",
     "start": "node src/index.js",
     "prepare:india-villages": "node scripts/prepare-india-village-data.js",
-    "seed:demo": "node scripts/seed-demo-accounts-and-listings.js",
-    "seed:owner-panel": "node scripts/seed-owner-panel-demo.js",
-    "cleanup:demo:keep-main-admin": "node scripts/cleanup-demo-data-keep-main-admin.js",
     "fix:chat-sender-names": "node scripts/backfill-chat-sender-names.js",
     "sql:run": "node scripts/run-sql-file.js",
     "schema:supabase": "node scripts/apply-schema-supabase.js",
@@ -19,6 +16,7 @@
     "migrate:uuid:rollback-bridge": "node scripts/run-sql-file.js sql/migrations/20260218_uuid_phase3_rollback_bridge_core.sql",
     "migrate:uuid:contract": "node scripts/run-sql-file.js sql/migrations/20260218_uuid_phase3_contract_core.sql --uuid-cutover-confirm"
   },
+
   "dependencies": {
     "@sentry/node": "^10.49.0",
     "@supabase/supabase-js": "^2.103.0",

@@ -1,20 +1,49 @@
+## Dependencies
 node_modules/
+
+## Environment files (keep examples)
 .env
 .env.*
-.DS_Store
-server/data/
-server/tmp_lgd/
+!.env.example
 server/.env
 server/.env.*
 !server/.env.example
-app/node_modules/
-server/node_modules/
+app/.env
+app/.env.*
+!app/.env.example
+
+## Build output
 app/dist/
+*.log
+
+## Uploads (runtime data)
 server/uploads/
 server/private_uploads/
+
+## Large data files
+server/data/
+
+## Codex CI artifacts
 server/.codex-*.log
 server/.codex-*.pid
-zdt-realty/
+
+## OS junk
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+## IDE / Editor
+.vscode/
+.idea/
+
+## Vercel local state
+app/.vercel/
+.vercel/
+
+## Temp
 .tmp/
+
+## Extracted npm binaries
 server/node_modules/@msgpackr-extract/
 server/node_modules/@msgpackr-extract/**
+
