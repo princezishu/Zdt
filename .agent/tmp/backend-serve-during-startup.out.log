@@ -1,0 +1,5 @@
+API + realtime listening on :::5053
+[SERVER] Startup config: host=::, port=5053 (process.env.PORT), cors=allow-all, ready=false.
+[AUTH] Supabase Auth active as primary provider: supabase (auto-link by email ON)
+[DB] Connected to Supabase PostgreSQL via DB_HOST (db.alnmzxjrqbnodyhmbnlx.supabase.co:5432/postgres)
+[0mGET /api/properties [32m200[0m 216.068 ms - 4679[0m

@@ -1,0 +1,16 @@
+
+> seed:owner-panel
+> node scripts/seed-owner-panel-demo.js
+
+Connected to PostgreSQL database
+Owner panel demo seed complete.
+Owner login: owner.demo@zdtrealty.local / Owner@12345
+User login: renter.demo@zdtrealty.local / User@12345
+
+> seed:owner-panel
+> node scripts/seed-owner-panel-demo.js
+
+Connected to PostgreSQL database
+Owner panel demo seed complete.
+Owner login: owner.demo@zdtrealty.local / Owner@12345
+User login: renter.demo@zdtrealty.local / User@12345

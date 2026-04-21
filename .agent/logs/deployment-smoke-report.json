@@ -1,0 +1,803 @@
+{
+  "startedAt": "2026-04-11T14:22:24.725Z",
+  "root": "C:\\Users\\zahee\\OneDrive\\Desktop\\zip",
+  "steps": {
+    "frontendBuild": {
+      "ok": true,
+      "startedAt": "2026-04-11T14:22:24.725Z",
+      "finishedAt": "2026-04-11T14:22:50.001Z",
+      "stdoutTail": "\n> my-app@0.0.0 build\n> node ./scripts/generate-sitemap.mjs && tsc -b && vite build\n\nGenerated sitemap: C:\\Users\\zahee\\OneDrive\\Desktop\\zip\\app\\public\\sitemap.xml\n\u001b[36mvite v7.3.0 \u001b[32mbuilding client environment for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 2674 modules transformed.\nrendering chunks...\ncomputing gzip size...\n\u001b[2mdist/\u001b[22m\u001b[32mindex.html                                    \u001b[39m\u001b[1m\u001b[2m  2.51 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.85 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[35massets/EAuctionPage-6HSATAIS.css              \u001b[39m\u001b[1m\u001b[2m 11.75 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   2.92 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[35massets/index-4CItuTOY.css                     \u001b[39m\u001b[1m\u001b[2m201.43 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:  32.39 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/phone-tHGO6ILE.js                      \u001b[39m\u001b[1m\u001b[2m  0.33 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.25 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/share-Bl5cYiwl.js                      \u001b[39m\u001b[1m\u001b[2m  0.42 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.23 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/sponsoredListingsApi-DGNxh_Is.js       \u001b[39m\u001b[1m\u001b[2m  0.43 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.27 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/supportProgramApi-BhR5rXJ0.js          \u001b[39m\u001b[1m\u001b[2m  0.56 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.31 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/ownerBillingApi-DfL3OrI2.js            \u001b[39m\u001b[1m\u001b[2m  0.69 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.37 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/textarea-BjhdNGIo.js                   \u001b[39m\u001b[1m\u001b[2m  0.73 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.45 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/geoApi-FFevb7ie.js                     \u001b[39m\u001b[1m\u001b[2m  0.78 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.35 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/mediaUploadApi-BcHDQ5UK.js             \u001b[39m\u001b[1m\u001b[2m  0.80 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.50 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/infraSubscriptionsApi-BwtfnJ-Y.js      \u001b[39m\u001b[1m\u001b[2m  0.89 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.41 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/tenderIntelligenceApi-CNoVlamQ.js      \u001b[39m\u001b[1m\u001b[2m  0.94 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.45 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/InsightsTabs-BopHB1bD.js               \u001b[39m\u001b[1m\u001b[2m  1.00 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.50 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/switch-E8Cj69lb.js                     \u001b[39m\u001b[1m\u001b[2m  1.06 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.53 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/checkbox-De-_5rWk.js                   \u001b[39m\u001b[1m\u001b[2m  1.12 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.54 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/badge-CMv6u1aJ.js                      \u001b[39m\u001b[1m\u001b[2m  1.29 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.64 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/rentalsSavedStore-zKrxtrYv.js          \u001b[39m\u001b[1m\u001b[2m  1.31 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.66 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/views-CrafIlSG.js                      \u001b[39m\u001b[1m\u001b[2m  1.53 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.64 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/table-DnJHcoqa.js                      \u001b[39m\u001b[1m\u001b[2m  1.59 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.57 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/tabs-DKOa6fFy.js                       \u001b[39m\u001b[1m\u001b[2m  1.60 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.66 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/slider-TMstpjru.js                     \u001b[39m\u001b[1m\u001b[2m  1.61 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.71 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/razorpayCheckout-C-jIRKRC.js           \u001b[39m\u001b[1m\u001b[2m  1.66 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.84 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/portalBrowsingStore-BNymgssH.js        \u001b[39m\u001b[1m\u001b[2m  1.73 kB\u001b[22m\u001b[1m\u001b[22m\u001b[2m │ gzip:   0.80 kB\u001b[22m\n\u001b[2mdist/\u001b[22m\u001b[36massets/favoritesStore-I0oBtl3S.js             \u001b\n...[truncated 14149 chars]",
+      "stderrTail": "\u001b[33m\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\u001b[39m\n"
+    },
+    "serverStart": {
+      "ok": true,
+      "startedAt": "2026-04-11T14:22:50.001Z",
+      "finishedAt": "2026-04-11T14:24:42.096Z",
+      "health": {
+        "url": "http://localhost:5000/health",
+        "body": {
+          "ok": true
+        }
+      }
+    },
+    "seedOwnerPanel": {
+      "ok": true,
+      "startedAt": "2026-04-11T14:24:42.096Z",
+      "finishedAt": "2026-04-11T14:26:20.729Z",
+      "stdoutTail": "\n> seed:owner-panel\n> node scripts/seed-owner-panel-demo.js\n\nConnected to PostgreSQL database\nOwner panel demo seed complete.\nOwner login: owner.demo@zdtrealty.local / Owner@12345\nUser login: renter.demo@zdtrealty.local / User@12345\n",
+      "stderrTail": ""
+    },
+    "previewStart": {
+      "ok": true,
+      "startedAt": "2026-04-11T14:26:20.729Z",
+      "finishedAt": "2026-04-11T14:26:26.189Z",
+      "url": "http://localhost:4173"
+    }
+  },
+  "browser": {
+    "ownerCreateFlow": {
+      "addPage": {
+        "info": {
+          "title": "ZDT Realty — Buy, Sell & Rent Verified Properties in India",
+          "path": "/owner/add-property",
+          "bodySnippet": "Skip to main content OWNER LISTING STUDIO Add a new listing Publish premium sale or rental inventory with full media and compliance details. Remaining listing slots: 8 Back to Dashboard STEP 1 OF 6 Basic Info Cancel Save Draft LISTING MODE Sell PROPERTY TYPE Apartment LISTING TITLE DESCRIPTION BHK AREA (SQ.FT) CARPET AREA (SQ.FT) FACING FLOOR NUMBER TOTAL FLOORS Back Continue Open AI Realty Chat",
+          "propertyLinkCount": 0,
+          "alertText": "",
+          "statusText": ""
+        },
+        "events": {
+          "consoleErrors": [],
+          "exceptions": [],
+          "logErrors": [],
+          "httpErrors": [],
+          "networkFailures": []
+        }
+      },
+      "result": null,
+      "errors": [
+        "Timed out waiting for condition: location.pathname === '/owner/listings'"
+      ]
+    },
+    "home": {
+      "info": {
+        "title": "ZDT Realty — Buy, Sell & Rent Verified Properties in India",
+        "path": "/",
+        "bodySnippet": "Skip to main content WELCOME TO ZDT REALTY Limited Period Offer: Free Club Membership 2, 3 & 4 BHK luxury homes | Whitefield | From Rs 1.45 Cr Login Register Buy in Bangalore East Buy in Belgaum Explore New City FEATURED PROJECT Skyline Crest Residences TRUST PULSE A richer snapshot of what is live right now Platform trust, verified inventory, and growth-corridor momentum in one quick read. Open Marketplace LIVE INVENTORY 8 8 tracked micro-markets across active listings. VERIFIED NOW 8 Trust-screened listings with higher buyer confidence. READY TO MOVE 4 Inventory you can shortlist for immedia",
+        "propertyLinkCount": 0,
+        "alertText": "",
+        "statusText": ""
+      },
+      "events": {
+        "consoleErrors": [],
+        "exceptions": [],
+        "logErrors": [],
+        "httpErrors": [],
+        "networkFailures": [
+          "Document net::ERR_ABORTED true"
+        ]
+      }
+    },
+    "buy": {
+      "info": {
+        "title": "Buy Property | ZDT Realty",
+        "path": "/buy",
+        "bodySnippet": "Skip to main content Buy Verified Properties with Confidence Explore trusted properties from verified builders across India. Transparent pricing. Group deals available. Browse Properties Create Group Deal Builder Verified Ownership Check (In Progress / Verified) Government References (Where Available) List Map Saved Compare (0) PRIMARY SEARCH Type at least 1 character to see suggestions. Select a state first to get district suggestions. Select a district first to get subdistrict suggestions. Select a city/subdistrict first to get locality suggestions. All property types BUDGET: INR 0L - INR 0L",
+        "propertyLinkCount": 0,
+        "alertText": "",
+        "statusText": ""
+      },
+      "events": {
+        "consoleErrors": [],
+        "exceptions": [],
+        "logErrors": [
+          "Failed to load resource: the server responded with a status of 429 (Too Many Requests)"
+        ],
+        "httpErrors": [
+          {
+            "status": 429,
+            "url": "http://localhost:5000/api/v1/auth/me"
+          }
+        ],
+        "networkFailures": []
+      }
+    },
+    "login": {
+      "info": {
+        "title": "ZDT Realty — Buy, Sell & Rent Verified Properties in India",
+        "path": "/login",
+        "bodySnippet": "Skip to main content Back ZDT MEMBER LOGIN Welcome back Log in to access your saved searches and alerts. EMAIL ADDRESS PASSWORD Forgot password? I was promoted (Admin/Team) Remember me Secure session Sign In Email Me A Sign-In Link CONTINUE WITH GOOGLE OR GITHUB Google GitHub New here? Create an account DEALER OR BUILDER Company Login Company Register",
+        "propertyLinkCount": 0,
+        "alertText": "",
+        "statusText": ""
+      },
+      "events": {
+        "consoleErrors": [],
+        "exceptions": [],
+        "logErrors": [
+          "Failed to load resource: the server responded with a status of 429 (Too Many Requests)"
+        ],
+        "httpErrors": [
+          {
+            "status": 429,
+            "url": "http://localhost:5000/api/v1/auth/me"
+          }
+        ],
+        "networkFailures": []
+      }
+    },
+    "register": {
+      "info": {
+        "title": "ZDT Realty — Buy, Sell & Rent Verified Properties in India",
+        "path": "/register",
+        "bodySnippet": "Skip to main content ZDT CREATE PROFILE Create account Set your preferences and start exploring listings. FULL NAME EMAIL ADDRESS PHONE REFERRAL CODE Have a Dalal Coin invite? Add the code now to unlock referral rewards after your first qualifying order. PASSWORD I agree to the Terms and Privacy Policy Create Account OR SIGN UP WITH GOOGLE OR GITHUB Google GitHub Already have an account? Log in Dealer/Builder? Company register or company login",
+        "propertyLinkCount": 0,
+        "alertText": "",
+        "statusText": ""
+      },
+      "events": {
+        "consoleErrors": [],
+        "exceptions": [],
+        "logErrors": [
+          "Failed to load resource: the server responded with a status of 429 (Too Many Requests)"
+        ],
+        "httpErrors": [
+          {
+            "status": 429,
+            "url": "http://localhost:5000/api/v1/auth/me"
+          }
+        ],
+        "networkFailures": []
+      }
+    }
+  },
+  "auth": {
+    "legacyRegister": {
+      "status": 400,
+      "ok": false,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "61",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:29 GMT",
+        "etag": "W/\"3d-rga8TFbWoEGnG4r05TZ2gvojcmg\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "10",
+        "ratelimit-remaining": "9",
+        "ratelimit-reset": "1800",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": "1775919387",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "error": "Related record not found or cannot be referenced."
+      },
+      "rawText": "{\"error\":\"Related record not found or cannot be referenced.\"}"
+    },
+    "legacyLogin": {
+      "status": 401,
+      "ok": false,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "56",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:29 GMT",
+        "etag": "W/\"38-UQD1qwYzlayttnms6y2tYJ3nah0\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "25",
+        "ratelimit-remaining": "24",
+        "ratelimit-reset": "600",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "25",
+        "x-ratelimit-remaining": "24",
+        "x-ratelimit-reset": "1775918190",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "error": "Email not registered. Please register first."
+      },
+      "rawText": "{\"error\":\"Email not registered. Please register first.\"}"
+    },
+    "legacyMe": null,
+    "seededUserLogin": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "594",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:32 GMT",
+        "etag": "W/\"252-5Zm3DdUlCWHZHP6xtjb/6hHi0KI\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "25",
+        "ratelimit-remaining": "24",
+        "ratelimit-reset": "600",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "set-cookie": "zdt_auth=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjQiLCJlbWFpbCI6InJlbnRlci5kZW1vQHpkdHJlYWx0eS5sb2NhbCIsIm5hbWUiOiJOaXNoYSBTaGFybWEiLCJyb2xlIjoidXNlciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYWNhZTI4ZGItMWRmNC00ZjU0LTk3N2EtNzBmOTFhODEyNmU5IiwiaWF0IjoxNzc1OTE3NTkxLCJleHAiOjE3NzY1MjIzOTF9.p01RLKFLQpGfLGcpT0WW46tjukFzDjMpA8NR4u_g12k; Max-Age=604800; Path=/; Expires=Sat, 18 Apr 2026 14:26:32 GMT; HttpOnly; SameSite=Lax",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "25",
+        "x-ratelimit-remaining": "24",
+        "x-ratelimit-reset": "1775918191",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjQiLCJlbWFpbCI6InJlbnRlci5kZW1vQHpkdHJlYWx0eS5sb2NhbCIsIm5hbWUiOiJOaXNoYSBTaGFybWEiLCJyb2xlIjoidXNlciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYWNhZTI4ZGItMWRmNC00ZjU0LTk3N2EtNzBmOTFhODEyNmU5IiwiaWF0IjoxNzc1OTE3NTkxLCJleHAiOjE3NzY1MjIzOTF9.p01RLKFLQpGfLGcpT0WW46tjukFzDjMpA8NR4u_g12k",
+        "user": {
+          "id": "4",
+          "name": "Nisha Sharma",
+          "email": "renter.demo@zdtrealty.local",
+          "role": "user",
+          "companyRole": null,
+          "platformRole": "user",
+          "accountType": "individual",
+          "subscriptionTier": "free",
+          "isMainAdmin": false,
+          "managedAuthProvider": null,
+          "managedAuthOnly": false
+        }
+      },
+      "rawText": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjQiLCJlbWFpbCI6InJlbnRlci5kZW1vQHpkdHJlYWx0eS5sb2NhbCIsIm5hbWUiOiJOaXNoYSBTaGFybWEiLCJyb2xlIjoidXNlciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYWNhZTI4ZGItMWRmNC00ZjU0LTk3N2EtNzBmOTFhODEyNmU5IiwiaWF0IjoxNzc1OTE3NTkxLCJleHAiOjE3NzY1MjIzOTF9.p01RLKFLQpGfLGcpT0WW46tjukFzDjMpA8NR4u_g12k\",\"user\":{\"id\":\"4\",\"name\":\"Nisha Sharma\",\"email\":\"renter.demo@zdtrealty.local\",\"role\":\"user\",\"companyRole\":null,\"platformRole\":\"user\",\"accountType\":\"individual\",\"subscriptionTier\":\"free\",\"isMainAdmin\":false,\"managedAuthProvider\":null,\"managedAuthOnly\":false}}"
+    },
+    "seededUserMe": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "352",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:32 GMT",
+        "etag": "W/\"160-yHnRzx9NdxVAkPr7kQP9M0knW60\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "10",
+        "ratelimit-remaining": "6",
+        "ratelimit-reset": "894",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "6",
+        "x-ratelimit-reset": "1775918487",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "user": {
+          "id": "4",
+          "name": "Nisha Sharma",
+          "email": "renter.demo@zdtrealty.local",
+          "phone": null,
+          "role": "user",
+          "company_role": null,
+          "account_type": "individual",
+          "subscription_tier": "free",
+          "is_main_admin": false,
+          "force_password_reset": false,
+          "managed_auth_provider": null,
+          "managed_auth_only": false,
+          "created_at": "2026-04-11T14:14:27.301Z",
+          "auth_strategy": "legacy"
+        }
+      },
+      "rawText": "{\"user\":{\"id\":\"4\",\"name\":\"Nisha Sharma\",\"email\":\"renter.demo@zdtrealty.local\",\"phone\":null,\"role\":\"user\",\"company_role\":null,\"account_type\":\"individual\",\"subscription_tier\":\"free\",\"is_main_admin\":false,\"force_password_reset\":false,\"managed_auth_provider\":null,\"managed_auth_only\":false,\"created_at\":\"2026-04-11T14:14:27.301Z\",\"auth_strategy\":\"legacy\"}}"
+    }
+  },
+  "backend": {
+    "ownerLogin": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "595",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:35 GMT",
+        "etag": "W/\"253-TP3U80BFDd0LZ1dviY9qeTmMdG8\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "25",
+        "ratelimit-remaining": "24",
+        "ratelimit-reset": "600",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "set-cookie": "zdt_auth=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjMiLCJlbWFpbCI6Im93bmVyLmRlbW9AemR0cmVhbHR5LmxvY2FsIiwibmFtZSI6IkFhcmF2IEthcG9vciIsInJvbGUiOiJvd25lciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYmIxNmUyNzgtYzJmOC00MjIyLTlkYTQtMjY3NGJhMjU4NjlmIiwiaWF0IjoxNzc1OTE3NTk0LCJleHAiOjE3NzY1MjIzOTR9.AGLX9n4nnu1Xrfk0OViifAzWQ4PxiSA6muFXL9nBIhc; Max-Age=604800; Path=/; Expires=Sat, 18 Apr 2026 14:26:35 GMT; HttpOnly; SameSite=Lax",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "25",
+        "x-ratelimit-remaining": "24",
+        "x-ratelimit-reset": "1775918193",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjMiLCJlbWFpbCI6Im93bmVyLmRlbW9AemR0cmVhbHR5LmxvY2FsIiwibmFtZSI6IkFhcmF2IEthcG9vciIsInJvbGUiOiJvd25lciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYmIxNmUyNzgtYzJmOC00MjIyLTlkYTQtMjY3NGJhMjU4NjlmIiwiaWF0IjoxNzc1OTE3NTk0LCJleHAiOjE3NzY1MjIzOTR9.AGLX9n4nnu1Xrfk0OViifAzWQ4PxiSA6muFXL9nBIhc",
+        "user": {
+          "id": "3",
+          "name": "Aarav Kapoor",
+          "email": "owner.demo@zdtrealty.local",
+          "role": "owner",
+          "companyRole": null,
+          "platformRole": "owner",
+          "accountType": "individual",
+          "subscriptionTier": "free",
+          "isMainAdmin": false,
+          "managedAuthProvider": null,
+          "managedAuthOnly": false
+        }
+      },
+      "rawText": "{\"token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjMiLCJlbWFpbCI6Im93bmVyLmRlbW9AemR0cmVhbHR5LmxvY2FsIiwibmFtZSI6IkFhcmF2IEthcG9vciIsInJvbGUiOiJvd25lciIsImlzTWFpbkFkbWluIjpmYWxzZSwianRpIjoiYmIxNmUyNzgtYzJmOC00MjIyLTlkYTQtMjY3NGJhMjU4NjlmIiwiaWF0IjoxNzc1OTE3NTk0LCJleHAiOjE3NzY1MjIzOTR9.AGLX9n4nnu1Xrfk0OViifAzWQ4PxiSA6muFXL9nBIhc\",\"user\":{\"id\":\"3\",\"name\":\"Aarav Kapoor\",\"email\":\"owner.demo@zdtrealty.local\",\"role\":\"owner\",\"companyRole\":null,\"platformRole\":\"owner\",\"accountType\":\"individual\",\"subscriptionTier\":\"free\",\"isMainAdmin\":false,\"managedAuthProvider\":null,\"managedAuthOnly\":false}}"
+    },
+    "ownerMe": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "352",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:35 GMT",
+        "etag": "W/\"160-wnBBrk95AbEnncmuHQEfsCuNyxI\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "10",
+        "ratelimit-remaining": "4",
+        "ratelimit-reset": "891",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "4",
+        "x-ratelimit-reset": "1775918487",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "user": {
+          "id": "3",
+          "name": "Aarav Kapoor",
+          "email": "owner.demo@zdtrealty.local",
+          "phone": null,
+          "role": "owner",
+          "company_role": null,
+          "account_type": "individual",
+          "subscription_tier": "free",
+          "is_main_admin": false,
+          "force_password_reset": false,
+          "managed_auth_provider": null,
+          "managed_auth_only": false,
+          "created_at": "2026-04-11T14:14:26.721Z",
+          "auth_strategy": "legacy"
+        }
+      },
+      "rawText": "{\"user\":{\"id\":\"3\",\"name\":\"Aarav Kapoor\",\"email\":\"owner.demo@zdtrealty.local\",\"phone\":null,\"role\":\"owner\",\"company_role\":null,\"account_type\":\"individual\",\"subscription_tier\":\"free\",\"is_main_admin\":false,\"force_password_reset\":false,\"managed_auth_provider\":null,\"managed_auth_only\":false,\"created_at\":\"2026-04-11T14:14:26.721Z\",\"auth_strategy\":\"legacy\"}}"
+    },
+    "publicProperties": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-encoding": "gzip",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:36 GMT",
+        "etag": "W/\"588-GK1C7maRgGtRIRmJ9KwAb4Ulu9A\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "160",
+        "ratelimit-remaining": "159",
+        "ratelimit-reset": "600",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "transfer-encoding": "chunked",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "160",
+        "x-ratelimit-remaining": "159",
+        "x-ratelimit-reset": "1775918196",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "properties": [
+          {
+            "id": 3,
+            "companyId": 2,
+            "projectId": null,
+            "title": "Skyline Residence - 3BHK",
+            "propertyType": "Apartment",
+            "listingType": "sale",
+            "price": 12500000,
+            "pricePerSqft": 9200,
+            "rentPerMonth": null,
+            "rentDeposit": null,
+            "state": "Maharashtra",
+            "city": "Mumbai",
+            "area": "Bandra",
+            "locality": "Bandra West",
+            "address": "Hill Road, Bandra West",
+            "fullAddress": "Hill Road, Bandra West, Mumbai",
+            "landmark": "",
+            "latitude": null,
+            "longitude": null,
+            "areaSqft": null,
+            "carpetArea": null,
+            "builtupArea": null,
+            "superBuiltupArea": null,
+            "bedrooms": 3,
+            "bhk": 3,
+            "bathrooms": 3,
+            "floorNumber": 12,
+            "totalFloors": 24,
+            "facing": "East",
+            "isCorner": false,
+            "isVaastu": false,
+            "possessionStatus": "ready",
+            "reraNumber": "RERA-MH-12345",
+            "furnishing": "na",
+            "isNegotiable": true,
+            "isPrelaunch": false,
+            "isVerified": true,
+            "isFeatured": true,
+            "viewCount": 0,
+            "availabilityDate": null,
+            "imageUrls": [
+              "https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop"
+            ],
+            "primaryImage": "https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop",
+            "description": "Premium 3BHK with skyline views, club access, and skyline deck.",
+            "layoutDetails": {
+              "floors": []
+            },
+            "amenities": [],
+            "postedBy": 3,
+            "companyName": "Aarav Kapoor Properties",
+            "companyType": "owner",
+            "companyPropertyCount": 1,
+            "activeGroupDealCode": "",
+            "activeGroupDealStatus": "",
+            "createdAt": "2026-04-11T14:14:27.921Z",
+            "updatedAt": "2026-04-11T14:14:27.921Z"
+          }
+        ],
+        "total": 1,
+        "page": 1,
+        "pageSize": 24
+      },
+      "rawText": "{\"properties\":[{\"id\":3,\"companyId\":2,\"projectId\":null,\"title\":\"Skyline Residence - 3BHK\",\"propertyType\":\"Apartment\",\"listingType\":\"sale\",\"price\":12500000,\"pricePerSqft\":9200,\"rentPerMonth\":null,\"rentDeposit\":null,\"state\":\"Maharashtra\",\"city\":\"Mumbai\",\"area\":\"Bandra\",\"locality\":\"Bandra West\",\"address\":\"Hill Road, Bandra West\",\"fullAddress\":\"Hill Road, Bandra West, Mumbai\",\"landmark\":\"\",\"latitude\":null,\"longitude\":null,\"areaSqft\":null,\"carpetArea\":null,\"builtupArea\":null,\"superBuiltupArea\":null,\"bedrooms\":3,\"bhk\":3,\"bathrooms\":3,\"floorNumber\":12,\"totalFloors\":24,\"facing\":\"East\",\"isCorner\":false,\"isVaastu\":false,\"possessionStatus\":\"ready\",\"reraNumber\":\"RERA-MH-12345\",\"furnishing\":\"na\",\"isNegotiable\":true,\"isPrelaunch\":false,\"isVerified\":true,\"isFeatured\":true,\"viewCount\":0,\"availabilityDate\":null,\"imageUrls\":[\"https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop\"],\"primaryImage\":\"https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop\",\"description\":\"Premium 3BHK with skyline views, club access, and skyline deck.\",\"layoutDetails\":{\"floors\":[]},\"amenities\":[],\"postedBy\":3,\"companyName\":\"Aarav Kapoor Properties\",\"companyType\":\"owner\",\"companyPropertyCount\":1,\"activeGroupDealCode\":\"\",\"activeGroupDealStatus\":\"\",\"createdAt\":\"2026-04-11T14:14:27.921Z\",\"updatedAt\":\"2026-04-11T14:14:27.921Z\"}],\"total\":1,\"page\":1,\"pageSize\":24}"
+    },
+    "ownerPropertiesBefore": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "1000",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:36 GMT",
+        "etag": "W/\"3e8-7StAItPqOSLygRomCYpYRLyGaHg\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "100",
+        "ratelimit-remaining": "87",
+        "ratelimit-reset": "60",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "100",
+        "x-ratelimit-remaining": "87",
+        "x-ratelimit-reset": "1775917656",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "properties": [
+          {
+            "id": 3,
+            "title": "Skyline Residence - 3BHK",
+            "description": "Premium 3BHK with skyline views, club access, and skyline deck.",
+            "propertyType": "Apartment",
+            "listingType": "sale",
+            "price": 12500000,
+            "pricePerSqft": 9200,
+            "state": "Maharashtra",
+            "city": "Mumbai",
+            "locality": "Bandra West",
+            "address": "Hill Road, Bandra West",
+            "latitude": null,
+            "longitude": null,
+            "areaSqft": null,
+            "carpetArea": null,
+            "bedrooms": 3,
+            "floorNumber": 12,
+            "totalFloors": 24,
+            "facing": "East",
+            "isNegotiable": true,
+            "reraNumber": "RERA-MH-12345",
+            "possessionStatus": "ready",
+            "isVerified": true,
+            "isFeatured": true,
+            "viewCount": 0,
+            "imageUrls": [
+              "https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop"
+            ],
+            "createdAt": "2026-04-11T14:14:27.921Z",
+            "updatedAt": "2026-04-11T14:14:27.921Z",
+            "layoutDetails": {},
+            "groupDeal": {
+              "groupDealEnabled": false,
+              "groupInventoryCount": 1,
+              "groupDealMinBuyers": 2,
+              "groupDealMaxBuyers": 2,
+              "groupDiscountType": "NONE",
+              "groupDiscountValue": null,
+              "groupDealNote": ""
+            }
+          }
+        ],
+        "total": 1,
+        "page": 1,
+        "pageSize": 24
+      },
+      "rawText": "{\"properties\":[{\"id\":3,\"title\":\"Skyline Residence - 3BHK\",\"description\":\"Premium 3BHK with skyline views, club access, and skyline deck.\",\"propertyType\":\"Apartment\",\"listingType\":\"sale\",\"price\":12500000,\"pricePerSqft\":9200,\"state\":\"Maharashtra\",\"city\":\"Mumbai\",\"locality\":\"Bandra West\",\"address\":\"Hill Road, Bandra West\",\"latitude\":null,\"longitude\":null,\"areaSqft\":null,\"carpetArea\":null,\"bedrooms\":3,\"floorNumber\":12,\"totalFloors\":24,\"facing\":\"East\",\"isNegotiable\":true,\"reraNumber\":\"RERA-MH-12345\",\"possessionStatus\":\"ready\",\"isVerified\":true,\"isFeatured\":true,\"viewCount\":0,\"imageUrls\":[\"https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop\"],\"createdAt\":\"2026-04-11T14:14:27.921Z\",\"updatedAt\":\"2026-04-11T14:14:27.921Z\",\"layoutDetails\":{},\"groupDeal\":{\"groupDealEnabled\":false,\"groupInventoryCount\":1,\"groupDealMinBuyers\":2,\"groupDealMaxBuyers\":2,\"groupDiscountType\":\"NONE\",\"groupDiscountValue\":null,\"groupDealNote\":\"\"}}],\"total\":1,\"page\":1,\"pageSize\":24}"
+    },
+    "imageUpload": {
+      "status": 201,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "384",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:26:40 GMT",
+        "etag": "W/\"180-89t96cx10vaDqdV4a5+PejIaw+A\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "10",
+        "ratelimit-remaining": "3",
+        "ratelimit-reset": "890",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "3",
+        "x-ratelimit-reset": "1775918487",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "message": "Image uploaded successfully",
+        "imageUrl": "https://res.cloudinary.com/dkckbkgkj/image/upload/v1775917599/zdt/realty-properties/realty_property-3-1775917597073-c244704c.png",
+        "storageRef": "https://res.cloudinary.com/dkckbkgkj/image/upload/v1775917599/zdt/realty-properties/realty_property-3-1775917597073-c244704c.png",
+        "storageVisibility": "public",
+        "purpose": "realty_property"
+      },
+      "rawText": "{\"message\":\"Image uploaded successfully\",\"imageUrl\":\"https://res.cloudinary.com/dkckbkgkj/image/upload/v1775917599/zdt/realty-properties/realty_property-3-1775917597073-c244704c.png\",\"storageRef\":\"https://res.cloudinary.com/dkckbkgkj/image/upload/v1775917599/zdt/realty-properties/realty_property-3-1775917597073-c244704c.png\",\"storageVisibility\":\"public\",\"purpose\":\"realty_property\"}"
+    },
+    "ownerPropertiesAfter": {
+      "status": 200,
+      "ok": true,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "cache-control": "no-store, no-cache, must-revalidate, private",
+        "connection": "keep-alive",
+        "content-length": "1000",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "content-type": "application/json; charset=utf-8",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "cross-origin",
+        "date": "Sat, 11 Apr 2026 14:28:24 GMT",
+        "etag": "W/\"3e8-7StAItPqOSLygRomCYpYRLyGaHg\"",
+        "keep-alive": "timeout=5",
+        "origin-agent-cluster": "?1",
+        "permissions-policy": "geolocation=(), microphone=(), camera=(), payment=()",
+        "pragma": "no-cache",
+        "ratelimit-limit": "100",
+        "ratelimit-remaining": "68",
+        "ratelimit-reset": "47",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "vary": "Origin, Accept-Encoding",
+        "x-content-type-options": "nosniff",
+        "x-dns-prefetch-control": "off",
+        "x-download-options": "noopen",
+        "x-frame-options": "DENY",
+        "x-permitted-cross-domain-policies": "none",
+        "x-ratelimit-limit": "100",
+        "x-ratelimit-remaining": "68",
+        "x-ratelimit-reset": "1775917751",
+        "x-xss-protection": "0"
+      },
+      "data": {
+        "properties": [
+          {
+            "id": 3,
+            "title": "Skyline Residence - 3BHK",
+            "description": "Premium 3BHK with skyline views, club access, and skyline deck.",
+            "propertyType": "Apartment",
+            "listingType": "sale",
+            "price": 12500000,
+            "pricePerSqft": 9200,
+            "state": "Maharashtra",
+            "city": "Mumbai",
+            "locality": "Bandra West",
+            "address": "Hill Road, Bandra West",
+            "latitude": null,
+            "longitude": null,
+            "areaSqft": null,
+            "carpetArea": null,
+            "bedrooms": 3,
+            "floorNumber": 12,
+            "totalFloors": 24,
+            "facing": "East",
+            "isNegotiable": true,
+            "reraNumber": "RERA-MH-12345",
+            "possessionStatus": "ready",
+            "isVerified": true,
+            "isFeatured": true,
+            "viewCount": 0,
+            "imageUrls": [
+              "https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop"
+            ],
+            "createdAt": "2026-04-11T14:14:27.921Z",
+            "updatedAt": "2026-04-11T14:14:27.921Z",
+            "layoutDetails": {},
+            "groupDeal": {
+              "groupDealEnabled": false,
+              "groupInventoryCount": 1,
+              "groupDealMinBuyers": 2,
+              "groupDealMaxBuyers": 2,
+              "groupDiscountType": "NONE",
+              "groupDiscountValue": null,
+              "groupDealNote": ""
+            }
+          }
+        ],
+        "total": 1,
+        "page": 1,
+        "pageSize": 24
+      },
+      "rawText": "{\"properties\":[{\"id\":3,\"title\":\"Skyline Residence - 3BHK\",\"description\":\"Premium 3BHK with skyline views, club access, and skyline deck.\",\"propertyType\":\"Apartment\",\"listingType\":\"sale\",\"price\":12500000,\"pricePerSqft\":9200,\"state\":\"Maharashtra\",\"city\":\"Mumbai\",\"locality\":\"Bandra West\",\"address\":\"Hill Road, Bandra West\",\"latitude\":null,\"longitude\":null,\"areaSqft\":null,\"carpetArea\":null,\"bedrooms\":3,\"floorNumber\":12,\"totalFloors\":24,\"facing\":\"East\",\"isNegotiable\":true,\"reraNumber\":\"RERA-MH-12345\",\"possessionStatus\":\"ready\",\"isVerified\":true,\"isFeatured\":true,\"viewCount\":0,\"imageUrls\":[\"https://images.unsplash.com/photo-1505691723518-36a5ac3be353?q=80&w=1200&auto=format&fit=crop\"],\"createdAt\":\"2026-04-11T14:14:27.921Z\",\"updatedAt\":\"2026-04-11T14:14:27.921Z\",\"layoutDetails\":{},\"groupDeal\":{\"groupDealEnabled\":false,\"groupInventoryCount\":1,\"groupDealMinBuyers\":2,\"groupDealMaxBuyers\":2,\"groupDiscountType\":\"NONE\",\"groupDiscountValue\":null,\"groupDealNote\":\"\"}}],\"total\":1,\"page\":1,\"pageSize\":24}"
+    },
+    "uiCreatedProperty": null
+  },
+  "cleanup": {},
+  "failures": [
+    "Legacy signup API failed.",
+    "Owner UI property creation did not produce a visible listing.",
+    "Browser console/runtime issues were detected."
+  ],
+  "summary": {
+    "frontendLoads": true,
+    "signupWorks": false,
+    "loginWorks": true,
+    "propertiesFetched": true,
+    "propertyCreationWorks": false,
+    "imageUploadWorks": true,
+    "consoleClean": false,
+    "browserErrors": [
+      {
+        "pageName": "buy",
+        "issues": [
+          "429 http://localhost:5000/api/v1/auth/me"
+        ]
+      },
+      {
+        "pageName": "login",
+        "issues": [
+          "429 http://localhost:5000/api/v1/auth/me"
+        ]
+      },
+      {
+        "pageName": "register",
+        "issues": [
+          "429 http://localhost:5000/api/v1/auth/me"
+        ]
+      }
+    ]
+  },
+  "finishedAt": "2026-04-11T14:28:24.432Z"
+}
