@@ -7,6 +7,7 @@ import App from './App.tsx'
 import { Toaster } from '@/components/ui/sonner'
 import { initializeSentry, Sentry } from '@/lib/sentry'
 import { initializeGoogleAnalytics } from '@/lib/googleAnalytics'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 
 const isEdgeBrowser =
   typeof navigator !== 'undefined' &&
@@ -51,5 +52,6 @@ root.render(
       <App />
     </Sentry.ErrorBoundary>
     <Toaster richColors position="top-right" />
+    <SpeedInsights />
   </StrictMode>,
 )
