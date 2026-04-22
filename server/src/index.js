@@ -1,4 +1,10 @@
 import 'dotenv/config';
+import dns from 'dns';
+
+// Force IPv4 DNS resolution — Render (and many cloud hosts) cannot reach
+// Supabase over IPv6, causing ENETUNREACH on the PostgreSQL connection.
+dns.setDefaultResultOrder('ipv4first');
+
 import {
   captureServerError,
   flushSentry,
