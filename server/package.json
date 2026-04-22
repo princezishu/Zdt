@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "dev:nodemon": "nodemon src/index.js",
-    "start": "node src/index.js",
+    "start": "node --dns-result-order=ipv4first src/index.js",
     "prepare:india-villages": "node scripts/prepare-india-village-data.js",
     "fix:chat-sender-names": "node scripts/backfill-chat-sender-names.js",
     "sql:run": "node scripts/run-sql-file.js",
