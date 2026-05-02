@@ -13,8 +13,8 @@ import {
   Gift,
 } from 'lucide-react';
 import ManagedOAuthButtons from '@/components/auth/ManagedOAuthButtons';
-import { ApiError, apiRequest } from '@/lib/http';
-import { parseApiUser, readOrCreateDeviceId, saveSession, type AuthUser } from '@/lib/session';
+import { apiRequest } from '@/lib/http';
+import { readOrCreateDeviceId, type AuthUser } from '@/lib/session';
 import {
   clearManagedLinkHint,
   clearManagedSignupHint,
@@ -23,7 +23,6 @@ import {
   type ManagedOAuthProvider,
   readManagedSignupHint,
   signInWithManagedOAuth,
-  signUpWithManagedPassword,
   setManagedLinkHint,
 } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -35,6 +34,7 @@ interface RegisterProps {
   onOpenCompanyRegister: () => void;
   onRegisterSuccess: (payload?: { token: string; user: AuthUser }) => void;
 }
+
 
 const steps = [
   {
@@ -58,7 +58,8 @@ export default function Register({
   onSwitchToLogin,
   onOpenCompanyLogin,
   onOpenCompanyRegister,
-  onRegisterSuccess,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onRegisterSuccess: _onRegisterSuccess,
 }: RegisterProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
@@ -91,18 +92,8 @@ export default function Register({
     }
   }, []);
 
-  const redirectToManagedLinkFlow = (normalizedEmail: string, provider?: string | null) => {
-    clearManagedSignupHint();
-    setManagedLinkHint({
-      email: normalizedEmail,
-      provider: provider || 'supabase',
-    });
-    const message =
-      'Managed sign-in created. Go to login to link this email with your existing account.';
-    toast.success(message);
-    setSuccess(message);
-    setTimeout(() => onSwitchToLogin(), 900);
-  };
+  // redirectToManagedLinkFlow removed — registration now always goes
+  // directly through the backend /auth/register endpoint.
 
   const handleManagedSocialRegister = async (provider: ManagedOAuthProvider) => {
     const providerLabel = getManagedOAuthProviderLabel(provider);
@@ -217,49 +208,10 @@ export default function Register({
                     const normalizedReferralCode = referralCode.trim().toUpperCase();
 
                     if (isManagedRegister) {
-                      const managedResult = await signUpWithManagedPassword({
-                        name: normalizedName,
-                        email: normalizedEmail,
-                        phone: normalizedPhone,
-                        password,
-                      });
-
-                      const authToken = String(managedResult.session?.access_token || '').trim();
-                      if (authToken) {
-                        try {
-                          const response = await apiRequest<{ user: unknown }>('/auth/me', {}, authToken);
-                          const authUser = parseApiUser(response.user);
-                          if (!authUser) {
-                            throw new Error('Managed sign-up succeeded but user sync failed.');
-                          }
-                          saveSession(authToken, authUser);
-                          toast.success('Account created. Signed in successfully.');
-                          onRegisterSuccess({ token: authToken, user: authUser });
-                          return;
-                        } catch (err) {
-                          if (
-                            err instanceof ApiError &&
-                            err.code === 'managed_auth_link_required'
-                          ) {
-                            redirectToManagedLinkFlow(normalizedEmail, err.provider);
-                            return;
-                          }
-
-                          throw err;
-                        }
-                      }
-
-                      clearManagedSignupHint();
-                      setSuccess('Account created. Check your email to confirm your address, then log in.');
-                      toast.success('Account created. Check your email to confirm your address.');
-                      addNotification({
-                        title: 'Account created',
-                        message: `${normalizedEmail} is waiting for email confirmation.`,
-                        kind: 'success',
-                        source: 'auth',
-                      });
-                      setTimeout(() => onSwitchToLogin(), 1000);
-                      return;
+                      // ── Always register via the backend directly ──
+                      // Supabase managed signup causes 504 timeouts and
+                      // confusing "link account" flows. The backend
+                      // /auth/register endpoint handles everything.
                     }
 
                     await apiRequest('/auth/register', {
@@ -275,8 +227,8 @@ export default function Register({
                     });
 
                     clearManagedSignupHint();
-                    setSuccess('Account created. Please log in.');
-                    toast.success('Account created. Please log in.');
+                    setSuccess('Account created successfully! Please log in.');
+                    toast.success('Account created successfully! Please log in.');
                     addNotification({
                       title: 'Account created',
                       message: normalizedEmail,
