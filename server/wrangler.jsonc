@@ -1,0 +1,32 @@
+{
+  "name": "zdt-realty-api",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-05-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "NODE_ENV": "production",
+    "FORCE_HTTPS": "true",
+    "TRUST_PROXY": "1",
+    "ENABLE_REDIS_QUEUE": "false",
+    "FRONTEND_URL": "https://zdtrealty.vercel.app",
+    "CORS_ALLOWED_ORIGIN_PATTERNS": "https://*.vercel.app,https://zdtrealty.vercel.app"
+  },
+  "triggers": {
+    "crons": [
+      "*/15 * * * *",
+      "0 */6 * * *",
+      "45 0 * * *",
+      "15 1 * * *",
+      "45 3 * * *"
+    ]
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "2cdfed7e092e4d7a9a865af20d2b0085"
+    }
+  ]
+}

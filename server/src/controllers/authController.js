@@ -76,7 +76,10 @@ const AUTH_COOKIE_SECURE =
   process.env.AUTH_COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
 const AUTH_COOKIE_SAME_SITE = (() => {
   const candidate = String(process.env.AUTH_COOKIE_SAME_SITE || '').trim().toLowerCase();
-  return candidate === 'strict' || candidate === 'none' ? candidate : 'lax';
+  if (candidate === 'strict' || candidate === 'lax' || candidate === 'none') {
+    return candidate;
+  }
+  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
 })();
 const MEDIA_SIGNING_SECRET =
   process.env.MEDIA_SIGNING_SECRET?.trim() ||
@@ -1001,105 +1004,84 @@ async function registerOrRotateSession({
   userAgent,
   ipAddress,
 }) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  // Use pool.query() instead of pool.connect() for Hyperdrive compatibility.
+  // Hyperdrive does not support dedicated client checkout (pool.connect()).
 
-    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+  const existingDeviceRows = await pool.query(
+    `
+      SELECT id
+      FROM user_sessions
+      WHERE user_id = $1
+        AND device_id = $2
+        AND revoked_at IS NULL
+      LIMIT 1
+    `,
+    [userId, deviceId]
+  );
 
-    const existingDeviceRows = await client.query(
+  if (existingDeviceRows.rowCount === 0) {
+    const activeCountRows = await pool.query(
       `
-        SELECT id
+        SELECT COUNT(*)::INT AS active_count
         FROM user_sessions
         WHERE user_id = $1
-          AND device_id = $2
           AND revoked_at IS NULL
-        LIMIT 1
       `,
-      [userId, deviceId]
+      [userId]
     );
 
-    if (existingDeviceRows.rowCount === 0) {
-      const activeCountRows = await client.query(
+    const activeCount = Number(activeCountRows.rows[0].active_count || 0);
+    if (activeCount >= MAX_ACTIVE_DEVICES_PER_ACCOUNT) {
+      if (!AUTO_REVOKE_OLDEST_SESSION_ON_LIMIT) {
+        return { allowed: false };
+      }
+
+      // Revoke the oldest session
+      await pool.query(
         `
-          SELECT COUNT(*)::INT AS active_count
-          FROM user_sessions
-          WHERE user_id = $1
-            AND revoked_at IS NULL
-        `,
-        [userId]
-      );
-
-      const activeCount = Number(activeCountRows.rows[0].active_count || 0);
-      if (activeCount >= MAX_ACTIVE_DEVICES_PER_ACCOUNT) {
-        if (!AUTO_REVOKE_OLDEST_SESSION_ON_LIMIT) {
-          await client.query('ROLLBACK');
-          return { allowed: false };
-        }
-
-        const oldestSessionRows = await client.query(
-          `
+          UPDATE user_sessions
+          SET revoked_at = NOW(),
+              revoked_by_user_id = $1
+          WHERE id = (
             SELECT id
             FROM user_sessions
             WHERE user_id = $1
               AND revoked_at IS NULL
             ORDER BY last_seen_at ASC NULLS FIRST, id ASC
             LIMIT 1
-            FOR UPDATE
-          `,
-          [userId]
-        );
-
-        if (oldestSessionRows.rowCount === 0) {
-          await client.query('ROLLBACK');
-          return { allowed: false };
-        }
-
-        await client.query(
-          `
-            UPDATE user_sessions
-            SET revoked_at = NOW(),
-                revoked_by_user_id = $2
-            WHERE id = $1
-          `,
-          [oldestSessionRows.rows[0].id, userId]
-        );
-      }
+          )
+        `,
+        [userId]
+      );
     }
-
-    await client.query(
-      `
-        INSERT INTO user_sessions (
-          user_id,
-          device_id,
-          token_hash,
-          user_agent,
-          ip_address,
-          last_seen_at,
-          revoked_at,
-          revoked_by_user_id
-        )
-        VALUES ($1, $2, $3, $4, $5, NOW(), NULL, NULL)
-        ON CONFLICT (user_id, device_id)
-        DO UPDATE
-          SET token_hash = EXCLUDED.token_hash,
-              user_agent = EXCLUDED.user_agent,
-              ip_address = EXCLUDED.ip_address,
-              last_seen_at = NOW(),
-              revoked_at = NULL,
-              revoked_by_user_id = NULL
-      `,
-      [userId, deviceId, hashToken(token), userAgent.slice(0, 255), ipAddress]
-    );
-
-    await client.query('COMMIT');
-    return { allowed: true };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
   }
+
+  await pool.query(
+    `
+      INSERT INTO user_sessions (
+        user_id,
+        device_id,
+        token_hash,
+        user_agent,
+        ip_address,
+        last_seen_at,
+        revoked_at,
+        revoked_by_user_id
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW(), NULL, NULL)
+      ON CONFLICT (user_id, device_id)
+      DO UPDATE
+        SET token_hash = EXCLUDED.token_hash,
+            user_agent = EXCLUDED.user_agent,
+            ip_address = EXCLUDED.ip_address,
+            last_seen_at = NOW(),
+            revoked_at = NULL,
+            revoked_by_user_id = NULL
+    `,
+    [userId, deviceId, hashToken(token), userAgent.slice(0, 255), ipAddress]
+  );
+
+  return { allowed: true };
 }
 
 async function writeAuthActivity({
@@ -1137,7 +1119,11 @@ async function writeAuthActivity({
 }
 
 function isAdminTwoStepRequired(userRow) {
-  return userRow.role === 'admin' || Boolean(userRow.is_main_admin);
+  // Main admin (platform owner) is exempt — they can enable 2FA voluntarily.
+  if (Boolean(userRow.is_main_admin)) {
+    return false;
+  }
+  return userRow.role === 'admin';
 }
 
 function buildAuthUserPayload(userRow, { companyCode = '' } = {}) {
@@ -2063,21 +2049,23 @@ router.post('/register', registerRateLimiter, async (req, res, next) => {
     }
 
     const passwordHash = await bcrypt.hash(payload.password, 12);
-    const client = await pool.connect();
-    let result;
-    try {
-      await client.query('BEGIN');
-      result = await client.query(
-        `
-          INSERT INTO users (name, email, password_hash, phone, role)
-          VALUES ($1, $2, $3, $4, 'user')
-          RETURNING id, role, account_type, subscription_tier, is_main_admin
-        `,
-        [payload.name.trim(), email, passwordHash, normalizedPhone]
-      );
+    // Use pool.query() instead of pool.connect() for Hyperdrive compatibility.
+    const result = await pool.query(
+      `
+        INSERT INTO users (name, email, password_hash, phone, role)
+        VALUES ($1, $2, $3, $4, 'user')
+        RETURNING id, role, account_type, subscription_tier, is_main_admin
+      `,
+      [payload.name.trim(), email, passwordHash, normalizedPhone]
+    );
 
+    try {
       await ensureUserProfileRow(result.rows[0].id);
-      await registerDalalCoinSignup(client, {
+    } catch (_profileErr) {
+      // Non-critical — profile row can be created later
+    }
+    try {
+      await registerDalalCoinSignup(pool, {
         userId: result.rows[0].id,
         userName: payload.name.trim(),
         email,
@@ -2085,13 +2073,8 @@ router.post('/register', registerRateLimiter, async (req, res, next) => {
         deviceId,
         ipAddress: signupIpAddress || '',
       });
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    } catch (_coinErr) {
+      // Non-critical — coin signup can be retried
     }
 
     const user = {
@@ -2204,7 +2187,6 @@ router.post('/phone-otp/request', requireAuth, authPhoneOtpRequestLimiter, async
 });
 
 router.post('/phone-otp/verify', requireAuth, authPhoneOtpVerifyLimiter, async (req, res, next) => {
-  const client = await pool.connect();
   try {
     const payload = authPhoneOtpVerifySchema.parse(req.body || {});
     const normalizedPhone = normalizePhone(payload.phone);
@@ -2212,16 +2194,15 @@ router.post('/phone-otp/verify', requireAuth, authPhoneOtpVerifyLimiter, async (
       return res.status(400).json({ error: 'Invalid phone number format' });
     }
 
-    await client.query('BEGIN');
-
-    const verificationResult = await verifyPhoneOtp(client, {
+    // Use pool.query() instead of pool.connect() for Hyperdrive compatibility.
+    const verificationResult = await verifyPhoneOtp(pool, {
       normalizedPhone,
       verificationToken: payload.verificationToken,
       otp: payload.otp,
       maxAttempts: MAX_OTP_ATTEMPTS,
     });
 
-    await markDalalCoinPhoneVerified(client, {
+    await markDalalCoinPhoneVerified(pool, {
       userId: req.user.id,
       phone: normalizedPhone,
     });
@@ -2238,8 +2219,6 @@ router.post('/phone-otp/verify', requireAuth, authPhoneOtpVerifyLimiter, async (
       ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
     });
 
-    await client.query('COMMIT');
-
     const [wallet, referrals] = await Promise.all([
       getDalalCoinWallet(pool, req.user.id, { transactionLimit: 10 }),
       getDalalCoinReferrals(pool, req.user.id),
@@ -2254,10 +2233,7 @@ router.post('/phone-otp/verify', requireAuth, authPhoneOtpVerifyLimiter, async (
       referrals,
     });
   } catch (error) {
-    await client.query('ROLLBACK');
     return next(error);
-  } finally {
-    client.release();
   }
 });
 

@@ -20,7 +20,6 @@ import {
   getManagedAccessToken,
   getManagedOAuthProviderLabel,
   isSupabaseConfigured,
-  ManagedAuthError,
   type ManagedOAuthProvider,
   readManagedLinkHint,
   requestManagedSignInLink,
@@ -59,6 +58,15 @@ interface ManagedLinkResponse {
   message?: string;
   provider?: string | null;
   user?: unknown;
+}
+
+function normalizeEmail(value: string) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  const normalizedValue = normalizeEmail(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedValue);
 }
 
 function buildManagedAuthLabel(provider?: string | null) {
@@ -124,6 +132,10 @@ export default function Login({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isTwoFactorStep = twoFactorChallengeToken.trim().length > 0;
   const isManagedPublicLogin = mode === 'user' && isSupabaseConfigured();
+  const normalizedEmail = normalizeEmail(email);
+  const showManagedSignInGuide =
+    mode === 'user' && isManagedPublicLogin && !useLegacyLinkFlow && !isTwoFactorStep;
+  const normalizedError = error.trim().toLowerCase();
   const isLegacyLoginMode =
     mode !== 'user' || requiresCompanyCode || requiresPromotionProof || useLegacyLinkFlow;
   const accessLabel =
@@ -150,6 +162,25 @@ export default function Login({
           )}.`
         : 'Log in to access your saved searches and alerts.'
       : 'Log in with your approved internal credentials.';
+  const emailFieldHasError =
+    Boolean(normalizedError) &&
+    (normalizedError.includes('email') || normalizedError.includes('sign-in link'));
+  const passwordFieldHasError =
+    Boolean(normalizedError) &&
+    (normalizedError.includes('password') || normalizedError.includes('invalid login credentials'));
+  const companyCodeFieldHasError = Boolean(normalizedError) && normalizedError.includes('company');
+  const referenceIdFieldHasError = Boolean(normalizedError) && normalizedError.includes('reference');
+  const registrationNumberFieldHasError =
+    Boolean(normalizedError) && normalizedError.includes('registration');
+
+  const clearInlineFeedback = ({ keepLinkNotice = false } = {}) => {
+    setError('');
+    setStatusMessage('');
+    setShowCreateManagedAccountAction(false);
+    if (!keepLinkNotice && !useLegacyLinkFlow) {
+      setLinkNotice('');
+    }
+  };
 
   useEffect(() => {
     if (mode !== 'user' || !isManagedPublicLogin) {
@@ -444,18 +475,18 @@ export default function Login({
   };
 
   const handleSendSignInLink = async () => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    if (!isValidEmail(email)) {
       setError('Enter a valid email address first.');
       return;
     }
+    const nextEmail = normalizeEmail(email);
 
     setIsSubmitting(true);
     setError('');
     setStatusMessage('');
     setShowCreateManagedAccountAction(false);
     try {
-      await requestManagedSignInLink(normalizedEmail);
+      await requestManagedSignInLink(nextEmail);
       setStatusMessage('Sign-in link sent. Open the email and come back here to finish logging in.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to send the sign-in link';
@@ -466,13 +497,13 @@ export default function Login({
   };
 
   const handleCreateManagedAccount = () => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    if (!isValidEmail(email)) {
       setError('Enter a valid email address first.');
       return;
     }
+    const nextEmail = normalizeEmail(email);
 
-    setManagedSignupHint(normalizedEmail);
+    setManagedSignupHint(nextEmail);
     setStatusMessage('');
     setError('');
     onSwitchToRegister();
@@ -634,6 +665,18 @@ export default function Login({
                 </div>
               ) : null}
 
+              {showManagedSignInGuide ? (
+                <div className="mt-6 rounded-xl border border-brand-secondary/20 bg-brand-secondary/5 p-4 text-sm text-brand-gray3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-primary">
+                    Recommended For Public Accounts
+                  </p>
+                  <p className="mt-2">
+                    Use your managed password, Google, GitHub, or a sign-in link. If this email is
+                    tied to an older ZDT password, we will guide you through linking it once.
+                  </p>
+                </div>
+              ) : null}
+
               <form
                 className="mt-8 space-y-5"
                 onSubmit={async (event) => {
@@ -679,64 +722,83 @@ export default function Login({
                       registrationNumber.trim().length > 0;
                     const shouldSendCompanyCode =
                       requiresCompanyCode || companyCode.trim().length > 0;
+                    if (!isValidEmail(normalizedEmail)) {
+                      setError('Enter a valid email address.');
+                      return;
+                    }
+                    if (!password.trim()) {
+                      setError('Enter your password.');
+                      return;
+                    }
+                    if (shouldSendCompanyCode && !companyCode.trim()) {
+                      setError('Enter the company register number for this account.');
+                      return;
+                    }
+                    if (shouldSendPromotionProof && !referenceId.trim()) {
+                      setError('Enter the reference ID for this promoted account.');
+                      return;
+                    }
+                    if (shouldSendPromotionProof && !registrationNumber.trim()) {
+                      setError('Enter the registration number for this promoted account.');
+                      return;
+                    }
 
                     if (!isLegacyLoginMode && isManagedPublicLogin) {
+                      // ── Try backend (legacy) password login FIRST ──
+                      // This avoids the confusing "Link your existing account"
+                      // flow caused by Supabase managed auth finding an unlinked
+                      // email match in the database. The user just wants to log
+                      // in with their email + password.
                       try {
-                        const managedPayload = await finalizeManagedLogin();
+                        const legacyPayload = await attemptLegacyPasswordLogin({
+                          shouldSendCompanyCode,
+                          shouldSendPromotionProof,
+                        });
+                        if (!legacyPayload) {
+                          return;
+                        }
+                        // Legacy login succeeded — save session directly
                         clearManagedLinkState();
+                        clearManagedSignupHint();
                         setLinkNotice('');
                         setCompanyCode('');
                         setRequiresCompanyCode(false);
                         setRequiresPromotionProof(false);
                         setReferenceId('');
                         setRegistrationNumber('');
-                        onLoginSuccess(managedPayload);
+                        saveSession(legacyPayload.token, legacyPayload.user);
+                        onLoginSuccess(legacyPayload);
                         return;
-                      } catch (managedError) {
-                        const managedErrorMessage =
-                          managedError instanceof Error ? managedError.message : String(managedError || '');
-                        const shouldTryLegacyPasswordFallback =
-                          (managedError instanceof ManagedAuthError &&
-                            managedError.code === 'managed_auth_network_error') ||
-                          /invalid login credentials/i.test(managedErrorMessage);
+                      } catch (legacyError) {
+                        const legacyErrorMessage =
+                          legacyError instanceof Error ? legacyError.message : String(legacyError || '');
 
-                        if (shouldTryLegacyPasswordFallback) {
-                          const fallbackStatusMessage =
-                            managedError instanceof ManagedAuthError &&
-                            managedError.code === 'managed_auth_network_error'
-                              ? 'Managed sign-in is unavailable. Trying your legacy password instead.'
-                              : 'That password did not match your managed sign-in. Trying your existing ZDT password instead.';
-
-                          setStatusMessage(fallbackStatusMessage);
+                        // If backend says invalid credentials, try Supabase managed auth
+                        // (the user might have a managed-only account)
+                        if (/invalid email or password/i.test(legacyErrorMessage)) {
                           try {
-                            const legacyPayload = await attemptLegacyPasswordLogin({
-                              shouldSendCompanyCode,
-                              shouldSendPromotionProof,
-                            });
-                            if (!legacyPayload) {
-                              return;
-                            }
-                            setStatusMessage('');
-                            await finalizeLegacyLogin(legacyPayload.token, legacyPayload.user);
+                            const managedPayload = await finalizeManagedLogin();
+                            clearManagedLinkState();
+                            setLinkNotice('');
+                            setCompanyCode('');
+                            setRequiresCompanyCode(false);
+                            setRequiresPromotionProof(false);
+                            setReferenceId('');
+                            setRegistrationNumber('');
+                            onLoginSuccess(managedPayload);
                             return;
-                          } catch (legacyError) {
-                            setStatusMessage('');
-
-                            const legacyErrorMessage =
-                              legacyError instanceof Error ? legacyError.message : String(legacyError || '');
-                            if (/invalid email or password/i.test(legacyErrorMessage)) {
-                              setManagedSignupHint(email);
-                              setShowCreateManagedAccountAction(true);
-                              throw new Error(
-                                'We could not sign you in with either your managed password or your old ZDT password. If you have not created a managed account for this email yet, create one first, or use the sign-in link after that account exists.'
-                              );
-                            }
-
-                            throw legacyError;
+                          } catch (managedError) {
+                            // Both failed — show a helpful message
+                            setManagedSignupHint(email);
+                            setShowCreateManagedAccountAction(true);
+                            throw new Error(
+                              'Invalid email or password. If you have not created an account, please register first.'
+                            );
                           }
                         }
 
-                        throw managedError;
+                        // Non-credential errors (network, rate limit, etc.) bubble up
+                        throw legacyError;
                       }
                     }
 
@@ -874,8 +936,17 @@ export default function Login({
                           type="email"
                           placeholder="name@example.com"
                           value={email}
-                          onChange={(event) => setEmail(event.target.value)}
-                          className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                          autoComplete="email"
+                          onChange={(event) => {
+                            clearInlineFeedback();
+                            setEmail(event.target.value);
+                          }}
+                          aria-invalid={emailFieldHasError}
+                          className={`h-12 w-full rounded-xl bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                            emailFieldHasError
+                              ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                              : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                          }`}
                         />
                       </div>
                     </div>
@@ -907,8 +978,17 @@ export default function Login({
                           type={showPassword ? 'text' : 'password'}
                           placeholder="********"
                           value={password}
-                          onChange={(event) => setPassword(event.target.value)}
-                          className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-12 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                          autoComplete="current-password"
+                          onChange={(event) => {
+                            clearInlineFeedback({ keepLinkNotice: useLegacyLinkFlow });
+                            setPassword(event.target.value);
+                          }}
+                          aria-invalid={passwordFieldHasError}
+                          className={`h-12 w-full rounded-xl bg-white pl-11 pr-12 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                            passwordFieldHasError
+                              ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                              : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                          }`}
                         />
                         <button
                           type="button"
@@ -937,8 +1017,17 @@ export default function Login({
                             type="text"
                             placeholder="Enter company register number"
                             value={companyCode}
-                            onChange={(event) => setCompanyCode(event.target.value.toUpperCase())}
-                            className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                            autoComplete="off"
+                            onChange={(event) => {
+                              clearInlineFeedback();
+                              setCompanyCode(event.target.value.toUpperCase());
+                            }}
+                            aria-invalid={companyCodeFieldHasError}
+                            className={`h-11 w-full rounded-xl bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                              companyCodeFieldHasError
+                                ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                                : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                            }`}
                           />
                         </div>
                       </div>
@@ -957,8 +1046,17 @@ export default function Login({
                             type="text"
                             placeholder="Enter reference ID"
                             value={referenceId}
-                            onChange={(event) => setReferenceId(event.target.value)}
-                            className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                            autoComplete="off"
+                            onChange={(event) => {
+                              clearInlineFeedback();
+                              setReferenceId(event.target.value);
+                            }}
+                            aria-invalid={referenceIdFieldHasError}
+                            className={`h-11 w-full rounded-xl bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                              referenceIdFieldHasError
+                                ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                                : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                            }`}
                           />
                         </div>
                         <div className="space-y-2">
@@ -969,8 +1067,17 @@ export default function Login({
                             type="text"
                             placeholder="Enter registration number"
                             value={registrationNumber}
-                            onChange={(event) => setRegistrationNumber(event.target.value)}
-                            className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                            autoComplete="off"
+                            onChange={(event) => {
+                              clearInlineFeedback();
+                              setRegistrationNumber(event.target.value);
+                            }}
+                            aria-invalid={registrationNumberFieldHasError}
+                            className={`h-11 w-full rounded-xl bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                              registrationNumberFieldHasError
+                                ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                                : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                            }`}
                           />
                         </div>
                       </div>
@@ -988,12 +1095,9 @@ export default function Login({
                       </div>
                     ) : null}
 
-                    <div className="flex items-center justify-between text-xs text-brand-gray3">
-                      <label className="flex items-center gap-2">
-                        <input type="checkbox" className="accent-brand-primary" />
-                        Remember me
-                      </label>
-                      <span>Secure session</span>
+                    <div className="rounded-xl border border-brand-gray2/70 bg-slate-50/80 px-4 py-3 text-xs text-brand-gray3">
+                      Sessions stay protected with secure cookies, device checks, and managed sign-in
+                      support where enabled.
                     </div>
                   </>
                 )}
@@ -1023,11 +1127,14 @@ export default function Login({
                     disabled={isSubmitting}
                     className="w-full rounded-xl border border-brand-primary/25 bg-white py-3 text-sm font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Email Me A Sign-In Link
+                    Email A Sign-In Link
                   </button>
                 ) : null}
                 {error ? (
-                  <p className="text-xs text-red-500" role="alert">
+                  <p
+                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600"
+                    role="alert"
+                  >
                     {error}
                   </p>
                 ) : null}
@@ -1035,13 +1142,17 @@ export default function Login({
                   <button
                     type="button"
                     onClick={handleCreateManagedAccount}
-                    className="w-full rounded-xl border border-brand-primary/25 bg-brand-primary/5 py-3 text-sm font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary"
+                    disabled={isSubmitting}
+                    className="w-full rounded-xl border border-brand-primary/25 bg-brand-primary/5 py-3 text-sm font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Create Managed Account With This Email
                   </button>
                 ) : null}
                 {statusMessage ? (
-                  <p className="text-xs text-emerald-600" role="status">
+                  <p
+                    className="rounded-xl border border-brand-primary/20 bg-brand-primary/5 px-4 py-3 text-sm text-brand-gray3"
+                    role="status"
+                  >
                     {statusMessage}
                   </p>
                 ) : null}
@@ -1078,7 +1189,7 @@ export default function Login({
               ) : (
                 <>
                   <ManagedOAuthButtons
-                    title="Continue with Google or GitHub"
+                    title="Or continue with Google or GitHub"
                     disabled={isSubmitting || mode !== 'user' || !isManagedPublicLogin}
                     onSelect={(provider) => void handleManagedSocialLogin(provider)}
                   />

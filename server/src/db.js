@@ -72,13 +72,94 @@ const dbPoolMax = Math.max(5, Math.min(50,
   Number(process.env.DB_POOL_MAX || 20) || 20
 ));
 
-export const pool = new Pool({
+export let pool = new Pool({
   ...databaseConnection.pgConfig,
   max: dbPoolMax,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
   allowExitOnIdle: false,
 });
+
+/**
+ * Reinitialize the pool with a new connection string (used by Cloudflare
+ * Workers when Hyperdrive provides a proxied connection).
+ */
+let poolReinitialised = false;
+
+/**
+ * Wrap a pg Pool so that `.connect()` returns a Hyperdrive-safe pseudo-client
+ * that delegates all queries to `pool.query()` instead of acquiring a dedicated
+ * TCP connection. Hyperdrive proxies don't support dedicated client checkout,
+ * so this avoids the hang that occurs when `pool.connect()` is called.
+ *
+ * BEGIN / COMMIT / ROLLBACK are logged but treated as no-ops — atomicity is
+ * traded for availability in the Workers edge environment.
+ */
+function wrapPoolForHyperdrive(rawPool) {
+  const wrapped = Object.create(null);
+
+  wrapped.connect = async function hyperdriveConnect() {
+    // Return a pseudo-client that delegates to pool.query()
+    const pseudoClient = {
+      query: (...args) => {
+        // Intercept transaction statements — treat as no-ops
+        const sql = typeof args[0] === 'string' ? args[0].trim().toUpperCase() : '';
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        // Strip FOR UPDATE / FOR SHARE since they need real transactions
+        if (typeof args[0] === 'string' && /\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b/i.test(args[0])) {
+          args[0] = args[0].replace(/\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b(\s+SKIP\s+LOCKED|\s+NOWAIT)?\b/gi, '');
+        }
+        return rawPool.query(...args);
+      },
+      release: () => {
+        // No-op — there's no dedicated connection to release
+      },
+    };
+
+    return pseudoClient;
+  };
+
+  // Delegate core methods
+  wrapped.query = (...args) => rawPool.query(...args);
+  wrapped.on = (...args) => rawPool.on(...args);
+  wrapped.end = (...args) => rawPool.end(...args);
+
+  return wrapped;
+}
+
+export function reinitializePool(connectionString) {
+  // Hyperdrive provides a fresh proxied connection string per Worker invocation.
+  // We must reinitialize the pool each time to pick up the new connection.
+  const rawPool = new Pool({
+    connectionString,
+    max: 1,                         // Hyperdrive manages the real pool
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000, // Allow extra time for cold starts
+    allowExitOnIdle: true,
+  });
+
+  rawPool.on('error', (err) => {
+    const code = err && typeof err === 'object' ? err.code || '' : '';
+    const isTransient =
+      code === 'ECONNRESET' ||
+      code === 'EPIPE' ||
+      code === 'ECONNABORTED' ||
+      code === 'ENOTFOUND' ||
+      /connection terminated/i.test(String(err?.message || ''));
+    if (isTransient) {
+      console.warn('[DB] Idle connection dropped (will reconnect automatically):', code || err?.message);
+    } else {
+      console.error('[DB] Unexpected pool error:', err);
+    }
+  });
+
+  // Wrap the pool so pool.connect() works safely with Hyperdrive
+  pool = wrapPoolForHyperdrive(rawPool);
+
+  console.log('[DB] Pool reinitialised with Hyperdrive connection (safe connect wrapper active).');
+}
 
 // ── Prevent idle-connection drops from crashing the process ──
 // Supabase (and many managed PostgreSQL hosts) terminate idle connections
