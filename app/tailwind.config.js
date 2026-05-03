@@ -5,7 +5,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Manrope', 'sans-serif'],
+        sans: ['Inter', 'sans-serif'],
+        display: ['Poppins', 'Inter', 'sans-serif'],
         serif: ['Cormorant Garamond', 'serif'],
       },
       colors: {

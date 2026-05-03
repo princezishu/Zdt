@@ -5,6 +5,7 @@ import {
   BriefcaseBusiness,
   Building2,
   Compass,
+  Gavel,
   GitCompareArrows,
   Home,
   Heart,
@@ -15,8 +16,10 @@ import {
   Menu,
   MessageCircle,
   MousePointerClick,
+  Newspaper,
   Settings,
   ShieldCheck,
+  Sparkles,
   TrendingUp,
   UserRound,
   Users,
@@ -79,6 +82,9 @@ interface HeaderProps {
   onProjects: () => void;
   onConstructWithUs: () => void;
   onBuildingMaterials: () => void;
+  onAiServices: () => void;
+  onEAuction: () => void;
+  onInsightsNews: () => void;
   onInfrastructure: () => void;
   onGroupDeals: () => void;
   onPostProperty: () => void;
@@ -120,6 +126,9 @@ export default function Header({
   onProjects,
   onConstructWithUs,
   onBuildingMaterials,
+  onAiServices,
+  onEAuction,
+  onInsightsNews,
   onInfrastructure,
   onGroupDeals,
   onPostProperty,
@@ -266,6 +275,8 @@ export default function Header({
       { label: 'Buy', onClick: onBuy },
       { label: 'Rent', onClick: onRent },
       { label: 'Sell', onClick: onPostProperty, accentClass: 'zdt-header-pill-highlight' },
+      { label: 'e-Auction', onClick: onEAuction },
+      { label: 'News', onClick: onInsightsNews },
       {
         label: 'Construct',
         onClick: onConstructWithUs,
@@ -275,6 +286,11 @@ export default function Header({
         label: 'ZDT Circular',
         onClick: onBuildingMaterials,
         visibilityClass: 'hidden min-[1580px]:inline-flex',
+      },
+      {
+        label: 'AI Services',
+        onClick: onAiServices,
+        visibilityClass: 'hidden min-[1680px]:inline-flex',
       },
       {
         label: 'Builders',
@@ -563,6 +579,30 @@ export default function Header({
                         <Users className="h-4 w-4 shrink-0 text-brand-primary" />
                         <span>Group Deals</span>
                       </button>
+                      <button
+                        type="button"
+                        onClick={closeMobileBottomSheetAnd(onEAuction)}
+                        className={mobileSheetItemBaseClass}
+                      >
+                        <Gavel className="h-4 w-4 shrink-0 text-brand-gray3" />
+                        <span>e-Auction</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeMobileBottomSheetAnd(onInsightsNews)}
+                        className={mobileSheetItemBaseClass}
+                      >
+                        <Newspaper className="h-4 w-4 shrink-0 text-brand-gray3" />
+                        <span>News &amp; Insights</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeMobileBottomSheetAnd(onAiServices)}
+                        className={`${mobileSheetItemBaseClass} border-brand-primary/35 bg-brand-gray1 text-brand-primary`}
+                      >
+                        <Sparkles className="h-4 w-4 shrink-0 text-brand-primary" />
+                        <span>AI Services</span>
+                      </button>
                     </div>
 
                     <div className="space-y-2">
@@ -753,6 +793,18 @@ export default function Header({
                         <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onGroupDeals)}>
                           <Users className="mr-2 h-4 w-4" />
                           Group Deals
+                        </Button>
+                        <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onEAuction)}>
+                          <Gavel className="mr-2 h-4 w-4" />
+                          e-Auction
+                        </Button>
+                        <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onInsightsNews)}>
+                          <Newspaper className="mr-2 h-4 w-4" />
+                          News &amp; Insights
+                        </Button>
+                        <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onAiServices)}>
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          AI Services
                         </Button>
                         <Button variant="outline" className="w-full justify-start" onClick={closeTabletMenuAnd(onPostProperty)}>
                           Post Property

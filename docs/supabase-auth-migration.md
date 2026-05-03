@@ -22,12 +22,14 @@ SUPABASE_JWT_ISSUER=
 SUPABASE_JWKS_URL=
 SUPABASE_JWT_AUDIENCE=
 SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 Notes:
 
 - Leave `MANAGED_AUTH_AUTO_LINK_BY_EMAIL=false` for the first rollout. That avoids accidental takeover of legacy accounts that share an email address.
 - `SUPABASE_ANON_KEY` is only required when Supabase access tokens are signed with HS256. For asymmetric JWT projects, JWKS verification is used instead.
+- `SUPABASE_SERVICE_ROLE_KEY` is optional, but it helps the API use Supabase REST reads/writes for mirrored tables and admin-only database helpers.
 
 ## Rollout Order
 

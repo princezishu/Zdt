@@ -16,7 +16,15 @@ services:
       - key: FORCE_HTTPS
         value: "true"
       - key: CORS_ALLOW_ALL
+        value: "false"
+      - key: FRONTEND_URL
+        value: https://zdtrealty.vercel.app
+      - key: CORS_ALLOWED_ORIGIN_PATTERNS
+        value: https://zdtrealty*.vercel.app,https://zdt-realty*.vercel.app
+      - key: AUTH_COOKIE_SECURE
         value: "true"
+      - key: AUTH_COOKIE_SAME_SITE
+        value: none
 
       # Database
       - key: SUPABASE_DB_POOLER_URL
@@ -40,6 +48,8 @@ services:
       - key: SUPABASE_PROJECT_URL
         sync: false
       - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
 
       # Media upload

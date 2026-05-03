@@ -31,9 +31,9 @@ function shouldUseSameOriginDevProxy(rawValue: string, parsedUrl: URL): boolean 
 
 function buildDefaultApiBaseUrl(): string {
   if (!import.meta.env.DEV) {
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      return trimTrailingSlash(window.location.origin);
-    }
+    // In production we prefer an explicit VITE_API_URL. When it is missing,
+    // keep requests on the current origin instead of silently calling an
+    // outdated hard-coded API deployment.
     return '';
   }
 

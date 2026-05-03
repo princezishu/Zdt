@@ -3,15 +3,20 @@ import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 
-const serviceFilePath = fileURLToPath(import.meta.url);
-const servicesDir = path.dirname(serviceFilePath);
-const serverRootDir = path.resolve(servicesDir, '..', '..');
-const DEFAULT_VILLAGE_DATA_PATH = path.resolve(serverRootDir, 'data', 'village-directory.csv');
+// Guard against Cloudflare Workers where import.meta.url may be undefined
+const serviceFilePath = typeof import.meta.url === 'string' && import.meta.url
+  ? fileURLToPath(import.meta.url)
+  : '';
+const servicesDir = serviceFilePath ? path.dirname(serviceFilePath) : '';
+const serverRootDir = servicesDir ? path.resolve(servicesDir, '..', '..') : '';
+const DEFAULT_VILLAGE_DATA_PATH = serverRootDir
+  ? path.resolve(serverRootDir, 'data', 'village-directory.csv')
+  : '';
 const configuredDataPath = String(process.env.INDIA_VILLAGE_DATA_PATH || '').trim();
 const VILLAGE_DATA_PATH = configuredDataPath
-  ? path.isAbsolute(configuredDataPath)
-    ? configuredDataPath
-    : path.resolve(serverRootDir, configuredDataPath)
+  ? (serverRootDir && !path.isAbsolute(configuredDataPath)
+    ? path.resolve(serverRootDir, configuredDataPath)
+    : configuredDataPath)
   : DEFAULT_VILLAGE_DATA_PATH;
 
 const directoryCache = {

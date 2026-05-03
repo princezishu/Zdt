@@ -1,4 +1,5 @@
-import cron from 'node-cron';
+// node-cron is lazy-loaded in startInsightsScheduler() to avoid
+// __dirname errors in Cloudflare Workers (which use native cron triggers).
 import { pool } from '../../db.js';
 import {
   IST_TIMEZONE,
@@ -598,12 +599,14 @@ export async function runUpcomingProjectsJob(options = {}) {
   }
 }
 
-export function startInsightsScheduler() {
+export async function startInsightsScheduler() {
   if (schedulerStarted) {
     return;
   }
 
   schedulerStarted = true;
+
+  const cron = (await import('node-cron')).default;
 
   const schedule = (jobName, expression, fn) => {
     const task = cron.schedule(

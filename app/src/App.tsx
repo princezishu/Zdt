@@ -59,6 +59,7 @@ function App() {
   const [layoutBuildingId, setLayoutBuildingId] = useState<number | null>(null);
   const [layoutFloorId, setLayoutFloorId] = useState<number | null>(null);
   const currentUserRef = useRef<AuthUser | null>(storedUser);
+  const isMountedRef = useRef(true);
 
   const { currentView, routeState, navigateTo } = useAppNavigation({
     initialUser: storedUser,
@@ -74,12 +75,72 @@ function App() {
   }, [currentUser]);
 
   useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     navigateToRef.current = navigateTo;
   }, [navigateTo]);
 
   useEffect(() => {
     currentViewRef.current = currentView;
   }, [currentView]);
+
+  const syncAuthenticatedUserFromServer = async (tokenHint = '') => {
+    const normalizedToken = String(tokenHint || '').trim();
+    if (normalizedToken) {
+      setSessionToken(normalizedToken);
+    }
+
+    try {
+      const response = await apiRequest<{ user: unknown }>('/auth/me', {}, normalizedToken || undefined);
+      const user = parseApiUser(response.user);
+      if (!user) {
+        throw new Error('Invalid session user payload');
+      }
+
+      if (!isMountedRef.current) {
+        return { token: normalizedToken || readToken(), user };
+      }
+
+      const liveToken = String(normalizedToken || readToken()).trim();
+      clearManagedLinkHint();
+      setAuthToken(liveToken || 'cookie-session');
+      setCurrentUser(user);
+      saveSession(liveToken, user);
+      return { token: liveToken, user };
+    } catch (error) {
+      if (!isMountedRef.current) {
+        throw error;
+      }
+
+      const requiresManagedLink =
+        error instanceof ApiError && error.code === 'managed_auth_link_required';
+      if (requiresManagedLink && isSupabaseConfigured()) {
+        const existingManagedLinkHint = readManagedLinkHint();
+        try {
+          const managedSession = await getManagedSession();
+          setManagedLinkHint({
+            email: managedSession?.user?.email || existingManagedLinkHint?.email || '',
+            provider: existingManagedLinkHint?.provider || error.provider,
+          });
+        } catch {
+          setManagedLinkHint({
+            email: existingManagedLinkHint?.email || '',
+            provider:
+              existingManagedLinkHint?.provider ||
+              (error instanceof ApiError ? error.provider : null),
+          });
+        }
+      } else {
+        clearManagedLinkHint();
+      }
+
+      throw error;
+    }
+  };
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -96,33 +157,17 @@ function App() {
     setIsLoaded(true);
 
     const bootstrap = async () => {
+      let managedToken = '';
       if (isSupabaseConfigured()) {
         try {
-          const managedToken = await getManagedAccessToken();
-          if (managedToken) {
-            setSessionToken(managedToken);
-          }
+          managedToken = await getManagedAccessToken();
         } catch {
           // Ignore managed auth bootstrap failures and continue to server session check.
         }
       }
 
       try {
-        const response = await apiRequest<{ user: unknown }>('/auth/me');
-        const user = parseApiUser(response.user);
-        if (!user) {
-          throw new Error('Invalid session user payload');
-        }
-
-        if (!active) {
-          return;
-        }
-
-        const liveToken = readToken();
-        clearManagedLinkHint();
-        setAuthToken(liveToken || 'cookie-session');
-        setCurrentUser(user);
-        saveSession(liveToken, user);
+        await syncAuthenticatedUserFromServer(managedToken);
       } catch (error) {
         if (!active) {
           return;
@@ -130,26 +175,6 @@ function App() {
 
         const requiresManagedLink =
           error instanceof ApiError && error.code === 'managed_auth_link_required';
-        if (requiresManagedLink && isSupabaseConfigured()) {
-          const existingManagedLinkHint = readManagedLinkHint();
-          try {
-            const managedSession = await getManagedSession();
-            setManagedLinkHint({
-              email: managedSession?.user?.email || existingManagedLinkHint?.email || '',
-              provider: existingManagedLinkHint?.provider || error.provider,
-            });
-          } catch {
-            setManagedLinkHint({
-              email: existingManagedLinkHint?.email || '',
-              provider:
-                existingManagedLinkHint?.provider ||
-                (error instanceof ApiError ? error.provider : null),
-            });
-          }
-        } else {
-          clearManagedLinkHint();
-        }
-
         clearSession();
         setAuthToken('');
         setCurrentUser(null);
@@ -242,9 +267,20 @@ function App() {
       }
 
       if (!activeUser) {
-        setSessionToken(nextToken);
-        setAuthToken(nextToken);
+        void syncAuthenticatedUserFromServer(nextToken).catch(() => {
+          if (!isMountedRef.current || currentUserRef.current) {
+            return;
+          }
+
+          clearSession();
+          setAuthToken('');
+          setCurrentUser(null);
+        });
+        return;
       }
+
+      setSessionToken(nextToken);
+      setAuthToken(nextToken);
     });
   }, []);
 
@@ -541,6 +577,9 @@ function App() {
     onProjects: () => navigateTo('projects'),
     onConstructWithUs: openConstructWithUs,
     onBuildingMaterials: openBuildingMaterials,
+    onAiServices: () => navigateTo('ai-services'),
+    onEAuction: () => navigateTo('e-auction'),
+    onInsightsNews: () => navigateTo('insights-news'),
     onInfrastructure: () => navigateTo('infrastructure'),
     onGroupDeals: () => navigateTo('group-deals'),
     onPostProperty: () => navigateTo('sell-property'),

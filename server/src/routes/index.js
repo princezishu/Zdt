@@ -1,6 +1,7 @@
 import apartmentComplexRoutes from './apartmentComplex.js';
 import authRoutes from './auth.js';
 import aiAssistantRoutes from './aiAssistant.js';
+import aiServicesRoutes from './aiServices.js';
 import builderRoutes from './builder.js';
 import chatRoutes from './chat.js';
 import collaborationsRoutes from './collaborations.js';
@@ -39,6 +40,7 @@ const routeModules = [
   ['materials', materialsRoutes],
   ['promotions', promotionsRoutes],
   ['aiAssistant', aiAssistantRoutes],
+  ['aiServices', aiServicesRoutes],
   ['support', supportRoutes],
   ['insights', insightsRoutes],
   ['realty', realtyRoutes],
@@ -77,6 +79,8 @@ const routeMounts = [
   { path: `${API_V1_PREFIX_TOKEN}/promotions`, limiter: 'globalApi', router: promotionsRoutes },
   { path: '/api/ai', limiter: 'globalApi', router: aiAssistantRoutes },
   { path: `${API_V1_PREFIX_TOKEN}/ai`, limiter: 'globalApi', router: aiAssistantRoutes },
+  { path: '/api/ai-services', limiter: 'globalApi', router: aiServicesRoutes },
+  { path: `${API_V1_PREFIX_TOKEN}/ai-services`, limiter: 'globalApi', router: aiServicesRoutes },
   { path: '/api/support', limiter: 'globalApi', router: supportRoutes },
   { path: `${API_V1_PREFIX_TOKEN}/support`, limiter: 'globalApi', router: supportRoutes },
   { path: '/api', limiter: 'globalApi', router: insightsRoutes },

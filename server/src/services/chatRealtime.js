@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { Server } from 'socket.io';
 import { pool } from '../db.js';
 import { authenticateAccessToken } from '../middleware/auth.js';
 
@@ -8,6 +7,15 @@ const UUID_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 
 let chatIo = null;
 const onlineUserSockets = new Map();
+let socketIoServerCtorPromise = null;
+
+function loadSocketIoServerCtor() {
+  if (!socketIoServerCtorPromise) {
+    socketIoServerCtorPromise = import('socket.io').then(({ Server }) => Server);
+  }
+
+  return socketIoServerCtorPromise;
+}
 
 function parseConversationIdentifier(rawValue) {
   const value = typeof rawValue === 'string' ? rawValue.trim() : String(rawValue || '').trim();
@@ -402,7 +410,8 @@ async function loadConversationForUser(conversationIdInput, user) {
   return rows.rows[0];
 }
 
-export function initializeChatRealtime(httpServer, { isOriginAllowed } = {}) {
+export async function initializeChatRealtime(httpServer, { isOriginAllowed } = {}) {
+  const Server = await loadSocketIoServerCtor();
   const io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => {

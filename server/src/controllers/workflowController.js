@@ -19,6 +19,7 @@ import {
   createVerificationToken,
   hashOtp,
 } from '../services/phoneVerification.js';
+import { sendOtp } from '../services/otpDelivery.js';
 import {
   ADMIN_PASSWORD_MIN_LENGTH,
   PASSWORD_MAX_LENGTH,
@@ -2032,8 +2033,30 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
       },
     });
 
+    let delivered = false;
+    try {
+      delivered = await sendOtp({
+        channel: 'sms',
+        phone: normalizedPhone,
+        otp,
+        expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
+      });
+    } catch (deliveryError) {
+      await pool.query('DELETE FROM phone_verification_otps WHERE verification_token = $1', [
+        verificationToken,
+      ]);
+      return res.status(503).json({
+        error:
+          deliveryError instanceof Error
+            ? deliveryError.message
+            : 'OTP delivery failed. Please try again.',
+      });
+    }
+
     const responsePayload = {
-      message: 'OTP sent successfully',
+      message: delivered
+        ? 'OTP sent successfully'
+        : 'SMS delivery is not configured in this environment. Use the dev OTP for testing.',
       verificationToken,
       expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
     };

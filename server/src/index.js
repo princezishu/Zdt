@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import dns from 'dns';
 
-// Force IPv4 DNS resolution — Render (and many cloud hosts) cannot reach
+// Force IPv4 DNS resolution — some cloud hosts cannot reach
 // Supabase over IPv6, causing ENETUNREACH on the PostgreSQL connection.
 dns.setDefaultResultOrder('ipv4first');
 
@@ -121,7 +121,6 @@ if (trustProxyRaw) {
 const DEFAULT_PORT = 5000;
 const PORT = readIntegerEnv('PORT', DEFAULT_PORT, { min: 1, max: 65535 });
 const HOST = readStringEnv('HOST', '0.0.0.0');
-const CORS_ALLOW_ALL = readBooleanEnv('CORS_ALLOW_ALL', true);
 const API_V1_PREFIX = '/api/v1';
 const FORCE_HTTPS = readBooleanEnv('FORCE_HTTPS', false);
 const PORT_SOURCE = String(process.env.PORT || '').trim() ? 'process.env.PORT' : `default:${DEFAULT_PORT}`;
@@ -274,11 +273,43 @@ function isDevPrivateNetworkOrigin(origin) {
   }
 }
 
+function escapeRegexLiteral(value) {
+  return String(value || '').replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+}
+
+function createAllowedOriginPattern(pattern) {
+  const normalizedPattern = String(pattern || '').trim();
+  if (!normalizedPattern) {
+    return null;
+  }
+
+  const regexSource = `^${normalizedPattern.split('*').map(escapeRegexLiteral).join('.*')}$`;
+  return new RegExp(regexSource, 'i');
+}
+
 const allowedOrigins = Array.from(
   new Set([
     ...readListEnv(['FRONTEND_URL', 'CORS_ALLOWED_ORIGINS', 'CORS_ORIGIN']),
   ])
 );
+const allowedOriginPatterns = Array.from(
+  new Set(readListEnv(['CORS_ALLOWED_ORIGIN_PATTERNS']))
+)
+  .map(createAllowedOriginPattern)
+  .filter(Boolean);
+const CORS_ALLOW_ALL = readBooleanEnv(
+  'CORS_ALLOW_ALL',
+  allowedOrigins.length === 0 && allowedOriginPatterns.length === 0
+);
+
+function matchesAllowedOriginPattern(origin) {
+  const normalizedOrigin = String(origin || '').trim();
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  return allowedOriginPatterns.some((pattern) => pattern.test(normalizedOrigin));
+}
 
 function isRequestOriginAllowed(origin) {
   if (!origin || CORS_ALLOW_ALL) {
@@ -287,7 +318,7 @@ function isRequestOriginAllowed(origin) {
 
   const isDevLanOrigin =
     process.env.NODE_ENV !== 'production' && origin && isDevPrivateNetworkOrigin(origin);
-  return Boolean(allowedOrigins.includes(origin) || isDevLanOrigin);
+  return Boolean(allowedOrigins.includes(origin) || matchesAllowedOriginPattern(origin) || isDevLanOrigin);
 }
 
 function resolveRequestId(value) {
@@ -487,14 +518,17 @@ async function startServer() {
       serverListenOptions.ipv6Only = listenConfig.ipv6Only;
     }
 
-    initializeChatRealtime(httpServer, {
+    await initializeChatRealtime(httpServer, {
       isOriginAllowed: isRequestOriginAllowed,
     });
 
     httpServer.listen(serverListenOptions, () => {
       console.log(`API + realtime listening on ${listenConfig.displayHost}:${PORT}`);
+      const corsSummary = CORS_ALLOW_ALL
+        ? 'allow-all'
+        : `allow-list:${allowedOrigins.length} exact, ${allowedOriginPatterns.length} pattern`;
       console.log(
-        `[SERVER] Startup config: host=${listenConfig.displayHost}, port=${PORT} (${PORT_SOURCE}), cors=${CORS_ALLOW_ALL ? 'allow-all' : `allow-list:${allowedOrigins.length}`}, ready=${startupReady}.`
+        `[SERVER] Startup config: host=${listenConfig.displayHost}, port=${PORT} (${PORT_SOURCE}), cors=${corsSummary}, ready=${startupReady}.`
       );
 
       // Log Supabase Auth status so the operator can confirm integration is live.
@@ -505,7 +539,7 @@ async function startServer() {
           : ' (auto-link by email OFF)';
         console.log(`[AUTH] Supabase Auth active as primary provider: ${provider}${autoLink}`);
       } else {
-        console.warn('[AUTH] Supabase Auth is NOT enabled. Set MANAGED_AUTH_PROVIDER=supabase and SUPABASE_ANON_KEY to activate managed auth.');
+        console.warn('[AUTH] Supabase Auth is NOT enabled. Set MANAGED_AUTH_PROVIDER=supabase and SUPABASE_PROJECT_URL. Add SUPABASE_ANON_KEY as well when your project uses HS256 tokens.');
       }
     });
 

@@ -35,6 +35,19 @@ interface RegisterProps {
   onRegisterSuccess: (payload?: { token: string; user: AuthUser }) => void;
 }
 
+function normalizeRegistrationPhone(value: string) {
+  const trimmed = String(value || '').trim();
+  const hasLeadingPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/\D/g, '').slice(0, 15);
+  if (!digits) {
+    return '';
+  }
+  return hasLeadingPlus ? `+${digits}` : digits;
+}
+
+function isPhoneReady(value: string) {
+  return /^\+?\d{8,15}$/.test(normalizeRegistrationPhone(value));
+}
 
 const steps = [
   {
@@ -65,12 +78,24 @@ export default function Register({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
+  const [phoneVerificationId, setPhoneVerificationId] = useState('');
+  const [phoneVerifiedFor, setPhoneVerifiedFor] = useState('');
+  const [phoneOtp, setPhoneOtp] = useState('');
+  const [phoneOtpStatus, setPhoneOtpStatus] = useState('');
+  const [phoneOtpError, setPhoneOtpError] = useState('');
+  const [phoneOtpDevCode, setPhoneOtpDevCode] = useState('');
+  const [isRequestingPhoneOtp, setIsRequestingPhoneOtp] = useState(false);
+  const [isVerifyingPhoneOtp, setIsVerifyingPhoneOtp] = useState(false);
   const [referralCode, setReferralCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isManagedRegister = isSupabaseConfigured();
+  const normalizedPhoneForOtp = normalizeRegistrationPhone(phone);
+  const isPhoneVerified =
+    Boolean(phoneVerificationId) && normalizedPhoneForOtp === phoneVerifiedFor;
 
   useEffect(() => {
     const hintedEmail = readManagedSignupHint();
@@ -91,6 +116,18 @@ export default function Register({
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!phoneVerifiedFor || normalizedPhoneForOtp === phoneVerifiedFor) {
+      return;
+    }
+
+    setPhoneVerificationToken('');
+    setPhoneVerificationId('');
+    setPhoneOtp('');
+    setPhoneOtpDevCode('');
+    setPhoneOtpStatus('Phone changed. Please verify the new number.');
+  }, [normalizedPhoneForOtp, phoneVerifiedFor]);
 
   // redirectToManagedLinkFlow removed — registration now always goes
   // directly through the backend /auth/register endpoint.
@@ -115,6 +152,86 @@ export default function Register({
       setError(message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestPhoneOtp = async () => {
+    const normalizedPhone = normalizeRegistrationPhone(phone);
+    if (!isPhoneReady(normalizedPhone)) {
+      setPhoneOtpError('Enter a valid mobile number before requesting OTP.');
+      return;
+    }
+
+    setIsRequestingPhoneOtp(true);
+    setPhoneOtpError('');
+    setPhoneOtpStatus('');
+    setPhoneOtpDevCode('');
+    setPhoneVerificationId('');
+    try {
+      const response = await apiRequest<{
+        verificationToken: string;
+        expiresInMinutes: number;
+        devOtp?: string;
+      }>('/workflow/public/phone-otp/request', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: normalizedPhone,
+          purpose: 'workflow',
+        }),
+      });
+
+      setPhone(normalizedPhone);
+      setPhoneVerificationToken(response.verificationToken);
+      setPhoneOtp('');
+      setPhoneOtpStatus(`OTP sent. It expires in ${response.expiresInMinutes} minutes.`);
+      setPhoneOtpDevCode(response.devOtp || '');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to send OTP';
+      toast.error(message);
+      setPhoneOtpError(message);
+    } finally {
+      setIsRequestingPhoneOtp(false);
+    }
+  };
+
+  const handleVerifyPhoneOtp = async () => {
+    const normalizedPhone = normalizeRegistrationPhone(phone);
+    if (!phoneVerificationToken) {
+      setPhoneOtpError('Request OTP first.');
+      return;
+    }
+    if (!/^\d{6}$/.test(phoneOtp)) {
+      setPhoneOtpError('Enter the 6-digit OTP.');
+      return;
+    }
+
+    setIsVerifyingPhoneOtp(true);
+    setPhoneOtpError('');
+    setPhoneOtpStatus('');
+    try {
+      const response = await apiRequest<{ verificationId: string }>(
+        '/workflow/public/phone-otp/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            phone: normalizedPhone,
+            verificationToken: phoneVerificationToken,
+            otp: phoneOtp,
+          }),
+        }
+      );
+
+      setPhone(normalizedPhone);
+      setPhoneVerificationId(response.verificationId);
+      setPhoneVerifiedFor(normalizedPhone);
+      setPhoneOtpDevCode('');
+      setPhoneOtpStatus('Mobile number verified.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to verify OTP';
+      toast.error(message);
+      setPhoneOtpError(message);
+    } finally {
+      setIsVerifyingPhoneOtp(false);
     }
   };
 
@@ -204,8 +321,12 @@ export default function Register({
                   try {
                     const normalizedName = name.trim();
                     const normalizedEmail = email.trim().toLowerCase();
-                    const normalizedPhone = phone.trim();
+                    const normalizedPhone = normalizeRegistrationPhone(phone);
                     const normalizedReferralCode = referralCode.trim().toUpperCase();
+
+                    if (normalizedPhone && !isPhoneVerified) {
+                      throw new Error('Please verify your mobile number with OTP before creating the account.');
+                    }
 
                     if (isManagedRegister) {
                       // ── Always register via the backend directly ──
@@ -220,6 +341,7 @@ export default function Register({
                         name: normalizedName,
                         email: normalizedEmail,
                         phone: normalizedPhone,
+                        phoneVerificationId: phoneVerificationId || undefined,
                         password,
                         deviceId: readOrCreateDeviceId(),
                         referralCode: normalizedReferralCode,
@@ -295,9 +417,72 @@ export default function Register({
                       type="tel"
                       placeholder="Your mobile number"
                       value={phone}
-                      onChange={(event) => setPhone(event.target.value)}
+                      onChange={(event) => {
+                        setPhone(event.target.value);
+                        setPhoneOtpError('');
+                      }}
                       className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
                     />
+                  </div>
+                  <div className="rounded-xl border border-brand-gray2 bg-slate-50/80 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
+                        Mobile OTP Verification
+                      </p>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                          isPhoneVerified
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-amber-50 text-amber-700'
+                        }`}
+                      >
+                        {isPhoneVerified ? 'Verified' : 'Not verified'}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="Enter 6-digit OTP"
+                        value={phoneOtp}
+                        onChange={(event) =>
+                          setPhoneOtp(event.target.value.replace(/\D/g, '').slice(0, 6))
+                        }
+                        className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30"
+                      />
+                      <div className="grid grid-cols-2 gap-2 sm:flex">
+                        <button
+                          type="button"
+                          onClick={() => void handleRequestPhoneOtp()}
+                          disabled={isRequestingPhoneOtp || !isPhoneReady(phone)}
+                          className="h-11 rounded-xl border border-brand-primary/25 bg-white px-3 text-xs font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isRequestingPhoneOtp ? 'Sending...' : phoneVerificationToken ? 'Resend' : 'Send OTP'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleVerifyPhoneOtp()}
+                          disabled={isVerifyingPhoneOtp || isPhoneVerified || !phoneVerificationToken}
+                          className="h-11 rounded-xl bg-brand-primary px-3 text-xs font-semibold text-white transition hover:bg-brand-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isPhoneVerified ? 'Verified' : isVerifyingPhoneOtp ? 'Checking...' : 'Verify'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {phoneOtpDevCode ? (
+                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                        Dev OTP: <span className="font-semibold">{phoneOtpDevCode}</span>
+                      </p>
+                    ) : null}
+                    {phoneOtpStatus ? (
+                      <p className="mt-2 text-[11px] font-medium text-emerald-700">{phoneOtpStatus}</p>
+                    ) : null}
+                    {phoneOtpError ? (
+                      <p className="mt-2 text-[11px] font-medium text-red-600">{phoneOtpError}</p>
+                    ) : null}
                   </div>
                 </div>
 

@@ -30,6 +30,9 @@ type SenderRole = 'user' | 'team_member' | 'admin' | 'owner' | 'system';
 type InboxTab = 'all' | 'unread' | 'starred';
 type MessageReceipt = 'sent' | 'delivered' | 'read';
 
+const ENABLE_REALTIME_CHAT =
+  String(import.meta.env.VITE_ENABLE_REALTIME_CHAT || 'true').trim().toLowerCase() !== 'false';
+
 interface PersistedConversationMeta {
   unread?: boolean;
   pinned?: boolean;
@@ -1362,6 +1365,13 @@ export default function MessagesPage({
   }, [activeConversationId, generateReplySuggestions, smartAiEnabled]);
 
   useEffect(() => {
+    if (!ENABLE_REALTIME_CHAT) {
+      setSocketConnected(false);
+      socketRef.current = null;
+      joinedConversationIdsRef.current.clear();
+      return;
+    }
+
     if (!token || !user) return;
 
     const socket = io(API_BASE_URL, {

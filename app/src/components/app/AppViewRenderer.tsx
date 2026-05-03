@@ -14,6 +14,7 @@ const BuilderTrustPage = lazy(() => import('@/modules/trust/pages/BuilderTrustPa
 const MarketplaceListingsPage = lazy(() => import('@/sections/portal/MarketplaceListingsPage'));
 const PortalPropertyDetailsPage = lazy(() => import('@/sections/portal/PortalPropertyDetailsPage'));
 const DeveloperPage = lazy(() => import('@/sections/DeveloperPage'));
+const AIServicesPage = lazy(() => import('@/sections/AIServicesPage'));
 const BuyPage = lazy(() => import('@/sections/BuyPage'));
 const SellPage = lazy(() => import('@/sections/SellPage'));
 const RentPage = lazy(() => import('@/sections/RentPage'));
@@ -323,7 +324,13 @@ export default function AppViewRenderer({
             onOpenConstructWithUs={openConstructWithUs}
             onOpenEarlySupporters={() => navigateTo('early-supporters')}
             onOpenEAuction={() => navigateTo('e-auction')}
+            onOpenAiServices={(serviceKey) =>
+              navigateTo('ai-services', {
+                search: serviceKey ? `?service=${encodeURIComponent(serviceKey)}` : null,
+              })
+            }
             onOpenDeveloper={() => navigateTo('developer')}
+            onOpenBuilderTrust={() => navigateTo('builder-trust')}
             onOpenCompare={() => navigateTo('compare')}
             onOpenInsightsNews={openInsightsNews}
             onOpenInsightsMarket={openInsightsMarket}
@@ -1057,6 +1064,12 @@ export default function AppViewRenderer({
       {currentView === 'pricing' && (
         <AnimatedViewFrame>
           <PricingPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'ai-services' && (
+        <AnimatedViewFrame>
+          <AIServicesPage />
         </AnimatedViewFrame>
       )}
 

@@ -2,7 +2,7 @@
 
 ## Deployment Topology
 - Frontend: Vercel (Vite app in `app/`)
-- Backend: Render (Node/Express API in `server/`)
+- Backend: Cloudflare Workers (Worker entry in `server/src/worker.js`)
 - Database: Supabase Postgres (or managed Postgres compatible with existing SQL)
 
 ## 1. Environment Mapping
@@ -14,12 +14,13 @@
 - `VITE_CONSTRUCTION_WHATSAPP_TEXT` = optional prefilled construction message
 
 ### Backend (`server/.env`)
-- DB: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`
-- DB TLS: `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, `DB_SSL_CA` (if provider requires CA bundle)
+- DB: `SUPABASE_DB_POOLER_URL` (preferred) or `DATABASE_URL`
+- DB TLS: `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=false` for Supabase pooler unless you provide a CA bundle
 - Auth/security: `JWT_SECRET`, `ADMIN_TOKEN`, `MEDIA_SIGNING_SECRET`
 - Transport security: `FORCE_HTTPS=true`, `TRUST_PROXY=<trusted-hop-count>`
-- CORS: `CORS_ORIGIN` includes frontend domain(s) and any admin subdomain
-- Runtime: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=<render-port>`
+- CORS: `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, and preview-safe `CORS_ALLOWED_ORIGIN_PATTERNS`
+- Managed auth: `MANAGED_AUTH_PROVIDER=supabase`, `SUPABASE_PROJECT_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- Runtime: Cloudflare Worker vars/secrets configured through Wrangler/Cloudflare dashboard
 - Optional integrations: SMTP, Twilio, OpenAI/Gemini keys as needed
 - Queue/analytics async path: optional `ENABLE_REDIS_QUEUE=true` plus `REDIS_URL` on Redis `>= 5.0.0` for BullMQ; otherwise analytics runs inline
 
@@ -33,20 +34,21 @@
    - Canonical buy/rent detail URLs resolve
    - Meta title/description/OG are present in page source
 
-## 3. Render Backend Deploy
-1. Import repo/project path `server/`.
-2. Start command: `npm start`.
-3. Build command (if required by service): `npm install`.
-4. Set backend env vars from section 1.
-5. Confirm health and connectivity:
+## 3. Cloudflare Worker Backend Deploy
+1. In `server/`, run `npx wrangler login`.
+2. Add Worker secrets for DB/auth/media credentials.
+3. Deploy with `npx wrangler deploy`.
+4. Attach a custom domain such as `api.example.com`.
+5. Set backend env vars from section 1.
+6. Confirm health and connectivity:
    - `GET /health` returns `{ ok: true }`
    - Auth and listing APIs respond normally
-6. Confirm middleware behavior:
+7. Confirm middleware behavior:
    - Response compression enabled on eligible payloads
    - Request logs visible via `morgan` (no sensitive body data logged)
 
 ## 4. Database and Schema
-1. Confirm Supabase/Postgres network access from Render.
+1. Confirm Supabase/Postgres network access from Cloudflare Workers.
 2. Run required SQL migrations (if pending in `server/sql/migrations`).
 3. Verify baseline tables for auth, listings, rentals, leads, group deals, infra, analytics.
 4. Run smoke CRUD checks for:
@@ -55,7 +57,8 @@
    - Lead submissions
 
 ## 5. CORS, SSL, and Domain Checks
-1. Ensure `CORS_ORIGIN` includes exact frontend origin(s).
+1. Ensure `FRONTEND_URL` and `CORS_ALLOWED_ORIGINS` include the exact frontend origin(s).
+   For this stack, that usually means the Vercel production domain plus any narrow Vercel preview pattern you intentionally allow.
 2. Ensure TLS is enabled at reverse proxy/load balancer and forwarded protocol headers are preserved.
 3. Set backend `TRUST_PROXY` to match proxy hop count (for example `1` behind one proxy).
 4. Verify HTTPS certificate status on frontend and backend domains.
@@ -108,6 +111,7 @@ Run after both deployments:
 ## 10. Secret Rotation (Production)
 1. Rotate `JWT_SECRET`, `ADMIN_TOKEN`, and `MEDIA_SIGNING_SECRET`.
 2. Rotate DB credentials (`DB_HOST`/`DB_USER`/`DB_PASS` as required by provider flow).
+   If you use the Supabase pooler connection string, rotate that credential set instead.
 3. Rotate third-party API keys in use (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `MARKET_API_KEY`, `TWILIO_AUTH_TOKEN`, SMTP app password).
 4. Redeploy backend after secret updates and invalidate old credentials/tokens where supported.
 5. Confirm auth login, DB connectivity, and key-backed integrations after rotation.

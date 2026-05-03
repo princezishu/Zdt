@@ -37,6 +37,7 @@ export const APP_VIEWS = [
   'plots-land',
   'projects',
   'invest',
+  'ai-services',
   'area-insights',
   'affordability',
   'buyer-journey',

@@ -1,8 +1,24 @@
 import nodemailer from 'nodemailer';
 
+/**
+ * OTP & email delivery service.
+ *
+ * Email supports either Resend HTTP API or SMTP.
+ * SMS uses Twilio HTTP API.
+ *
+ * Resend email env:
+ *   RESEND_API_KEY, SMTP_FROM
+ *
+ * SMTP email env:
+ *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+ *
+ * SMS env:
+ *   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
+ */
+
 const APP_NAME = process.env.APP_NAME || 'ZDT Realty';
-const SMTP_REQUIRED_KEYS = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'];
-const SMS_REQUIRED_KEYS = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function requireEnv(keys, label) {
   const missing = keys.filter((key) => !process.env[key]);
@@ -23,29 +39,79 @@ function buildOtpMessage(otp, expiresInMinutes) {
   return { text, html };
 }
 
-function createSmtpTransporter() {
-  return nodemailer.createTransport({
+// Email via Resend HTTP API or SMTP.
+
+const RESEND_EMAIL_REQUIRED_KEYS = ['RESEND_API_KEY', 'SMTP_FROM'];
+const SMTP_EMAIL_REQUIRED_KEYS = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'];
+let smtpTransporter = null;
+
+function hasEnv(keys) {
+  return keys.every((key) => Boolean(process.env[key]));
+}
+
+function getEmailProvider() {
+  if (hasEnv(RESEND_EMAIL_REQUIRED_KEYS)) {
+    return 'resend';
+  }
+  if (hasEnv(SMTP_EMAIL_REQUIRED_KEYS)) {
+    return 'smtp';
+  }
+  return '';
+}
+
+function getSmtpTransporter() {
+  if (smtpTransporter) {
+    return smtpTransporter;
+  }
+
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  smtpTransporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
+    port: smtpPort,
     secure:
-      String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' ||
-      Number(process.env.SMTP_PORT) === 465,
+      String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true' ||
+      smtpPort === 465,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
   });
+
+  return smtpTransporter;
 }
 
-function getTwilioEndpoint() {
-  return `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`;
+async function sendEmailViaResend(payload) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    const details = raw.slice(0, 300);
+    throw new Error(`Resend email API failed (${response.status}): ${details}`);
+  }
+
+  return true;
 }
 
-function getTwilioAuthHeader() {
-  const authToken = Buffer.from(
-    `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
-  ).toString('base64');
-  return `Basic ${authToken}`;
+async function sendEmailViaSmtp(payload) {
+  await getSmtpTransporter().sendMail({
+    from: payload.from,
+    to: payload.to,
+    subject: payload.subject,
+    text: payload.text,
+    html: payload.html,
+    replyTo: payload.reply_to,
+    cc: payload.cc,
+    bcc: payload.bcc,
+  });
+
+  return true;
 }
 
 export async function sendEmailMessage({
@@ -65,25 +131,38 @@ export async function sendEmailMessage({
     throw new Error('Email subject is required.');
   }
 
-  const configured = requireEnv(SMTP_REQUIRED_KEYS, deliveryLabel);
-  if (!configured) {
+  const provider = getEmailProvider();
+  if (!provider) {
+    const configured = requireEnv(
+      ['RESEND_API_KEY or SMTP_HOST', 'SMTP_FROM'],
+      deliveryLabel
+    );
+    if (!configured) {
+      return false;
+    }
     return false;
   }
 
-  const transporter = createSmtpTransporter();
-  await transporter.sendMail({
+  const payload = {
     from: process.env.SMTP_FROM,
-    to: String(to).trim(),
+    to: [String(to).trim()],
     subject: String(subject).trim(),
-    text,
-    html,
-    replyTo,
-    cc,
-    bcc,
-  });
+  };
 
-  return true;
+  if (html) payload.html = html;
+  if (text) payload.text = text;
+  if (replyTo) payload.reply_to = String(replyTo).trim();
+  if (cc) payload.cc = Array.isArray(cc) ? cc : [cc];
+  if (bcc) payload.bcc = Array.isArray(bcc) ? bcc : [bcc];
+
+  if (provider === 'resend') {
+    return sendEmailViaResend(payload);
+  }
+
+  return sendEmailViaSmtp(payload);
 }
+
+// OTP via Email.
 
 async function sendOtpEmail({ email, otp, expiresInMinutes }) {
   const message = buildOtpMessage(otp, expiresInMinutes);
@@ -94,6 +173,23 @@ async function sendOtpEmail({ email, otp, expiresInMinutes }) {
     html: message.html,
     deliveryLabel: 'Email OTP',
   });
+}
+
+// SMS via Twilio HTTP API.
+
+const SMS_REQUIRED_KEYS = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
+
+function getTwilioEndpoint() {
+  return `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`;
+}
+
+function getTwilioAuthHeader() {
+  const credentials = `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`;
+  const encoded =
+    typeof btoa === 'function'
+      ? btoa(credentials)
+      : Buffer.from(credentials).toString('base64');
+  return `Basic ${encoded}`;
 }
 
 async function sendOtpSms({ phone, otp, expiresInMinutes }) {
@@ -166,6 +262,8 @@ export async function sendSmsMessage({
 
   return true;
 }
+
+// Unified OTP sender.
 
 export async function sendOtp({ channel, email, phone, otp, expiresInMinutes }) {
   if (channel === 'email') {

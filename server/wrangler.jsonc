@@ -12,7 +12,10 @@
     "TRUST_PROXY": "1",
     "ENABLE_REDIS_QUEUE": "false",
     "FRONTEND_URL": "https://zdtrealty.vercel.app",
-    "CORS_ALLOWED_ORIGIN_PATTERNS": "https://*.vercel.app,https://zdtrealty.vercel.app"
+    "CORS_ALLOWED_ORIGIN_PATTERNS": "https://*.vercel.app,https://zdtrealty.vercel.app",
+    "AI_SERVICES_PROVIDER": "bedrock",
+    "AWS_BEDROCK_REGION": "ap-south-1",
+    "AWS_BEDROCK_MODEL_ID": "global.amazon.nova-2-lite-v1:0"
   },
   "triggers": {
     "crons": [

@@ -1,7 +1,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const siteUrl = (process.env.VITE_SITE_URL || 'https://zdtrealty.com').replace(/\/$/, '');
+function normalizeUrlCandidate(value, { assumeHttps = false } = {}) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(withoutTrailingSlash)) {
+    return withoutTrailingSlash;
+  }
+
+  if (assumeHttps) {
+    return `https://${withoutTrailingSlash}`;
+  }
+
+  return withoutTrailingSlash;
+}
+
+const siteUrl = (
+  normalizeUrlCandidate(process.env.VITE_SITE_URL) ||
+  normalizeUrlCandidate(process.env.VERCEL_PROJECT_PRODUCTION_URL, { assumeHttps: true }) ||
+  normalizeUrlCandidate(process.env.VERCEL_URL, { assumeHttps: true }) ||
+  'http://localhost:5173'
+).replace(/\/$/, '');
 const outputPath = path.resolve(process.cwd(), 'public', 'sitemap.xml');
 
 const staticPaths = [
@@ -16,6 +39,7 @@ const staticPaths = [
   '/plots-land',
   '/projects',
   '/invest',
+  '/ai-services',
   '/group-deals',
   '/construct-with-us',
   '/building-materials',

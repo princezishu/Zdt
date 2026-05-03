@@ -261,6 +261,7 @@ export function parsePathToRoute(pathname: string): AppRouteState {
   if (normalized === '/builder/projects/new') return withRouteState('builder-project-new');
   if (normalized === '/projects') return withRouteState('projects');
   if (normalized === '/invest') return withRouteState('invest');
+  if (normalized === '/ai-services') return withRouteState('ai-services');
   if (normalized === '/construct-with-us') return withRouteState('construct-with-us');
   if (normalized === '/early-supporters') return withRouteState('early-supporters');
   if (normalized === '/layout-units') return withRouteState('layout-units-floor-detail');
@@ -477,6 +478,7 @@ export function buildHrefForView(view: AppView, options?: NavigationOptions): st
   }
   if (view === 'projects') return '/projects';
   if (view === 'invest') return '/invest';
+  if (view === 'ai-services') return `/ai-services${normalizeSearchSuffix(options?.search)}`;
   if (view === 'construct-with-us') return '/construct-with-us';
   if (view === 'layout-units-floor-detail') return '/layout-units';
   if (view === 'layout-units-builder') return '/layout-units/builder';
