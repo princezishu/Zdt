@@ -788,7 +788,11 @@ function ResultPanel({ result }: { result: AiServiceRunResponse }) {
       <div>
         <p className="text-sm font-semibold uppercase text-slate-500">Output</p>
         <div className="mt-2 border-t border-slate-200">
-          <ResultValue value={result.result.output} />
+          {result.service.key === 'interior-design' ? (
+            <InteriorDesignOutput output={result.result.output} />
+          ) : (
+            <ResultValue value={result.result.output} />
+          )}
         </div>
       </div>
 
@@ -923,18 +927,139 @@ function InteriorCatalogRecommendations({
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {displayItems.slice(0, 8).map((item) => (
-          <div key={item.id} className="rounded-lg border border-white bg-white px-3 py-2 shadow-sm">
-            <p className="truncate text-sm font-semibold text-slate-900">{item.itemName}</p>
+          <a
+            key={item.id}
+            href={buildMaterialCatalogHref(item.itemName, item.category)}
+            className="block rounded-lg border border-white bg-white px-3 py-2 shadow-sm transition hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40"
+          >
+            <p className="text-sm font-semibold leading-5 text-slate-900">{item.itemName}</p>
             <p className="mt-1 text-xs text-slate-500">{item.category} | {item.brand}</p>
-            <p className="mt-2 text-xs font-semibold text-slate-700">
-              Rs {formatInr(item.unitPrice)} / {item.unit}
-            </p>
-          </div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">
+                Rs {formatInr(item.unitPrice)} / {item.unit}
+              </p>
+              <span className="text-xs font-semibold text-rose-700">View</span>
+            </div>
+          </a>
         ))}
       </div>
       <p className="mt-3 text-xs leading-5 text-slate-600">
-        Use these alongside the generated layout for furniture, storage, ceilings, paint, tiles, electrical, plumbing, and wood finish planning.
+        Click any item to open the Building Materials section with the matching product search.
       </p>
+    </div>
+  );
+}
+
+function InteriorDesignOutput({ output }: { output: unknown }) {
+  const record = readRecord(output);
+  const roomType = readFlexibleString(record, ['roomType', 'room'], '');
+  const style = readFlexibleString(record, ['style', 'theme'], '');
+  const mood = readFlexibleString(record, ['mood', 'feel'], '');
+  const roomSize = readFlexibleString(record, ['roomSizeSqft', 'areaSqft'], '');
+  const theme = readFlexibleString(record, ['theme', 'designTheme', 'concept'], '');
+  const paletteItems = readDisplayItems(readFlexibleValue(record, ['palette', 'finishes', 'materialPalette']));
+  const zones = readDisplayItems(readFlexibleValue(record, ['zones', 'layoutZones', 'furnitureZoning']));
+  const furniture = readDisplayItems(readFlexibleValue(record, ['furnitureAndFixtures', 'furniture', 'fixtures']));
+  const materials = readDisplayItems(readFlexibleValue(record, ['buildingMaterialSelections', 'materials', 'finishSelections']));
+  const lighting = readDisplayItems(readFlexibleValue(record, ['lightingPlan', 'lighting']));
+  const shopping = readDisplayItems(readFlexibleValue(record, ['shoppingPlan', 'budgetPlan']));
+  const catalogMatches = readCatalogMatches(readFlexibleValue(record, ['catalogMatches', 'recommendedMaterials', 'materialCatalog']));
+  const roomSizeLabel = roomSize ? (/\bsq/i.test(roomSize) ? `Size: ${roomSize}` : `Size: ${roomSize} sqft`) : '';
+  const briefItems = [
+    roomType ? `Room: ${roomType}` : '',
+    roomSizeLabel,
+    style ? `Style: ${style}` : '',
+    mood ? `Mood: ${mood}` : '',
+    theme ? `Theme: ${theme}` : '',
+  ].filter(Boolean);
+
+  return (
+    <div className="space-y-4 py-3">
+      {briefItems.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="text-sm font-semibold text-slate-900">Design brief</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {briefItems.map((item) => (
+              <span key={item} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <InteriorOutputSection title="Palette & finishes" items={paletteItems} variant="palette" />
+      <InteriorOutputSection title="Furniture & layout" items={[...furniture, ...zones]} />
+      <InteriorOutputSection title="Building materials" items={materials} />
+
+      {catalogMatches.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <p className="text-sm font-semibold text-slate-900">Catalog matches</p>
+          <div className="mt-3 grid gap-2">
+            {catalogMatches.map((match) => (
+              <a
+                key={`${match.itemName}-${match.category}-${match.useCase}`}
+                href={buildMaterialCatalogHref(match.itemName, match.category)}
+                className="rounded-lg border border-slate-200 bg-slate-50 p-3 transition hover:border-rose-200 hover:bg-rose-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">{match.itemName}</p>
+                    <p className="mt-1 text-xs text-slate-500">{match.category}</p>
+                  </div>
+                  <span className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-semibold text-rose-700">
+                    View
+                  </span>
+                </div>
+                {[match.useCase, match.quantityHint, match.priority ? `Priority: ${match.priority}` : '']
+                  .filter(Boolean)
+                  .map((line) => (
+                    <p key={line} className="mt-2 text-xs leading-5 text-slate-600">
+                      {line}
+                    </p>
+                  ))}
+              </a>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <InteriorOutputSection title="Lighting plan" items={lighting} />
+      <InteriorOutputSection title="Shopping plan" items={shopping} />
+    </div>
+  );
+}
+
+function InteriorOutputSection({
+  title,
+  items,
+  variant,
+}: {
+  title: string;
+  items: string[];
+  variant?: 'palette';
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
+      <div className="mt-3 grid gap-2">
+        {items.map((item) => (
+          <div key={item} className="flex gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">
+            {variant === 'palette' ? (
+              <span
+                className="mt-1 h-4 w-4 shrink-0 rounded-full border border-slate-200"
+                style={{ backgroundColor: resolvePaletteColor(item) }}
+                aria-hidden="true"
+              />
+            ) : null}
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1294,6 +1419,134 @@ function readStringArray(value: unknown) {
     .map((item) => (typeof item === 'string' ? item.trim() : ''))
     .filter(Boolean)
     .slice(0, 8);
+}
+
+function readFlexibleValue(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null && record[key] !== '') {
+      return record[key];
+    }
+  }
+
+  const entries = Object.entries(record);
+  for (const key of keys) {
+    const normalizedKey = normalizeResultKey(key);
+    const found = entries.find(([entryKey]) => normalizeResultKey(entryKey) === normalizedKey);
+    if (found && found[1] !== undefined && found[1] !== null && found[1] !== '') {
+      return found[1];
+    }
+  }
+
+  return undefined;
+}
+
+function readFlexibleString(record: Record<string, unknown>, keys: string[], fallback: string) {
+  const text = stringifyDisplayValue(readFlexibleValue(record, keys));
+  return text || fallback;
+}
+
+function readDisplayItems(value: unknown): string[] {
+  if (value === null || value === undefined || value === '') {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stringifyDisplayValue(item))
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => {
+        const text = stringifyDisplayValue(item);
+        return text ? `${formatResultKey(key)}: ${text}` : '';
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  const text = stringifyDisplayValue(value);
+  return text ? [text] : [];
+}
+
+function readCatalogMatches(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return {
+          itemName: item,
+          category: 'Interior Fit-out',
+          useCase: '',
+          priority: '',
+          quantityHint: '',
+        };
+      }
+
+      const record = readRecord(item);
+      const itemName = readFlexibleString(record, ['itemName', 'name', 'materialName', 'product'], '');
+      if (!itemName) {
+        return null;
+      }
+      return {
+        itemName,
+        category: readFlexibleString(record, ['category', 'materialCategory'], 'Interior Fit-out'),
+        useCase: readFlexibleString(record, ['useCase', 'usage', 'reason'], ''),
+        priority: readFlexibleString(record, ['priority'], ''),
+        quantityHint: readFlexibleString(record, ['quantityHint', 'quantity', 'qty'], ''),
+      };
+    })
+    .filter((item): item is { itemName: string; category: string; useCase: string; priority: string; quantityHint: string } =>
+      Boolean(item)
+    )
+    .slice(0, 8);
+}
+
+function stringifyDisplayValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : '';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyDisplayValue(item)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => {
+        const text = stringifyDisplayValue(item);
+        return text ? `${formatResultKey(key)}: ${text}` : '';
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
+  return String(value);
+}
+
+function normalizeResultKey(value: string) {
+  return String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function buildMaterialCatalogHref(itemName: string, category?: string) {
+  const params = new URLSearchParams();
+  const query = itemName.trim();
+  const materialCategory = String(category || '').trim();
+  if (query) params.set('q', query);
+  if (materialCategory) params.set('category', materialCategory);
+  params.set('source', 'interior-design');
+  return `/building-materials?${params.toString()}#materials-catalog`;
 }
 
 function resolvePaletteColor(value: string) {

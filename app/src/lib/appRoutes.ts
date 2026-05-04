@@ -483,7 +483,7 @@ export function buildHrefForView(view: AppView, options?: NavigationOptions): st
   if (view === 'layout-units-floor-detail') return '/layout-units';
   if (view === 'layout-units-builder') return '/layout-units/builder';
   if (view === 'layout-units-list') return '/layout-units/units';
-  if (view === 'building-materials') return '/building-materials';
+  if (view === 'building-materials') return `/building-materials${normalizeSearchSuffix(options?.search)}`;
   if (view === 'infrastructure') return '/infrastructure';
   if (view === 'insights-news') return '/insights/news';
   if (view === 'insights-market') return '/insights/market';

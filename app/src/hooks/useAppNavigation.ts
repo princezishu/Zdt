@@ -263,7 +263,10 @@ export function useAppNavigation({ initialUser, currentUser }: UseAppNavigationO
       window.history.replaceState(
         createHistoryState(initialRouteState),
         '',
-        buildHrefForView(initialRouteState.view, initialRouteState)
+        buildHrefForView(initialRouteState.view, {
+          ...initialRouteState,
+          search: window.location.search || null,
+        })
       );
     }
 

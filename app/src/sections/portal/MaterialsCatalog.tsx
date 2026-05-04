@@ -261,6 +261,13 @@ const DEALS_BANNERS = [
   { bg: 'from-emerald-600 to-teal-600', title: '🎨 Paint Season Sale', sub: 'Premium paints starting ₹150/litre • All brands', cta: 'Explore' },
 ];
 
+function readMaterialCatalogParam(name: string) {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  return new URLSearchParams(window.location.search).get(name)?.trim() || '';
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -272,8 +279,8 @@ export default function MaterialsCatalog({ token, user }: MaterialsCatalogProps)
   const [items, setItems] = useState<MaterialItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => readMaterialCatalogParam('q'));
+  const [selectedCategory, setSelectedCategory] = useState(() => readMaterialCatalogParam('category'));
   const [selectedCity, setSelectedCity] = useState('');
   const [sortBy, setSortBy] = useState<MaterialSort>('featured');
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState(8);
@@ -606,7 +613,7 @@ export default function MaterialsCatalog({ token, user }: MaterialsCatalogProps)
   const dynamicCats = categories.filter((c) => !allCats.some((ac) => c.toLowerCase().includes(ac.toLowerCase())));
 
   return (
-    <div className="space-y-0">
+    <div id="materials-catalog" className="space-y-0">
 
       {/* ========== TOP SEARCH BAR (Amazon-style) ========== */}
       <div className="sticky top-[64px] z-30 -mx-4 border-b border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-4 py-3 shadow-lg sm:-mx-6 sm:px-6 md:top-[72px]">
