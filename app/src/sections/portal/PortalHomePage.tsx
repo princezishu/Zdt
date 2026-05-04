@@ -246,7 +246,7 @@ const platformFeatureCards: PlatformFeatureCard[] = [
   {
     key: 'interior-design-ai',
     title: 'Interior Design AI',
-    description: 'Create visual room themes, palettes, furniture zoning, and lighting concepts.',
+    description: 'Create room designs with furniture, fixtures, color palettes, lighting, and ZDT building-material picks.',
     group: 'ai',
     icon: Paintbrush,
     accent: 'border-rose-200 bg-rose-50 text-rose-800',

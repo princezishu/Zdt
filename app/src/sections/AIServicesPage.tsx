@@ -30,6 +30,7 @@ import {
   type AiServiceKey,
   type AiServiceRunResponse,
 } from '@/lib/aiServicesApi';
+import { getBuildingMaterials, type MaterialItem } from '@/lib/materialsApi';
 import { cn } from '@/lib/utils';
 
 type FieldKind = 'text' | 'number' | 'textarea' | 'select' | 'date';
@@ -183,6 +184,14 @@ const SERVICE_CONFIGS: ServiceConfig[] = [
         options: budgetTierOptions,
       },
       { name: 'mood', label: 'Mood', kind: 'text', defaultValue: 'warm and calm' },
+      {
+        name: 'furnitureAndMaterialNeeds',
+        label: 'Furniture and material needs',
+        kind: 'textarea',
+        defaultValue: 'sofa or bed, TV console, wardrobe/storage, modular units, curtains, lighting, ceiling, paint, tiles, wood finish, electrical and plumbing points',
+        placeholder: 'List furniture, fixtures, finishes, or building materials needed for this room',
+        span: 'full',
+      },
     ],
   },
   {
@@ -725,10 +734,51 @@ function FieldControl({
 
 function ResultPanel({ result }: { result: AiServiceRunResponse }) {
   const designPreview = buildDesignPreview(result);
+  const [interiorCatalogItems, setInteriorCatalogItems] = useState<MaterialItem[]>([]);
+  const [isInteriorCatalogLoading, setIsInteriorCatalogLoading] = useState(false);
+
+  useEffect(() => {
+    if (result.service.key !== 'interior-design') {
+      setInteriorCatalogItems([]);
+      return;
+    }
+
+    let active = true;
+    setIsInteriorCatalogLoading(true);
+
+    async function loadInteriorCatalog() {
+      try {
+        const response = await getBuildingMaterials({
+          q: 'interior furniture modular wardrobe kitchen tv console vanity gypsum paint tiles wood electrical plumbing',
+          limit: 8,
+        });
+        if (active) {
+          setInteriorCatalogItems(filterInteriorCatalogItems(response.items));
+        }
+      } catch {
+        if (active) {
+          setInteriorCatalogItems([]);
+        }
+      } finally {
+        if (active) {
+          setIsInteriorCatalogLoading(false);
+        }
+      }
+    }
+
+    void loadInteriorCatalog();
+
+    return () => {
+      active = false;
+    };
+  }, [result]);
 
   return (
     <div className="space-y-5">
       {designPreview ? <DesignPreviewImage preview={designPreview} /> : null}
+      {result.service.key === 'interior-design' ? (
+        <InteriorCatalogRecommendations items={interiorCatalogItems} isLoading={isInteriorCatalogLoading} />
+      ) : null}
 
       <div>
         <p className="text-sm font-semibold uppercase text-slate-500">Summary</p>
@@ -853,6 +903,42 @@ function DesignPreviewImage({ preview }: { preview: DesignPreview }) {
   );
 }
 
+function InteriorCatalogRecommendations({
+  items,
+  isLoading,
+}: {
+  items: MaterialItem[];
+  isLoading: boolean;
+}) {
+  const displayItems = items.length > 0 ? items : INTERIOR_CATALOG_FALLBACKS;
+
+  return (
+    <div className="rounded-lg border border-rose-100 bg-rose-50/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase text-rose-700">Furniture & Materials</p>
+          <h3 className="mt-1 text-base font-semibold text-slate-950">Recommended from ZDT catalog</h3>
+        </div>
+        {isLoading ? <Loader2 className="mt-1 h-4 w-4 animate-spin text-rose-600" aria-hidden="true" /> : null}
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {displayItems.slice(0, 8).map((item) => (
+          <div key={item.id} className="rounded-lg border border-white bg-white px-3 py-2 shadow-sm">
+            <p className="truncate text-sm font-semibold text-slate-900">{item.itemName}</p>
+            <p className="mt-1 text-xs text-slate-500">{item.category} | {item.brand}</p>
+            <p className="mt-2 text-xs font-semibold text-slate-700">
+              Rs {formatInr(item.unitPrice)} / {item.unit}
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-600">
+        Use these alongside the generated layout for furniture, storage, ceilings, paint, tiles, electrical, plumbing, and wood finish planning.
+      </p>
+    </div>
+  );
+}
+
 function buildDesignPreview(result: AiServiceRunResponse): DesignPreview | null {
   if (result.service.key === 'home-design') {
     return buildHomeDesignPreview(result);
@@ -900,8 +986,10 @@ function buildInteriorDesignPreview(result: AiServiceRunResponse): DesignPreview
   const roomSizeSqft = readResultNumber(output, 'roomSizeSqft', 180);
   const palette = readStringArray(output.palette).slice(0, 5);
   const zones = readStringArray(output.zones).slice(0, 4);
+  const furniture = readStringArray(output.furnitureAndFixtures).slice(0, 3);
+  const materials = readStringArray(output.buildingMaterialSelections).slice(0, 3);
 
-  const svg = buildInteriorDesignSvg({ roomType, style, mood, palette, zones });
+  const svg = buildInteriorDesignSvg({ roomType, style, mood, palette, zones, furniture, materials });
 
   return {
     title: `${capitalizeWords(roomType)} ${style} concept`,
@@ -909,7 +997,7 @@ function buildInteriorDesignPreview(result: AiServiceRunResponse): DesignPreview
     svg,
     imageSrc: svgToDataUri(svg),
     palette: palette.length > 0 ? palette : ['warm white', 'teak wood', 'sage green', 'matte black'],
-    notes: zones.length > 0 ? zones : ['Furniture zoning', 'Layered lighting'],
+    notes: [...zones, ...furniture, ...materials].slice(0, 6),
   };
 }
 
@@ -978,12 +1066,16 @@ function buildInteriorDesignSvg({
   mood,
   palette,
   zones,
+  furniture,
+  materials,
 }: {
   roomType: string;
   style: string;
   mood: string;
   palette: string[];
   zones: string[];
+  furniture: string[];
+  materials: string[];
 }) {
   const safeRoomType = escapeSvgText(capitalizeWords(roomType));
   const safeStyle = escapeSvgText(style);
@@ -996,6 +1088,8 @@ function buildInteriorDesignSvg({
   const isBedroom = /bed/i.test(roomType);
   const isKitchen = /kitchen/i.test(roomType);
   const zoneLabels = zones.length > 0 ? zones : ['primary zone', 'storage wall', 'ambient lighting'];
+  const furnitureLabels = furniture.length > 0 ? furniture : getDefaultFurnitureForRoom(roomType);
+  const materialLabels = materials.length > 0 ? materials : ['gypsum ceiling', 'paint finish', 'floor or wall tiles'];
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" role="img">
@@ -1029,7 +1123,7 @@ function buildInteriorDesignSvg({
   <circle cx="492" cy="318" r="34" fill="#ffffff" stroke="#cbd5e1"/>`
   }
   <g transform="translate(640 150)">
-    <rect width="190" height="190" rx="18" fill="#f8fafc" stroke="#e2e8f0"/>
+    <rect width="190" height="258" rx="18" fill="#f8fafc" stroke="#e2e8f0"/>
     <text x="22" y="40" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a">Palette</text>
     ${colors
       .slice(0, 4)
@@ -1040,13 +1134,95 @@ function buildInteriorDesignSvg({
       .join('')}
     <text x="22" y="128" font-family="Inter, Arial, sans-serif" font-size="13" fill="#475569">${escapeSvgText(zoneLabels[0] || 'primary zone')}</text>
     <text x="22" y="154" font-family="Inter, Arial, sans-serif" font-size="13" fill="#475569">${escapeSvgText(zoneLabels[1] || 'storage wall')}</text>
+    <text x="22" y="190" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#0f172a">Furniture</text>
+    <text x="22" y="216" font-family="Inter, Arial, sans-serif" font-size="12" fill="#475569">${escapeSvgText(furnitureLabels[0] || 'anchor furniture')}</text>
+    <text x="22" y="238" font-family="Inter, Arial, sans-serif" font-size="12" fill="#475569">${escapeSvgText(furnitureLabels[1] || 'storage unit')}</text>
   </g>
-  <g transform="translate(640 366)">
+  <g transform="translate(640 430)">
     <rect width="190" height="104" rx="18" fill="#0f172a"/>
-    <text x="22" y="38" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#bfdbfe">Design focus</text>
-    <text x="22" y="66" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#ffffff">${safeRoomType}</text>
+    <text x="22" y="34" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#bfdbfe">Materials</text>
+    <text x="22" y="60" font-family="Inter, Arial, sans-serif" font-size="12" fill="#ffffff">${escapeSvgText(materialLabels[0] || 'paint finish')}</text>
+    <text x="22" y="82" font-family="Inter, Arial, sans-serif" font-size="12" fill="#ffffff">${escapeSvgText(materialLabels[1] || 'lighting and ceiling')}</text>
   </g>
 </svg>`;
+}
+
+const INTERIOR_CATALOG_FALLBACKS: MaterialItem[] = [
+  makeCatalogFallback('fallback-kitchen', 'Modular Kitchen Base Unit', 'Interior Fit-out', 'Spacewood', 3550, 'per running ft'),
+  makeCatalogFallback('fallback-wardrobe', 'Modular Wardrobe Unit', 'Interior Fit-out', 'Godrej Interio', 2890, 'per running ft'),
+  makeCatalogFallback('fallback-tv-console', 'Living Room TV Console Unit', 'Interior Fit-out', 'Greenply', 2180, 'per running ft'),
+  makeCatalogFallback('fallback-vanity', 'Bathroom Vanity Counter Set', 'Interior Fit-out', 'Jaquar', 11250, 'per set'),
+  makeCatalogFallback('fallback-gypsum', 'Gypsum Ceiling Board 12mm', 'Interior Fit-out', 'Saint-Gobain', 378, '8x4 sheet'),
+  makeCatalogFallback('fallback-primer', 'Acrylic Wall Primer', 'Paint and Coatings', 'Asian Paints', 3280, '20L drum'),
+];
+
+function makeCatalogFallback(
+  id: string,
+  itemName: string,
+  category: string,
+  brand: string,
+  unitPrice: number,
+  unit: string
+): MaterialItem {
+  return {
+    id,
+    itemCode: id.toUpperCase(),
+    itemName,
+    category,
+    brand,
+    unit,
+    unitPrice,
+    minOrderQty: 1,
+    deliveryDays: 0,
+    locationCity: 'Ahmedabad',
+    imageUrl: null,
+    description: '',
+    bulkSlab1: '',
+    bulkSlab2: '',
+    stockStatus: 'in_stock',
+  };
+}
+
+function filterInteriorCatalogItems(items: MaterialItem[]) {
+  const keywords = [
+    'interior',
+    'kitchen',
+    'wardrobe',
+    'tv',
+    'console',
+    'vanity',
+    'gypsum',
+    'paint',
+    'tile',
+    'wood',
+    'electrical',
+    'plumbing',
+  ];
+  const filtered = items.filter((item) => {
+    const haystack = `${item.itemName} ${item.category} ${item.description}`.toLowerCase();
+    return keywords.some((keyword) => haystack.includes(keyword));
+  });
+  return filtered.length > 0 ? filtered : items;
+}
+
+function getDefaultFurnitureForRoom(roomType: string) {
+  if (/kitchen/i.test(roomType)) {
+    return ['modular base cabinets', 'tall storage unit', 'countertop and backsplash'];
+  }
+  if (/bed/i.test(roomType)) {
+    return ['bed with side tables', 'modular wardrobe', 'study or dresser unit'];
+  }
+  if (/bath/i.test(roomType)) {
+    return ['vanity counter set', 'mirror cabinet', 'glass partition'];
+  }
+  if (/office/i.test(roomType)) {
+    return ['work desk', 'storage credenza', 'task chair'];
+  }
+  return ['sofa or seating set', 'tv console unit', 'coffee table'];
+}
+
+function formatInr(value: number) {
+  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(value);
 }
 
 function svgToDataUri(svg: string) {

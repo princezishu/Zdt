@@ -81,6 +81,7 @@ const CATEGORY_NAV: { key: string; label: string; icon: typeof Package }[] = [
   { key: 'Electrical', label: 'Electrical', icon: Zap },
   { key: 'Plumbing', label: 'Plumbing', icon: Droplets },
   { key: 'Paint', label: 'Paint', icon: Paintbrush },
+  { key: 'Interior Fit-out', label: 'Interiors', icon: Layers },
   { key: 'Wood', label: 'Wood', icon: TreePine },
   { key: 'Hardware', label: 'Hardware', icon: Wrench },
   { key: 'Tools', label: 'Tools', icon: Hammer },

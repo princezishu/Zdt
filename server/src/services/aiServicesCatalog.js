@@ -176,6 +176,19 @@ export function getAiService(key) {
 
 export function buildServiceSystemPrompt(service) {
   const capabilities = service.capabilities.map((capability) => `- ${capability}`).join('\n');
+  const serviceSpecificRules =
+    service.key === 'interior-design'
+      ? [
+          '',
+          'Interior Design AI output requirements:',
+          '- Do not stop at color palette. Always include furniture, fixtures, interior finishes, and building-material selections.',
+          '- Include shopping-ready recommendations that can map to the ZDT building materials catalog.',
+          '- Prefer these catalog categories where relevant: Interior Fit-out, Paint and Coatings, Tiles, Wood, Electrical, Plumbing, Hardware.',
+          '- Mention room-specific furniture such as sofa, TV console, bed, wardrobe, modular kitchen units, vanity, desk, loose seating, storage, curtains, lighting, ceiling, paint, tiles, and hardware as applicable.',
+          '- In output, include keys: palette, zones, furnitureAndFixtures, buildingMaterialSelections, catalogMatches, lightingPlan, shoppingPlan.',
+          '- catalogMatches must be an array of objects with itemName, category, useCase, priority, and quantityHint.',
+        ].join('\n')
+      : '';
   return [
     `You are ${service.title} for ZDT Realty, an India-first real estate and construction platform.`,
     'Return only valid JSON. Do not wrap the JSON in markdown.',
@@ -186,6 +199,7 @@ export function buildServiceSystemPrompt(service) {
     '',
     'Service capabilities:',
     capabilities,
+    serviceSpecificRules,
     '',
     'Required JSON shape:',
     JSON.stringify(
@@ -371,6 +385,7 @@ function buildInteriorDesignFallback(payload) {
   const budgetTier = readString(payload, ['budgetTier', 'budgetLevel'], 'mid-range');
   const mood = readString(payload, ['mood', 'feel'], 'warm and calm');
   const roomSizeSqft = readNumber(payload, ['roomSizeSqft', 'areaSqft'], 160);
+  const roomPlan = getInteriorRoomPlan(roomType);
 
   return {
     summary: `${capitalize(roomType)} design direction generated in ${style} style with a ${budgetTier} budget.`,
@@ -386,6 +401,16 @@ function buildInteriorDesignFallback(payload) {
         'ambient lighting layer',
         'accent or display point',
       ],
+      furnitureAndFixtures: roomPlan.furnitureAndFixtures,
+      buildingMaterialSelections: [
+        'washable interior paint with primer base',
+        'floor or wall tiles matched to palette',
+        'gypsum ceiling board with recessed lighting provision',
+        'electrical points for task, accent, and appliance loads',
+        'wood or laminate finish for modular storage',
+        ...roomPlan.materialSelections,
+      ],
+      catalogMatches: roomPlan.catalogMatches,
       furniturePriorities: [
         'choose one anchor piece before buying decor',
         'keep clear walking path of at least 900 mm where possible',
@@ -411,8 +436,111 @@ function buildInteriorDesignFallback(payload) {
       'Upload room photos and wall measurements.',
       'Capture existing electrical, plumbing, and window positions.',
       'Pick one style reference image to lock the visual direction.',
+      'Open the building materials catalog and shortlist the matching interior fit-out items.',
     ],
     confidence: 0.56,
+  };
+}
+
+function getInteriorRoomPlan(roomType) {
+  const normalized = String(roomType || '').toLowerCase();
+  if (normalized.includes('kitchen')) {
+    return {
+      furnitureAndFixtures: [
+        'modular kitchen base unit',
+        'overhead wall cabinets',
+        'tall pantry storage',
+        'countertop, sink, hob, and backsplash',
+        'under-cabinet task lighting',
+      ],
+      materialSelections: ['plumbing lines for sink', 'anti-skid floor tiles', 'backsplash wall tiles'],
+      catalogMatches: [
+        makeCatalogMatch('Modular Kitchen Base Unit', 'Interior Fit-out', 'base cabinet and counter storage', 'high', 'running feet as per kitchen wall length'),
+        makeCatalogMatch('Gypsum Ceiling Board 12mm', 'Interior Fit-out', 'clean ceiling with service access', 'medium', 'sheets as per ceiling area'),
+        makeCatalogMatch('Acrylic Wall Primer', 'Paint and Coatings', 'paint base for washable wall finish', 'medium', '20L drums based on wall area'),
+        makeCatalogMatch('PVC Drainage Pipe', 'Plumbing', 'sink drain and wet-service routing', 'medium', 'lengths as per plumbing run'),
+      ],
+    };
+  }
+  if (normalized.includes('bed')) {
+    return {
+      furnitureAndFixtures: [
+        'bed with upholstered or wood headboard',
+        'modular wardrobe unit',
+        'side tables with reading lights',
+        'dresser or study ledge',
+        'curtains or blackout blinds',
+      ],
+      materialSelections: ['laminate or veneer wardrobe finish', 'warm wall paint', 'wood hardware and handles'],
+      catalogMatches: [
+        makeCatalogMatch('Modular Wardrobe Unit', 'Interior Fit-out', 'primary bedroom storage wall', 'high', 'running feet by wardrobe width'),
+        makeCatalogMatch('Acrylic Wall Primer', 'Paint and Coatings', 'paint base for calm bedroom finish', 'medium', '20L drums based on wall area'),
+        makeCatalogMatch('Gypsum Ceiling Board 12mm', 'Interior Fit-out', 'cove or recessed ceiling light layer', 'medium', 'sheets as per ceiling area'),
+        makeCatalogMatch('Electrical Conduit and Wiring', 'Electrical', 'bedside, study, and wardrobe lighting points', 'medium', 'length by electrical routing'),
+      ],
+    };
+  }
+  if (normalized.includes('bath')) {
+    return {
+      furnitureAndFixtures: [
+        'bathroom vanity counter set',
+        'mirror cabinet',
+        'glass shower partition',
+        'wall shelves or niche storage',
+        'warm-white mirror lighting',
+      ],
+      materialSelections: ['anti-skid floor tiles', 'water-resistant wall tiles', 'plumbing fixtures and drainage lines'],
+      catalogMatches: [
+        makeCatalogMatch('Bathroom Vanity Counter Set', 'Interior Fit-out', 'basin, storage, and mirror zone', 'high', 'sets as per bathrooms'),
+        makeCatalogMatch('PVC Drainage Pipe', 'Plumbing', 'basin and floor trap drainage', 'high', 'lengths as per plumbing layout'),
+        makeCatalogMatch('Wall and Floor Tiles', 'Tiles', 'wet-area wall and floor finish', 'high', 'sqft as per bathroom surfaces'),
+        makeCatalogMatch('Electrical Conduit and Wiring', 'Electrical', 'mirror light and exhaust points', 'medium', 'length by electrical routing'),
+      ],
+    };
+  }
+  if (normalized.includes('office')) {
+    return {
+      furnitureAndFixtures: [
+        'work desk',
+        'ergonomic chair',
+        'storage credenza',
+        'open shelves',
+        'task light and acoustic curtain',
+      ],
+      materialSelections: ['scratch-resistant laminate', 'matte wall paint', 'extra electrical and data points'],
+      catalogMatches: [
+        makeCatalogMatch('Gypsum Ceiling Board 12mm', 'Interior Fit-out', 'acoustic ceiling and light placement', 'medium', 'sheets as per ceiling area'),
+        makeCatalogMatch('Acrylic Wall Primer', 'Paint and Coatings', 'low-glare wall finish', 'medium', '20L drums based on wall area'),
+        makeCatalogMatch('Electrical Conduit and Wiring', 'Electrical', 'desk, router, and task light points', 'high', 'length by electrical routing'),
+        makeCatalogMatch('Plywood or Laminate Board', 'Wood', 'desk and shelf carpentry', 'medium', 'sheets by furniture design'),
+      ],
+    };
+  }
+  return {
+    furnitureAndFixtures: [
+      'sofa or sectional seating',
+      'living room TV console unit',
+      'coffee table',
+      'accent chairs or poufs',
+      'curtains, rug, and display shelves',
+    ],
+    materialSelections: ['feature wall paint or paneling', 'tv wall electrical points', 'wood or laminate console finish'],
+    catalogMatches: [
+      makeCatalogMatch('Living Room TV Console Unit', 'Interior Fit-out', 'media wall and storage anchor', 'high', 'running feet by TV wall width'),
+      makeCatalogMatch('Gypsum Ceiling Board 12mm', 'Interior Fit-out', 'false ceiling and lighting layer', 'medium', 'sheets as per ceiling area'),
+      makeCatalogMatch('Acrylic Wall Primer', 'Paint and Coatings', 'paint base for main walls and feature wall', 'medium', '20L drums based on wall area'),
+      makeCatalogMatch('Electrical Conduit and Wiring', 'Electrical', 'TV, router, cove, and accent light points', 'high', 'length by electrical routing'),
+    ],
+  };
+}
+
+function makeCatalogMatch(itemName, category, useCase, priority, quantityHint) {
+  return {
+    itemName,
+    category,
+    useCase,
+    priority,
+    quantityHint,
   };
 }
 
