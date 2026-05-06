@@ -2033,14 +2033,24 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
       },
     });
 
+    const emailForOtp = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     let delivered = false;
     try {
-      delivered = await sendOtp({
-        channel: 'sms',
-        phone: normalizedPhone,
-        otp,
-        expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
-      });
+      if (emailForOtp) {
+        delivered = await sendOtp({
+          channel: 'email',
+          email: emailForOtp,
+          otp,
+          expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
+        });
+      } else {
+        delivered = await sendOtp({
+          channel: 'sms',
+          phone: normalizedPhone,
+          otp,
+          expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
+        });
+      }
     } catch (deliveryError) {
       await pool.query('DELETE FROM phone_verification_otps WHERE verification_token = $1', [
         verificationToken,
