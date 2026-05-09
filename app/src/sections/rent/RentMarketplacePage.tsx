@@ -42,6 +42,7 @@ import { addSavedSearch } from '@/lib/savedSearchStore';
 import { applySeo } from '@/lib/seo';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareOnWhatsApp } from '@/lib/share';
+import RecentlyViewedCarousel from '@/components/ui/RecentlyViewedCarousel';
 
 interface RentMarketplacePageProps {
   onOpenDetails: (propertyId: string) => void;
@@ -1285,6 +1286,8 @@ export default function RentMarketplacePage({
             <span className="portal-mobile-chip rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Tenant verification upgrades</span>
           </div>
         </div>
+
+        <RecentlyViewedCarousel onOpenDetails={onOpenDetails} />
 
         <p className="portal-mobile-card rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">ZDT Realty is an early-stage startup focused on verified rental listings and genuine connections.</p>
       </div>

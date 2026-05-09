@@ -75,6 +75,7 @@ import { addSavedSearch } from '@/lib/savedSearchStore';
 import { applySeo } from '@/lib/seo';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareOnWhatsApp } from '@/lib/share';
+import RecentlyViewedCarousel from '@/components/ui/RecentlyViewedCarousel';
 import {
   createGroupDealRequest,
   getGroupDealByCode,
@@ -2104,6 +2105,8 @@ export default function BuyMarketplacePage({
             </div>
           </div>
         </div>
+
+        <RecentlyViewedCarousel onOpenDetails={onOpenDetails} />
 
         <p className="portal-mobile-card rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
           ZDT Realty is an early-stage startup focused on verified listings, transparent pricing, and long-term trust.
