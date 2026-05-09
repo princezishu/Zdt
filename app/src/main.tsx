@@ -32,12 +32,19 @@ root.render(
   <StrictMode>
     <Sentry.ErrorBoundary
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-white px-6 text-center text-slate-900">
-          <div className="max-w-md space-y-3">
-            <h1 className="text-2xl font-semibold">Something went wrong.</h1>
-            <p className="text-sm text-slate-600">
-              Please refresh the page and try again.
+        <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-6 text-center text-slate-900">
+          <div className="max-w-md space-y-4">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-red-100 to-red-200 text-2xl">⚠️</div>
+            <h1 className="text-2xl font-semibold">Something went wrong</h1>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              An unexpected error occurred. This has been logged and our team will investigate.
             </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-950 to-blue-800 px-6 py-3 text-sm font-semibold text-white shadow-lg transition hover:opacity-90"
+            >
+              Reload Page
+            </button>
           </div>
         </div>
       }

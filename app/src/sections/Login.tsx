@@ -687,6 +687,20 @@ export default function Login({
                   if (!useLegacyLinkFlow) {
                     setLinkNotice('');
                   }
+
+                  // Client-side validation before API call
+                  if (!isTwoFactorStep) {
+                    const trimmedEmail = email.trim();
+                    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+                      setError('Please enter a valid email address.');
+                      return;
+                    }
+                    if (!password || password.length < 8) {
+                      setError('Password must be at least 8 characters.');
+                      return;
+                    }
+                  }
+
                   setIsSubmitting(true);
 
                   try {

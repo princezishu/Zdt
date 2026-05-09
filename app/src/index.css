@@ -62,8 +62,50 @@
   --input: 217 32% 17%;
   --ring: 223 74% 48%;
 
+
   color-scheme: dark;
 }
+
+/* ── Dark Mode Component Overrides ── */
+.dark body,
+.dark .bg-white { background-color: hsl(var(--background)) !important; }
+.dark .bg-slate-50,
+.dark .bg-slate-100 { background-color: hsl(var(--card)) !important; }
+.dark .text-slate-900 { color: hsl(var(--foreground)) !important; }
+.dark .text-slate-800 { color: hsl(210 40% 90%) !important; }
+.dark .text-slate-700 { color: hsl(var(--muted-foreground)) !important; }
+.dark .text-slate-600 { color: hsl(215 20% 60%) !important; }
+.dark .border-slate-200,
+.dark .border-slate-100 { border-color: hsl(var(--border)) !important; }
+.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.3) !important; }
+
+/* Dark panels & cards */
+.dark .portal-mobile-panel,
+.dark .portal-mobile-card { background-color: hsl(var(--card)) !important; border-color: hsl(var(--border)) !important; }
+.dark .portal-mobile-chip { background-color: hsl(217 32% 14%) !important; border-color: hsl(var(--border)) !important; color: hsl(var(--muted-foreground)) !important; }
+
+/* Dark inputs */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: hsl(217 32% 12%) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: hsl(215 20% 45%) !important; }
+
+/* Dark header shell */
+.dark .zdt-header-shell { background: rgba(10, 15, 28, 0.92) !important; border-color: hsl(var(--border)) !important; }
+.dark .zdt-header-pill-highlight {
+  border-color: rgba(var(--royal-gold), 0.2) !important;
+  background: linear-gradient(135deg, rgba(var(--royal-gold), 0.12), rgba(var(--royal-gold), 0.06)) !important;
+  color: hsl(43 80% 70%) !important;
+}
+
+/* Dark scrollbar */
+.dark ::-webkit-scrollbar-track { background: hsl(222 47% 8%); }
+.dark ::-webkit-scrollbar-thumb { background: hsl(217 32% 22%); }
 
 /* ── Smooth Scrollbar ── */
 ::-webkit-scrollbar {
