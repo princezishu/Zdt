@@ -29,6 +29,7 @@ import { applySeo } from '@/lib/seo';
 import { buildCanonicalDetailPath } from '@/lib/slug';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareLink } from '@/lib/share';
+import { addRecentlyViewed } from '@/lib/recentlyViewed';
 
 interface RentDetailsPageProps {
   rentalId: string;
@@ -119,6 +120,17 @@ export default function RentDetailsPage({
         setRental(response.rental);
         const image = response.rental.primaryImage || response.rental.imageUrls?.[0] || '/images/property-1.jpg';
         setActiveImage(image);
+
+        // Track recently viewed
+        addRecentlyViewed({
+          id: String(response.rental.id),
+          title: response.rental.title,
+          image,
+          city: response.rental.city,
+          area: response.rental.locality || response.rental.address,
+          priceLabel: fmt(response.rental.monthlyRent, '/mo'),
+          propertyType: response.rental.propertyType || 'Rental',
+        });
       })
       .catch((loadError) => {
         if (!active) return;

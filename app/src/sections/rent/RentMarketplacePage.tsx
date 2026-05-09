@@ -12,6 +12,7 @@ import {
   PawPrint,
   PhoneCall,
   SearchCheck,
+  Share2,
   ShieldCheck,
   SlidersHorizontal,
   UserCheck,
@@ -40,6 +41,7 @@ import {
 import { addSavedSearch } from '@/lib/savedSearchStore';
 import { applySeo } from '@/lib/seo';
 import { openPhoneDialer } from '@/lib/phone';
+import { shareOnWhatsApp } from '@/lib/share';
 
 interface RentMarketplacePageProps {
   onOpenDetails: (propertyId: string) => void;
@@ -1422,6 +1424,7 @@ function RentalCard({ rental, onOpenDetails, onOpenMessages, onOpenCompare }: { 
           <Button variant="outline" className="h-11 w-full min-w-0 border-slate-300 px-3 text-[13px]" onClick={() => onOpenMessages(referenceId)}><MessageCircle className="mr-1 h-3.5 w-3.5" />Contact Owner</Button>
           <Button variant="outline" className="h-11 w-full min-w-0 border-slate-300 px-3 text-[13px]" onClick={handleCallContact}><PhoneCall className="mr-1 h-3.5 w-3.5" />Call Owner</Button>
           <Button variant="outline" className={`h-11 w-full min-w-0 border-slate-300 px-3 text-[13px] ${saved ? 'text-rose-600' : ''}`} onClick={toggleSave}><Heart className={`mr-1 h-3.5 w-3.5 ${saved ? 'fill-current' : ''}`} />{saved ? 'Saved' : 'Save'}</Button>
+          <Button variant="outline" className="h-11 w-full min-w-0 border-green-300 px-3 text-[13px] text-green-700 hover:bg-green-50" onClick={() => shareOnWhatsApp({ title: rental.title || 'Rental Property', price: fmt(rental.monthlyRent, '/mo'), location: [rental.locality, rental.city].filter(Boolean).join(', '), url: `${window.location.origin}/rent-details/${encodeURIComponent(String(rental.id))}` })}><Share2 className="mr-1 h-3.5 w-3.5" />WhatsApp</Button>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Button variant="outline" className={`h-11 w-full min-w-0 border-slate-300 px-3 text-[13px] ${compared ? 'text-blue-700' : ''}`} onClick={toggleCompare}><GitCompareArrows className="mr-1 h-3.5 w-3.5" />{compared ? 'Compared' : 'Compare'}</Button>

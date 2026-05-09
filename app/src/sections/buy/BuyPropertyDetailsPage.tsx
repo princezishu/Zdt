@@ -45,6 +45,7 @@ import { applySeo } from '@/lib/seo';
 import { buildCanonicalDetailPath } from '@/lib/slug';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareLink } from '@/lib/share';
+import { addRecentlyViewed } from '@/lib/recentlyViewed';
 
 interface BuyPropertyDetailsPageProps {
   propertyId: string;
@@ -238,6 +239,17 @@ export default function BuyPropertyDetailsPage({
         setPriceHistory(response.priceHistory || []);
         const image = response.property.primaryImage || response.property.imageUrls?.[0] || '/images/property-1.jpg';
         setActiveImage(image);
+
+        // Track recently viewed
+        addRecentlyViewed({
+          id: String(response.property.id),
+          title: response.property.title,
+          image,
+          city: response.property.city,
+          area: response.property.locality || response.property.area,
+          priceLabel: formatPrice(response.property.price),
+          propertyType: response.property.propertyType,
+        });
       })
       .catch((loadError) => {
         if (!active) return;

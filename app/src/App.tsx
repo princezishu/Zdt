@@ -655,6 +655,7 @@ function App() {
       shellVisibility={shellVisibility}
       headerProps={headerProps}
       footerProps={footerProps}
+      currentView={currentView}
     >
       <AppViewRenderer
         currentView={currentView}

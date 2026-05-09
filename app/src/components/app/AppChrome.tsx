@@ -3,10 +3,12 @@ import type { ComponentProps, ReactNode } from 'react';
 import AIChatbotWidget from '@/components/realty/AIChatbotWidget';
 import FloatingWhatsAppButton from '@/components/realty/FloatingWhatsAppButton';
 import ScrollToTopButton from '@/components/app/ScrollToTopButton';
+import PageTransitionBar from '@/components/app/PageTransitionBar';
 import PopupAdOverlay from '@/components/app/PopupAdOverlay';
 import { type ShellVisibility } from '@/lib/appRoutes';
 import Footer from '@/sections/Footer';
 import Header from '@/sections/Header';
+import type { AppView } from '@/lib/views';
 
 interface AppChromeProps {
   children: ReactNode;
@@ -14,6 +16,7 @@ interface AppChromeProps {
   shellVisibility: ShellVisibility;
   headerProps: ComponentProps<typeof Header>;
   footerProps: ComponentProps<typeof Footer>;
+  currentView: AppView;
 }
 
 export default function AppChrome({
@@ -22,6 +25,7 @@ export default function AppChrome({
   shellVisibility,
   headerProps,
   footerProps,
+  currentView,
 }: AppChromeProps) {
   return (
     <div
@@ -36,6 +40,8 @@ export default function AppChrome({
         >
           Skip to main content
         </a>
+
+        <PageTransitionBar currentView={currentView} />
 
         {shellVisibility.showHeader ? <Header {...headerProps} /> : null}
 
