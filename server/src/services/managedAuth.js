@@ -5,8 +5,10 @@ import { supabaseClient, supabaseConfig, isSupabaseConfigured } from '../config/
 import { pool } from '../db.js';
 
 const MANAGED_AUTH_PROVIDER = String(process.env.MANAGED_AUTH_PROVIDER || '').trim().toLowerCase();
-const MANAGED_AUTH_AUTO_LINK_BY_EMAIL =
-  String(process.env.MANAGED_AUTH_AUTO_LINK_BY_EMAIL || 'false').trim().toLowerCase() === 'true';
+
+function isAutoLinkByEmailEnabled() {
+  return String(process.env.MANAGED_AUTH_AUTO_LINK_BY_EMAIL || 'false').trim().toLowerCase() === 'true';
+}
 
 let remoteJwks = null;
 
@@ -337,7 +339,7 @@ export async function resolveManagedAuthUser(identity) {
 
     const emailMatch = await loadEmailMatchForIdentity(client, identity.email);
     if (emailMatch) {
-      if (!MANAGED_AUTH_AUTO_LINK_BY_EMAIL || !identity.emailVerified) {
+      if (!isAutoLinkByEmailEnabled() || !identity.emailVerified) {
         throw new ManagedAuthError(
           'This managed identity matches an existing legacy account. Link it from a legacy session before using managed auth.',
           {
