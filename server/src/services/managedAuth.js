@@ -339,12 +339,12 @@ export async function resolveManagedAuthUser(identity) {
 
     const emailMatch = await loadEmailMatchForIdentity(client, identity.email);
     if (emailMatch) {
-      if (!isAutoLinkByEmailEnabled() || !identity.emailVerified) {
+      if (!identity.emailVerified) {
         throw new ManagedAuthError(
-          'This managed identity matches an existing legacy account. Link it from a legacy session before using managed auth.',
+          'Your email is not verified with the identity provider. Please verify your email and try again.',
           {
             status: 409,
-            code: 'managed_auth_link_required',
+            code: 'managed_auth_email_not_verified',
           }
         );
       }
@@ -367,46 +367,14 @@ export async function resolveManagedAuthUser(identity) {
       };
     }
 
-    const nextEmail = identity.email || buildSyntheticEmail(identity.provider, identity.subject);
-    const passwordHash = await generateManagedPasswordHash();
-    const insertRows = await client.query(
-      `
-        INSERT INTO users (
-          name,
-          email,
-          password_hash,
-          phone,
-          role,
-          account_type,
-          subscription_tier,
-          managed_auth_provider,
-          managed_auth_subject,
-          managed_auth_email_verified,
-          managed_auth_only,
-          managed_auth_last_sign_in_at
-        )
-        VALUES ($1, $2, $3, $4, 'user', 'individual', 'free', $5, $6, $7, TRUE, NOW())
-        RETURNING id, managed_auth_only
-      `,
-      [
-        buildDisplayName(identity),
-        nextEmail,
-        passwordHash,
-        identity.phone || null,
-        identity.provider,
-        identity.subject,
-        identity.emailVerified,
-      ]
-    );
-
     await client.query('COMMIT');
-    return {
-      localUserId: Number(insertRows.rows[0].id),
-      authProvider: identity.provider,
-      managedAuthOnly: Boolean(insertRows.rows[0].managed_auth_only),
-      created: true,
-      autoLinked: false,
-    };
+    throw new ManagedAuthError(
+      'No account found for this email. Please register first and then sign in with Google.',
+      {
+        status: 404,
+        code: 'managed_auth_no_account',
+      }
+    );
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

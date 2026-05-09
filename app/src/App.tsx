@@ -175,15 +175,29 @@ function App() {
 
         const requiresManagedLink =
           error instanceof ApiError && error.code === 'managed_auth_link_required';
+        const noAccountFound =
+          error instanceof ApiError && error.code === 'managed_auth_no_account';
+
+        // Sign out the managed session so it doesn't keep retrying
+        if ((requiresManagedLink || noAccountFound) && isSupabaseConfigured()) {
+          try {
+            await signOutManagedAuth();
+          } catch {
+            // best-effort cleanup
+          }
+        }
+
         clearSession();
         setAuthToken('');
         setCurrentUser(null);
         navigateToRef.current(
-          requiresManagedLink
-            ? 'login'
-            : canAccessView(currentViewRef.current, null)
-              ? currentViewRef.current
-              : 'home',
+          noAccountFound
+            ? 'register'
+            : requiresManagedLink
+              ? 'login'
+              : canAccessView(currentViewRef.current, null)
+                ? currentViewRef.current
+                : 'home',
           {
             pushHistory: false,
             smoothScroll: false,

@@ -15,7 +15,9 @@
     "CORS_ALLOWED_ORIGIN_PATTERNS": "https://*.vercel.app,https://zdtrealty.vercel.app",
     "AI_SERVICES_PROVIDER": "bedrock",
     "AWS_BEDROCK_REGION": "ap-south-1",
-    "AWS_BEDROCK_MODEL_ID": "global.amazon.nova-2-lite-v1:0"
+    "AWS_BEDROCK_MODEL_ID": "global.amazon.nova-2-lite-v1:0",
+    "MANAGED_AUTH_PROVIDER": "supabase",
+    "MANAGED_AUTH_AUTO_LINK_BY_EMAIL": "true"
   },
   "triggers": {
     "crons": [
