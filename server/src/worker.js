@@ -117,10 +117,7 @@ const allowedOriginPatterns = Array.from(
 )
   .map(createAllowedOriginPattern)
   .filter(Boolean);
-const CORS_ALLOW_ALL = readBooleanEnv(
-  'CORS_ALLOW_ALL',
-  allowedOrigins.length === 0 && allowedOriginPatterns.length === 0
-);
+const CORS_ALLOW_ALL = readBooleanEnv('CORS_ALLOW_ALL', false);
 
 function matchesAllowedOriginPattern(origin) {
   const normalizedOrigin = String(origin || '').trim();
@@ -385,10 +382,16 @@ function createWorkerApp() {
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader(
-      'Content-Security-Policy',
-      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-    );
+
+    // Apply strict CSP to API routes only (JSON responses)
+    const isApiRoute = req.path.startsWith('/api');
+    if (isApiRoute) {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+      );
+    }
+
     if (req.secure || String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     }

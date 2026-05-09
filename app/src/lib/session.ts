@@ -29,20 +29,25 @@ function getSessionStorage(): Storage | null {
   }
 }
 
+// On module load: migrate any legacy persisted tokens into volatile memory,
+// then immediately remove them from storage to eliminate XSS exposure.
 if (typeof window !== 'undefined') {
   const sessionStorageRef = getSessionStorage();
   const sessionToken = sessionStorageRef?.getItem(TOKEN_KEY) || '';
+  const legacyToken = window.localStorage.getItem(TOKEN_KEY) || '';
+
+  // Hydrate volatile token from any available source (for the current tab)
   if (sessionToken) {
     volatileToken = sessionToken;
-  } else {
-    const legacyToken = window.localStorage.getItem(TOKEN_KEY) || '';
-    if (legacyToken) {
-      volatileToken = legacyToken;
-      sessionStorageRef?.setItem(TOKEN_KEY, legacyToken);
-      window.localStorage.removeItem(TOKEN_KEY);
-    }
+  } else if (legacyToken) {
+    volatileToken = legacyToken;
   }
 
+  // Purge tokens from all persistent storage — httpOnly cookie handles auth
+  sessionStorageRef?.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(TOKEN_KEY);
+
+  // Migrate user profile to sessionStorage (non-sensitive display data)
   const legacyUser = window.localStorage.getItem(USER_KEY) || '';
   if (legacyUser && sessionStorageRef && !sessionStorageRef.getItem(USER_KEY)) {
     sessionStorageRef.setItem(USER_KEY, legacyUser);
@@ -128,25 +133,20 @@ export function parseApiUser(raw: unknown): AuthUser | null {
 
 export function saveSession(token: string, user: AuthUser) {
   volatileToken = String(token || '').trim();
+  // Token is kept in volatile memory only — httpOnly cookie handles persistence
+  // User profile (non-sensitive) stored in sessionStorage for UI display
   const sessionStorageRef = getSessionStorage();
-  if (volatileToken) {
-    sessionStorageRef?.setItem(TOKEN_KEY, volatileToken);
-  } else {
-    sessionStorageRef?.removeItem(TOKEN_KEY);
-  }
   window.localStorage.removeItem(TOKEN_KEY);
+  sessionStorageRef?.removeItem(TOKEN_KEY);
   sessionStorageRef?.setItem(USER_KEY, JSON.stringify(user));
   window.localStorage.removeItem(USER_KEY);
 }
 
 export function setSessionToken(token: string) {
   volatileToken = String(token || '').trim();
+  // Token kept in volatile memory only — never persisted to storage
   const sessionStorageRef = getSessionStorage();
-  if (volatileToken) {
-    sessionStorageRef?.setItem(TOKEN_KEY, volatileToken);
-  } else {
-    sessionStorageRef?.removeItem(TOKEN_KEY);
-  }
+  sessionStorageRef?.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(TOKEN_KEY);
 }
 
