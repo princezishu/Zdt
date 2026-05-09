@@ -41,6 +41,30 @@
   --ring: 223 74% 48%;
 }
 
+.dark {
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --card: 222 47% 9%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 47% 9%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 6%;
+  --secondary: 223 74% 48%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 217 32% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 43 52% 54%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 217 32% 17%;
+  --input: 217 32% 17%;
+  --ring: 223 74% 48%;
+
+  color-scheme: dark;
+}
+
 /* ── Smooth Scrollbar ── */
 ::-webkit-scrollbar {
   width: 8px;
@@ -85,8 +109,9 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  background: #f8fafc;
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #root {

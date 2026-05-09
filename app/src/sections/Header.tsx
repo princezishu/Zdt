@@ -42,6 +42,7 @@ import {
   NOTIFICATIONS_CHANGED_EVENT,
   readNotifications,
 } from '@/lib/notificationsStore';
+import ThemeToggle from '@/components/ui/ThemeToggle';
 
 type HeaderUserRole = UserRole | 'owner' | 'agent' | 'builder';
 type StrategicModuleView =
@@ -425,6 +426,7 @@ export default function Header({
                     <Heart className="h-5 w-5" />
                   </Button>
                 </div>
+                <ThemeToggle />
                 <button
                   type="button"
                   onClick={onProfile}

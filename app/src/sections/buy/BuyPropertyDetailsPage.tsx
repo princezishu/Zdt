@@ -46,6 +46,7 @@ import { buildCanonicalDetailPath } from '@/lib/slug';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareLink } from '@/lib/share';
 import { addRecentlyViewed } from '@/lib/recentlyViewed';
+import GalleryLightbox from '@/components/ui/GalleryLightbox';
 
 interface BuyPropertyDetailsPageProps {
   propertyId: string;
@@ -226,6 +227,8 @@ export default function BuyPropertyDetailsPage({
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [isComparedListing, setIsComparedListing] = useState(false);
   const [shareStatus, setShareStatus] = useState('');
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -671,7 +674,12 @@ export default function BuyPropertyDetailsPage({
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
             <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-              <img src={activeImage} alt={property.title} className="h-[340px] w-full object-cover sm:h-[420px]" />
+              <img
+                src={activeImage}
+                alt={property.title}
+                className="h-[340px] w-full cursor-pointer object-cover sm:h-[420px]"
+                onClick={() => { setLightboxIndex(gallery.indexOf(activeImage)); setLightboxOpen(true); }}
+              />
               <div className="grid grid-cols-4 gap-2 p-3">
                 {gallery.map((image) => (
                   <button
@@ -1124,6 +1132,14 @@ export default function BuyPropertyDetailsPage({
           ZDT Realty is an independent real estate platform built with transparency and verified listings.
         </p>
       </div>
+
+      <GalleryLightbox
+        images={gallery}
+        initialIndex={lightboxIndex}
+        open={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+        altPrefix={property.title}
+      />
     </section>
   );
 }

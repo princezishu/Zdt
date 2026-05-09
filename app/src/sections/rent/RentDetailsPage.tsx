@@ -30,6 +30,7 @@ import { buildCanonicalDetailPath } from '@/lib/slug';
 import { openPhoneDialer } from '@/lib/phone';
 import { shareLink } from '@/lib/share';
 import { addRecentlyViewed } from '@/lib/recentlyViewed';
+import GalleryLightbox from '@/components/ui/GalleryLightbox';
 
 interface RentDetailsPageProps {
   rentalId: string;
@@ -108,6 +109,8 @@ export default function RentDetailsPage({
   const [submitting, setSubmitting] = useState(false);
   const [isComparedListing, setIsComparedListing] = useState(false);
   const [shareStatus, setShareStatus] = useState('');
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -399,7 +402,12 @@ export default function RentDetailsPage({
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
             <div className="portal-mobile-panel overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-              <img src={activeImage || '/images/property-1.jpg'} alt={rental.title} className="h-[340px] w-full object-cover sm:h-[420px]" />
+              <img
+                src={activeImage || '/images/property-1.jpg'}
+                alt={rental.title}
+                className="h-[340px] w-full cursor-pointer object-cover sm:h-[420px]"
+                onClick={() => { setLightboxIndex(Math.max(0, gallery.filter(Boolean).indexOf(activeImage))); setLightboxOpen(true); }}
+              />
               <div className="grid grid-cols-4 gap-2 p-3">
                 {gallery.filter(Boolean).map((image) => (
                   <button key={image} type="button" onClick={() => setActiveImage(image)} className={`overflow-hidden rounded-xl border ${activeImage === image ? 'border-slate-900' : 'border-slate-200'}`}>
@@ -584,6 +592,14 @@ export default function RentDetailsPage({
           ZDT Realty is an early-stage startup focused on verified rental listings and genuine connections.
         </p>
       </div>
+
+      <GalleryLightbox
+        images={gallery.filter(Boolean)}
+        initialIndex={lightboxIndex}
+        open={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+        altPrefix={rental.title}
+      />
     </section>
   );
 }
