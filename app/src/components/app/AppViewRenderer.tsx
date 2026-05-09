@@ -87,6 +87,8 @@ const OwnerPaymentsPage = lazy(() => import('@/sections/owner/OwnerPaymentsPage'
 const OwnerProfilePage = lazy(() => import('@/sections/owner/OwnerProfilePage'));
 const PricingPage = lazy(() => import('@/sections/PricingPage'));
 const CollaborationsPage = lazy(() => import('@/sections/CollaborationsPage'));
+const EMICalculatorPage = lazy(() => import('@/sections/EMICalculatorPage'));
+const NotFoundPage = lazy(() => import('@/sections/NotFoundPage'));
 
 type NavigateTo = (view: AppView, options?: NavigationOptions) => void;
 
@@ -1076,6 +1078,23 @@ export default function AppViewRenderer({
       {currentView === 'collaborations' && (
         <AnimatedViewFrame>
           <CollaborationsPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'emi-calculator' && (
+        <AnimatedViewFrame>
+          <EMICalculatorPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'not-found' && (
+        <AnimatedViewFrame>
+          <NotFoundPage
+            onOpenHome={() => navigateTo('home')}
+            onOpenBuy={() => navigateTo('buy')}
+            onOpenRent={() => navigateTo('rent')}
+            onOpenHelpCenter={() => navigateTo('help-center')}
+          />
         </AnimatedViewFrame>
       )}
     </>

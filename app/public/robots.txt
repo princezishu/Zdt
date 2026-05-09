@@ -1,4 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /admin-desk
+Disallow: /admin-login
+Disallow: /team-desk
+Disallow: /team-login
 
 Sitemap: https://zdtrealty.vercel.app/sitemap.xml

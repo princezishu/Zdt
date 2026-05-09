@@ -31,6 +31,7 @@ import {
   subscribeToManagedAuthChanges,
 } from '@/lib/supabase';
 import { trackGoogleAnalyticsPageView } from '@/lib/googleAnalytics';
+import { useViewSeo } from '@/hooks/useViewSeo';
 
 type StrategicModuleView =
   | 'area-insights'
@@ -69,6 +70,8 @@ function App() {
   const currentViewRef = useRef(currentView);
   const shellVisibility = getShellVisibility(currentView, Boolean(currentUser));
   const isAuthenticated = Boolean(currentUser);
+
+  useViewSeo(currentView);
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -643,6 +646,7 @@ function App() {
     onOpenInsights: () => navigateTo('insights-news'),
     onOpenPricing: () => navigateTo('pricing'),
     onOpenCollaborations: () => navigateTo('collaborations'),
+    onOpenEMICalculator: () => navigateTo('emi-calculator'),
   };
 
   return (

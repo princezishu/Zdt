@@ -16,6 +16,7 @@ import {
   MessageCircle,
   PhoneCall,
   SearchCheck,
+  Share2,
   ShieldCheck,
   ShieldQuestion,
   SlidersHorizontal,
@@ -73,6 +74,7 @@ import { trackFeatureUsage } from '@/lib/featureUsageApi';
 import { addSavedSearch } from '@/lib/savedSearchStore';
 import { applySeo } from '@/lib/seo';
 import { openPhoneDialer } from '@/lib/phone';
+import { shareOnWhatsApp } from '@/lib/share';
 import {
   createGroupDealRequest,
   getGroupDealByCode,
@@ -2655,6 +2657,21 @@ function PropertyCard({
           >
             <Heart className={`mr-1 h-3.5 w-3.5 ${saved ? 'fill-current' : ''}`} />
             {saved ? 'Saved' : 'Save'}
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 w-full min-w-0 border-green-300 px-3 text-[13px] text-green-700 hover:bg-green-50"
+            onClick={() =>
+              shareOnWhatsApp({
+                title: property.title || 'Property',
+                price: formatPrice(property.price),
+                location: [property.locality, property.city].filter(Boolean).join(', '),
+                url: `${window.location.origin}/buy-details/${encodeURIComponent(String(property.id))}`,
+              })
+            }
+          >
+            <Share2 className="mr-1 h-3.5 w-3.5" />
+            WhatsApp
           </Button>
         </div>
         {compared && (

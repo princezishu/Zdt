@@ -100,6 +100,8 @@ export const APP_VIEWS = [
   'team-register',
   'pricing',
   'collaborations',
+  'emi-calculator',
+  'not-found',
 ] as const;
 
 export type AppView = (typeof APP_VIEWS)[number];

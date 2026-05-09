@@ -33,6 +33,7 @@ interface FooterProps {
   onOpenInsights?: () => void;
   onOpenPricing?: () => void;
   onOpenCollaborations?: () => void;
+  onOpenEMICalculator?: () => void;
 }
 
 const SUPPORT_EMAIL = 'zdtrealty@gmail.com';
@@ -83,6 +84,7 @@ export default function Footer({
   onOpenInsights,
   onOpenPricing,
   onOpenCollaborations,
+  onOpenEMICalculator,
 }: FooterProps) {
   const footerRef = useRef<HTMLDivElement>(null);
   const [email, setEmail] = useState('');
@@ -140,9 +142,10 @@ export default function Footer({
       if (onOpenInsights) links.push({ label: 'Insights', action: onOpenInsights });
       if (onOpenPricing) links.push({ label: 'Pricing', action: onOpenPricing });
       if (onOpenCollaborations) links.push({ label: 'Collaborations', action: onOpenCollaborations });
+      if (onOpenEMICalculator) links.push({ label: 'EMI Calculator', action: onOpenEMICalculator });
       return links;
     },
-    [onOpenConstructWithUs, onOpenBuildingMaterials, onOpenGroupDeals, onOpenEAuction, onOpenInsights, onOpenPricing, onOpenCollaborations]
+    [onOpenConstructWithUs, onOpenBuildingMaterials, onOpenGroupDeals, onOpenEAuction, onOpenInsights, onOpenPricing, onOpenCollaborations, onOpenEMICalculator]
   );
 
   const footerSections = useMemo(

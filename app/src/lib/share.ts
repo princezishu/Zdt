@@ -36,3 +36,31 @@ export async function shareLink(input: ShareLinkInput): Promise<'native' | 'copi
 
   return 'failed';
 }
+
+/**
+ * Share a property listing via WhatsApp with a pre-formatted rich message.
+ */
+export function shareOnWhatsApp({
+  title,
+  price,
+  location,
+  url,
+}: {
+  title: string;
+  price: string;
+  location: string;
+  url?: string;
+}): void {
+  const shareUrl = url || (typeof window !== 'undefined' ? window.location.href : '');
+  const message = [
+    `🏠 *${title}*`,
+    `💰 ${price}`,
+    `📍 ${location}`,
+    '',
+    `Check it out on ZDT Realty:`,
+    shareUrl,
+  ].join('\n');
+
+  const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+  window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+}

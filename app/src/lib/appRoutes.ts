@@ -352,8 +352,9 @@ export function parsePathToRoute(pathname: string): AppRouteState {
   if (normalized === '/checkout') return withRouteState('checkout');
   if (normalized === '/pricing') return withRouteState('pricing');
   if (normalized === '/collaborations') return withRouteState('collaborations');
+  if (normalized === '/emi-calculator') return withRouteState('emi-calculator');
 
-  return withRouteState(null);
+  return withRouteState('not-found');
 }
 
 export function buildHrefForView(view: AppView, options?: NavigationOptions): string {
@@ -498,5 +499,7 @@ export function buildHrefForView(view: AppView, options?: NavigationOptions): st
       ? `/property-details/${encodeURIComponent(propertyReference)}`
       : '/property-details';
   }
+  if (view === 'emi-calculator') return '/emi-calculator';
+  if (view === 'not-found') return '/404';
   return '/';
 }
