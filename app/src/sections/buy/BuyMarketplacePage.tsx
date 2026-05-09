@@ -37,6 +37,7 @@ import {
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { PropertyCardsSkeleton } from '@/components/loading/PageSkeletons';
+import EmptyState from '@/components/ui/EmptyState';
 import { LgdLocationAccuracyNote, LgdLocationInput } from '@/components/realty/LgdLocationInput';
 import {
   Drawer,
@@ -2003,9 +2004,13 @@ export default function BuyMarketplacePage({
               </aside>
             </div>
           ) : sortedProperties.length === 0 ? (
-            <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
-              No listings match your current filters.
-            </div>
+            <EmptyState
+              variant="no-results"
+              title="No properties match your filters"
+              description="Adjust your search criteria, try a different city, or reset filters to see all available listings."
+              actionLabel="Reset Filters"
+              onAction={handleResetFilters}
+            />
           ) : (
             <>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

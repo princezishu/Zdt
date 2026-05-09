@@ -638,9 +638,9 @@ export default function Login({
             <div className="w-full max-w-[420px] rounded-2xl border border-brand-gray2 bg-white/90 p-8 shadow-card-hover backdrop-blur-lg neon-card animate-in fade-in slide-in-from-bottom-8 duration-500">
               <button
                 onClick={onBack}
-                className="lg:hidden mb-6 inline-flex items-center gap-2 text-sm text-brand-gray3 hover:text-brand-primary"
+                className="lg:hidden mb-6 inline-flex items-center gap-2 rounded-lg border border-brand-gray2 bg-white/80 px-3 py-2 text-sm text-brand-gray3 shadow-sm hover:text-brand-primary hover:border-brand-primary/30 transition"
               >
-                <ArrowLeft className="h-4 w-4" /> Back
+                <ArrowLeft className="h-4 w-4" /> Back to Home
               </button>
 
               <div className="flex items-center justify-between">

@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { PropertyCardsSkeleton } from '@/components/loading/PageSkeletons';
+import EmptyState from '@/components/ui/EmptyState';
 import { LgdLocationAccuracyNote, LgdLocationInput } from '@/components/realty/LgdLocationInput';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
@@ -1157,7 +1158,13 @@ export default function RentMarketplacePage({
             </aside>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="portal-mobile-card rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">No rentals match your selected filters.</div>
+            <EmptyState
+              variant="no-results"
+              title="No rentals match your filters"
+              description="Adjust your search criteria, try a different city or locality, or reset filters to see all available rentals."
+              actionLabel="Reset Filters"
+              onAction={resetFilters}
+            />
         ) : (
           <>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{pagedRentals.map((rental) => <RentalCard key={rental.id} rental={rental} onOpenDetails={onOpenDetails} onOpenMessages={onOpenMessages} onOpenCompare={onOpenCompare} />)}</div>
