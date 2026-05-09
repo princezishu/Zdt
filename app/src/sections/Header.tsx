@@ -100,6 +100,7 @@ interface HeaderProps {
   onFavorites: () => void;
   onProfile: () => void;
   onPricing: () => void;
+  onLogout?: () => void;
   isAuthenticated: boolean;
   userRole: HeaderUserRole | null;
   isMainAdmin: boolean;
@@ -144,6 +145,7 @@ export default function Header({
   onFavorites,
   onProfile,
   onPricing,
+  onLogout,
   isAuthenticated,
   userRole,
   isMainAdmin,
@@ -175,10 +177,14 @@ export default function Header({
     };
 
   const handleMobileLogout = () => {
-    clearSession();
     setIsMobileMenuOpen(false);
     setIsTabletMenuOpen(false);
-    onLogin();
+    if (onLogout) {
+      onLogout();
+    } else {
+      clearSession();
+      onLogin();
+    }
   };
 
   useEffect(() => {
@@ -866,9 +872,13 @@ export default function Header({
                             variant="outline"
                             className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
                             onClick={() => {
-                              clearSession();
                               setIsTabletMenuOpen(false);
-                              onLogin();
+                              if (onLogout) {
+                                onLogout();
+                              } else {
+                                clearSession();
+                                onLogin();
+                              }
                             }}
                           >
                             <LogOut className="mr-2 h-4 w-4" />

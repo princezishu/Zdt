@@ -595,6 +595,7 @@ function App() {
     onFavorites: () => navigateTo('favorites'),
     onProfile: () => navigateTo('profile'),
     onPricing: () => navigateTo('pricing'),
+    onLogout: handleLogout,
     isAuthenticated,
     userRole: currentUser?.role || null,
     isMainAdmin: currentUser?.isMainAdmin || false,
