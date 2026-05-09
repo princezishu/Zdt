@@ -157,6 +157,15 @@ export function clearSession() {
   window.localStorage.removeItem(TOKEN_KEY);
   sessionStorageRef?.removeItem(USER_KEY);
   window.localStorage.removeItem(USER_KEY);
+
+  // Also purge any Supabase-managed auth session data to prevent
+  // the bootstrap flow from re-authenticating after logout.
+  sessionStorageRef?.removeItem('zdt.supabase.auth');
+  sessionStorageRef?.removeItem('zdt.supabase.link_hint');
+  sessionStorageRef?.removeItem('zdt.supabase.signup_hint');
+  window.localStorage.removeItem('zdt.supabase.auth');
+  window.localStorage.removeItem('zdt.supabase.link_hint');
+  window.localStorage.removeItem('zdt.supabase.signup_hint');
 }
 
 export function readToken(): string {
