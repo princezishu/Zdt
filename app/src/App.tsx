@@ -610,6 +610,7 @@ function App() {
     onProfile: () => navigateTo('profile'),
     onPricing: () => navigateTo('pricing'),
     onLogout: handleLogout,
+    onHelpCenter: () => navigateTo('help-center'),
     isAuthenticated,
     userRole: currentUser?.role || null,
     isMainAdmin: currentUser?.isMainAdmin || false,

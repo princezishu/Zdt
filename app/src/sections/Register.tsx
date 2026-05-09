@@ -45,10 +45,6 @@ function normalizeRegistrationPhone(value: string) {
   return hasLeadingPlus ? `+${digits}` : digits;
 }
 
-function isPhoneReady(value: string) {
-  return /^\+?\d{8,15}$/.test(normalizeRegistrationPhone(value));
-}
-
 const steps = [
   {
     icon: Sparkles,
@@ -75,6 +71,7 @@ export default function Register({
   onRegisterSuccess: _onRegisterSuccess,
 }: RegisterProps) {
   const [showPassword, setShowPassword] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -169,7 +166,7 @@ export default function Register({
     setEmailVerificationId('');
     try {
       // We use the same phone-otp endpoint but pass email so server delivers via Gmail
-      const normalizedPhone = normalizeRegistrationPhone(phone) || '+0000000000';
+      const normalizedPhone = normalizeRegistrationPhone(phone) || '';
       const response = await apiRequest<{
         verificationToken: string;
         expiresInMinutes: number;
@@ -325,6 +322,10 @@ export default function Register({
                     const normalizedPhone = normalizeRegistrationPhone(phone);
                     const normalizedReferralCode = referralCode.trim().toUpperCase();
 
+                    if (!termsAccepted) {
+                      throw new Error('Please accept the Terms of Service and Privacy Policy to continue.');
+                    }
+
                     if (!isEmailVerified) {
                       throw new Error('Please verify your email with OTP before creating the account.');
                     }
@@ -341,7 +342,7 @@ export default function Register({
                       body: JSON.stringify({
                         name: normalizedName,
                         email: normalizedEmail,
-                        phone: normalizedPhone,
+                        phone: normalizedPhone || undefined,
                         phoneVerificationId: emailVerificationId || undefined,
                         password,
                         deviceId: readOrCreateDeviceId(),
@@ -369,7 +370,7 @@ export default function Register({
                 }}
               >
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                  <label htmlFor="register-name" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                     Full Name
                   </label>
                   <div className="relative group">
@@ -377,6 +378,7 @@ export default function Register({
                       <User className="h-5 w-5" />
                     </div>
                     <input
+                      id="register-name"
                       type="text"
                       required
                       placeholder="Your name"
@@ -388,7 +390,7 @@ export default function Register({
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                  <label htmlFor="register-email" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                     Email Address
                   </label>
                   <div className="relative group">
@@ -396,6 +398,7 @@ export default function Register({
                       <Mail className="h-5 w-5" />
                     </div>
                     <input
+                      id="register-email"
                       type="email"
                       required
                       placeholder="name@example.com"
@@ -455,7 +458,7 @@ export default function Register({
                       </div>
                     </div>
 
-                    {emailOtpDevCode ? (
+                    {import.meta.env.DEV && emailOtpDevCode ? (
                       <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                         Dev OTP: <span className="font-semibold">{emailOtpDevCode}</span>
                       </p>
@@ -470,7 +473,7 @@ export default function Register({
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                  <label htmlFor="register-phone" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                     Phone (optional)
                   </label>
                   <div className="relative group">
@@ -478,6 +481,7 @@ export default function Register({
                       <Phone className="h-5 w-5" />
                     </div>
                     <input
+                      id="register-phone"
                       type="tel"
                       placeholder="Your mobile number"
                       value={phone}
@@ -509,7 +513,7 @@ export default function Register({
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                  <label htmlFor="register-password" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                     Password
                   </label>
                   <div className="relative group">
@@ -517,6 +521,7 @@ export default function Register({
                       <Lock className="h-5 w-5" />
                     </div>
                     <input
+                      id="register-password"
                       type={showPassword ? 'text' : 'password'}
                       required
                       minLength={8}
@@ -537,12 +542,29 @@ export default function Register({
                       )}
                     </button>
                   </div>
+                  <p className="text-[11px] text-brand-gray3">
+                    Must be at least 8 characters. Use a mix of letters, numbers, and symbols for better security.
+                  </p>
                 </div>
 
-                <label className="flex items-center gap-2 text-xs text-brand-gray3">
-                  <input type="checkbox" className="accent-brand-primary" /> I agree
-                  to the Terms and Privacy Policy
+                <label className="flex items-start gap-2 text-xs text-brand-gray3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(event) => setTermsAccepted(event.target.checked)}
+                    className="accent-brand-primary mt-0.5 h-4 w-4 shrink-0"
+                    required
+                  />
+                  <span>
+                    I agree to the{' '}
+                    <span className="font-semibold text-brand-primary">Terms of Service</span>
+                    {' '}and{' '}
+                    <span className="font-semibold text-brand-primary">Privacy Policy</span>
+                  </span>
                 </label>
+                {!termsAccepted && error?.includes('Terms') ? (
+                  <p className="text-[11px] text-red-500">You must accept the terms to create an account.</p>
+                ) : null}
 
                 <button
                   disabled={isSubmitting}

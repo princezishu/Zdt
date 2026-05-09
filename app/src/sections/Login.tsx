@@ -898,7 +898,7 @@ export default function Login({
                         className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
                       />
                     </div>
-                    {twoFactorDevOtp ? (
+                    {import.meta.env.DEV && twoFactorDevOtp ? (
                       <p className="text-[11px] text-brand-gray3">
                         Dev OTP: <span className="font-semibold text-brand-black">{twoFactorDevOtp}</span>
                       </p>
@@ -925,7 +925,7 @@ export default function Login({
                 ) : (
                   <>
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                      <label htmlFor="login-email" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                         Email Address
                       </label>
                       <div className="relative group">
@@ -933,6 +933,7 @@ export default function Login({
                           <Mail className="h-5 w-5" />
                         </div>
                         <input
+                          id="login-email"
                           type="email"
                           placeholder="name@example.com"
                           value={email}
@@ -953,7 +954,7 @@ export default function Login({
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                        <label htmlFor="login-password" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
                           Password
                         </label>
                         {useLegacyLinkFlow ? (
@@ -975,6 +976,7 @@ export default function Login({
                           <Lock className="h-5 w-5" />
                         </div>
                         <input
+                          id="login-password"
                           type={showPassword ? 'text' : 'password'}
                           placeholder="********"
                           value={password}

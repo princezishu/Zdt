@@ -101,6 +101,7 @@ interface HeaderProps {
   onProfile: () => void;
   onPricing: () => void;
   onLogout?: () => void;
+  onHelpCenter?: () => void;
   isAuthenticated: boolean;
   userRole: HeaderUserRole | null;
   isMainAdmin: boolean;
@@ -146,6 +147,7 @@ export default function Header({
   onProfile,
   onPricing,
   onLogout,
+  onHelpCenter,
   isAuthenticated,
   userRole,
   isMainAdmin,
@@ -693,7 +695,7 @@ export default function Header({
                       <p className={mobileSheetSectionTitleClass}>More</p>
                       <button
                         type="button"
-                        onClick={closeMobileBottomSheetAnd(onMessages)}
+                        onClick={closeMobileBottomSheetAnd(onHelpCenter || onMessages)}
                         className={mobileSheetItemBaseClass}
                       >
                         <HelpCircle className="h-4 w-4 shrink-0 text-brand-gray3" />

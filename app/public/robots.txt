@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://zdtrealty.com/sitemap.xml
+Sitemap: https://zdtrealty.vercel.app/sitemap.xml
