@@ -23,7 +23,7 @@ const siteUrl = (
   normalizeUrlCandidate(process.env.VITE_SITE_URL) ||
   normalizeUrlCandidate(process.env.VERCEL_PROJECT_PRODUCTION_URL, { assumeHttps: true }) ||
   normalizeUrlCandidate(process.env.VERCEL_URL, { assumeHttps: true }) ||
-  'http://localhost:5173'
+  'https://zdtrealty.vercel.app'
 ).replace(/\/$/, '');
 const outputPath = path.resolve(process.cwd(), 'public', 'sitemap.xml');
 
@@ -55,6 +55,10 @@ const staticPaths = [
   '/security',
   '/career',
   '/e-auction',
+  '/emi-calculator',
+  '/pricing',
+  '/sell-property',
+  '/insights-news',
 ];
 
 function mapPriority(pathname) {
