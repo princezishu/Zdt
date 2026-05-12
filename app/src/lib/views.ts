@@ -101,6 +101,7 @@ export const APP_VIEWS = [
   'pricing',
   'collaborations',
   'emi-calculator',
+  'dalal-coin',
   'not-found',
 ] as const;
 

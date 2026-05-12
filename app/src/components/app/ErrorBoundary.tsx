@@ -89,7 +89,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             >
               Reload Page
             </button>
-            {process.env.NODE_ENV !== 'production' && this.state.error && (
+            {import.meta.env.MODE !== 'production' && this.state.error && (
               <pre
                 style={{
                   marginTop: '1.5rem',
