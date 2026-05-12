@@ -520,7 +520,7 @@ export default function PortalHomePage(props: PortalHomePageProps) {
           <div className="relative">
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_24px_54px_-34px_rgba(15,23,42,0.45)]">
               <div className="relative aspect-[4/3]">
-                <img src={hero.image} alt={hero.projectName} className="h-full w-full object-cover" />
+                <img src={hero.image} alt={hero.projectName} width={800} height={600} fetchPriority="high" decoding="async" className="h-full w-full object-cover" />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/86 via-slate-950/45 to-transparent p-5 text-white sm:p-6">
                   <p className="text-sm font-semibold text-amber-200">{hero.projectName}</p>
                   <h2 className="mt-2 max-w-lg text-2xl font-semibold leading-tight">{hero.headline}</h2>
