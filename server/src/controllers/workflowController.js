@@ -65,17 +65,39 @@ const requestBodySchema = z.object({
 });
 
 const publicPhoneOtpRequestSchema = z.object({
-  phone: z.string().trim().min(8).max(32),
+  phone: z.string().trim().max(32).optional().or(z.literal('')),
+  email: z.string().trim().email().max(190).optional().or(z.literal('')),
   purpose: z
     .enum(['buy', 'sell', 'rent', 'schedule_visit', 'fraud_report', 'workflow'])
     .optional()
     .default('workflow'),
+}).superRefine((payload, ctx) => {
+  if (payload.phone?.trim() || payload.email?.trim()) {
+    return;
+  }
+
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['phone'],
+    message: 'Phone number or email address is required.',
+  });
 });
 
 const publicPhoneOtpVerifySchema = z.object({
-  phone: z.string().trim().min(8).max(32),
+  phone: z.string().trim().max(32).optional().or(z.literal('')),
+  email: z.string().trim().email().max(190).optional().or(z.literal('')),
   verificationToken: z.string().trim().min(24).max(120),
   otp: z.string().trim().regex(/^\d{6}$/),
+}).superRefine((payload, ctx) => {
+  if (payload.phone?.trim() || payload.email?.trim()) {
+    return;
+  }
+
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['phone'],
+    message: 'Phone number or email address is required.',
+  });
 });
 
 const scheduleVisitSchema = z.object({
@@ -356,6 +378,46 @@ function normalizePhone(phone) {
   return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
 }
 
+function normalizePublicOtpEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  return normalized || null;
+}
+
+function buildEmailOtpStorageKey(email) {
+  const digest = crypto.createHash('sha256').update(email).digest('hex').slice(0, 24);
+  return `email:${digest}`;
+}
+
+function resolvePublicOtpTarget(payload) {
+  const normalizedEmail = normalizePublicOtpEmail(payload.email);
+  if (normalizedEmail) {
+    return {
+      channel: 'email',
+      email: normalizedEmail,
+      lookupValue: buildEmailOtpStorageKey(normalizedEmail),
+      logMetadata: {
+        channel: 'email',
+        email: normalizedEmail,
+      },
+    };
+  }
+
+  const normalizedPhone = normalizePhone(payload.phone || '');
+  if (!normalizedPhone) {
+    return null;
+  }
+
+  return {
+    channel: 'sms',
+    phone: normalizedPhone,
+    lookupValue: normalizedPhone,
+    logMetadata: {
+      channel: 'sms',
+      phone: normalizedPhone,
+    },
+  };
+}
+
 function normalizeIpAddress(rawValue) {
   if (!rawValue) return '';
   return String(rawValue).split(',')[0].trim().slice(0, 64);
@@ -517,11 +579,15 @@ const phoneOtpRequestLimiter = createRateLimiter({
   message: 'Too many OTP requests. Please wait and try again.',
   keyGenerator: (req) => {
     const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
-    const phone =
+    const rawPhone =
       req.body && typeof req.body === 'object' && typeof req.body.phone === 'string'
         ? normalizePhone(req.body.phone) || req.body.phone.trim()
         : '';
-    return `workflow:otp:request:${ip}:${phone || '-'}`;
+    const rawEmail =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? normalizePublicOtpEmail(req.body.email) || req.body.email.trim()
+        : '';
+    return `workflow:otp:request:${ip}:${rawEmail || rawPhone || '-'}`;
   },
 });
 
@@ -531,11 +597,15 @@ const phoneOtpVerifyLimiter = createRateLimiter({
   message: 'Too many OTP verification attempts. Please request a new OTP later.',
   keyGenerator: (req) => {
     const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
-    const phone =
+    const rawPhone =
       req.body && typeof req.body === 'object' && typeof req.body.phone === 'string'
         ? normalizePhone(req.body.phone) || req.body.phone.trim()
         : '';
-    return `workflow:otp:verify:${ip}:${phone || '-'}`;
+    const rawEmail =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? normalizePublicOtpEmail(req.body.email) || req.body.email.trim()
+        : '';
+    return `workflow:otp:verify:${ip}:${rawEmail || rawPhone || '-'}`;
   },
 });
 
@@ -1970,8 +2040,8 @@ router.post('/public/feature-usage', featureUsageLimiter, async (req, res, next)
 router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res, next) => {
   try {
     const payload = publicPhoneOtpRequestSchema.parse(req.body);
-    const normalizedPhone = normalizePhone(payload.phone);
-    if (!normalizedPhone) {
+    const otpTarget = resolvePublicOtpTarget(payload);
+    if (!otpTarget) {
       return res.status(400).json({ error: 'Invalid phone number format' });
     }
 
@@ -1984,7 +2054,7 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
         ORDER BY created_at DESC
         LIMIT 1
       `,
-      [normalizedPhone, payload.purpose]
+      [otpTarget.lookupValue, payload.purpose]
     );
 
     if (recentRows.rowCount > 0) {
@@ -2017,7 +2087,7 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
           NOW() + ($5::text || ' minutes')::interval
         )
       `,
-      [normalizedPhone, verificationToken, hashOtp(otp), payload.purpose, PHONE_OTP_EXPIRES_MINUTES]
+      [otpTarget.lookupValue, verificationToken, hashOtp(otp), payload.purpose, PHONE_OTP_EXPIRES_MINUTES]
     );
 
     await writeActivityLog({
@@ -2028,25 +2098,24 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
       entityId: null,
       requestReference: null,
       metadata: {
-        phone: normalizedPhone,
         purpose: payload.purpose,
+        ...otpTarget.logMetadata,
       },
     });
 
-    const emailForOtp = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     let delivered = false;
     try {
-      if (emailForOtp) {
+      if (otpTarget.channel === 'email') {
         delivered = await sendOtp({
           channel: 'email',
-          email: emailForOtp,
+          email: otpTarget.email,
           otp,
           expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
         });
       } else {
         delivered = await sendOtp({
           channel: 'sms',
-          phone: normalizedPhone,
+          phone: otpTarget.phone,
           otp,
           expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
         });
@@ -2066,9 +2135,11 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
     const responsePayload = {
       message: delivered
         ? 'OTP sent successfully'
-        : 'SMS delivery is not configured in this environment. Use the dev OTP for testing.',
+        : `${otpTarget.channel === 'email' ? 'Email' : 'SMS'} delivery is not configured in this environment. Use the dev OTP for testing.`,
       verificationToken,
       expiresInMinutes: PHONE_OTP_EXPIRES_MINUTES,
+      channel: otpTarget.channel,
+      delivered,
     };
 
     if (process.env.NODE_ENV !== 'production') {
@@ -2084,8 +2155,8 @@ router.post('/public/phone-otp/request', phoneOtpRequestLimiter, async (req, res
 router.post('/public/phone-otp/verify', phoneOtpVerifyLimiter, async (req, res, next) => {
   try {
     const payload = publicPhoneOtpVerifySchema.parse(req.body);
-    const normalizedPhone = normalizePhone(payload.phone);
-    if (!normalizedPhone) {
+    const otpTarget = resolvePublicOtpTarget(payload);
+    if (!otpTarget) {
       return res.status(400).json({ error: 'Invalid phone number format' });
     }
 
@@ -2097,7 +2168,7 @@ router.post('/public/phone-otp/verify', phoneOtpVerifyLimiter, async (req, res, 
           AND verification_token = $2
         LIMIT 1
       `,
-      [normalizedPhone, payload.verificationToken]
+      [otpTarget.lookupValue, payload.verificationToken]
     );
 
     if (otpRows.rowCount === 0) {
@@ -2117,7 +2188,7 @@ router.post('/public/phone-otp/verify', phoneOtpVerifyLimiter, async (req, res, 
 
     if (otpRow.verified_at && otpRow.verification_id) {
       return res.json({
-        message: 'Phone already verified',
+        message: otpTarget.channel === 'email' ? 'Email already verified' : 'Phone already verified',
         verificationId: otpRow.verification_id,
       });
     }
@@ -2159,13 +2230,11 @@ router.post('/public/phone-otp/verify', phoneOtpVerifyLimiter, async (req, res, 
       entityType: 'phone_verification',
       entityId: Number(otpRow.id),
       requestReference: null,
-      metadata: {
-        phone: normalizedPhone,
-      },
+      metadata: otpTarget.logMetadata,
     });
 
     return res.json({
-      message: 'Phone verified successfully',
+      message: otpTarget.channel === 'email' ? 'Email verified successfully' : 'Phone verified successfully',
       verificationId,
     });
   } catch (error) {

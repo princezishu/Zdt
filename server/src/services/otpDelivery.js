@@ -168,7 +168,7 @@ async function sendOtpEmail({ email, otp, expiresInMinutes }) {
   const message = buildOtpMessage(otp, expiresInMinutes);
   return sendEmailMessage({
     to: email,
-    subject: `${APP_NAME} password reset OTP`,
+    subject: `${APP_NAME} OTP`,
     text: message.text,
     html: message.html,
     deliveryLabel: 'Email OTP',

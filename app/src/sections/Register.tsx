@@ -168,21 +168,25 @@ export default function Register({
       // We use the same phone-otp endpoint but pass email so server delivers via Gmail
       const normalizedPhone = normalizeRegistrationPhone(phone) || '';
       const response = await apiRequest<{
+        message?: string;
         verificationToken: string;
         expiresInMinutes: number;
         devOtp?: string;
       }>('/workflow/public/phone-otp/request', {
         method: 'POST',
         body: JSON.stringify({
-          phone: normalizedPhone,
           email: targetEmail,
+          phone: normalizedPhone || undefined,
           purpose: 'workflow',
         }),
       });
 
       setEmailVerificationToken(response.verificationToken);
       setEmailOtp('');
-      setEmailOtpStatus(`OTP sent to ${targetEmail}. It expires in ${response.expiresInMinutes} minutes.`);
+      setEmailOtpStatus(
+        response.message ||
+          `OTP sent to ${targetEmail}. It expires in ${response.expiresInMinutes} minutes.`
+      );
       setEmailOtpDevCode(response.devOtp || '');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to send OTP';
@@ -207,13 +211,12 @@ export default function Register({
     setEmailOtpError('');
     setEmailOtpStatus('');
     try {
-      const normalizedPhone = normalizeRegistrationPhone(phone) || '+0000000000';
       const response = await apiRequest<{ verificationId: string }>(
         '/workflow/public/phone-otp/verify',
         {
           method: 'POST',
           body: JSON.stringify({
-            phone: normalizedPhone,
+            email: email.trim().toLowerCase(),
             verificationToken: emailVerificationToken,
             otp: emailOtp,
           }),
@@ -458,7 +461,7 @@ export default function Register({
                       </div>
                     </div>
 
-                    {import.meta.env.DEV && emailOtpDevCode ? (
+                    {emailOtpDevCode ? (
                       <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                         Dev OTP: <span className="font-semibold">{emailOtpDevCode}</span>
                       </p>
