@@ -997,6 +997,34 @@ const adminLoginTwoFactorResendLimiter = createRateLimiter({
   },
 });
 
+const loginOtpRequestLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  message: 'Too many OTP login requests. Please wait and try again.',
+  keyGenerator: (req) => {
+    const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+    const email =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+    return `auth:login-otp-request:${ip}:${email || '-'}`;
+  },
+});
+
+const loginOtpVerifyLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 25,
+  message: 'Too many OTP verification attempts. Please wait and try again.',
+  keyGenerator: (req) => {
+    const ip = normalizeIpAddress(req.ip || req.socket?.remoteAddress);
+    const email =
+      req.body && typeof req.body === 'object' && typeof req.body.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : '';
+    return `auth:login-otp-verify:${ip}:${email || '-'}`;
+  },
+});
+
 async function registerOrRotateSession({
   userId,
   deviceId,
@@ -2515,6 +2543,240 @@ router.post('/login', loginRateLimiter, async (req, res, next) => {
       ipAddress: requestIpAddress,
       userAgent: requestUserAgent,
       loginMethod: 'password',
+      risk: suspiciousRisk,
+    });
+
+    setAuthCookie(res, token);
+    return res.json({ token, user });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ── Email OTP Login: Request ────────────────────────────────────
+router.post('/login-otp/request', loginOtpRequestLimiter, async (req, res, next) => {
+  try {
+    const payload = z
+      .object({
+        email: z.string().trim().toLowerCase().email(),
+      })
+      .parse(req.body || {});
+
+    const email = payload.email;
+
+    const rows = await pool.query(
+      `
+        SELECT
+          id,
+          email,
+          role,
+          is_active,
+          deactivated_until,
+          managed_auth_provider,
+          managed_auth_only
+        FROM users
+        WHERE email = $1
+        LIMIT 1
+      `,
+      [email]
+    );
+
+    if (rows.rowCount === 0) {
+      return res.status(404).json({ error: 'No account found with this email. Please register first.' });
+    }
+
+    const userRow = rows.rows[0];
+
+    // Check deactivation
+    const now = Date.now();
+    const deactivatedUntil = userRow.deactivated_until
+      ? new Date(userRow.deactivated_until).getTime()
+      : null;
+
+    if (deactivatedUntil && deactivatedUntil > now) {
+      return res.status(403).json({
+        error: `Your account is temporarily deactivated until ${new Date(deactivatedUntil).toLocaleString('en-IN')}.`,
+      });
+    }
+
+    if (!userRow.is_active && !(deactivatedUntil && deactivatedUntil <= now)) {
+      return res.status(403).json({ error: 'Your account is deactivated.' });
+    }
+
+    // Create OTP using the email as the phone key (reuses phone_verification_otps table)
+    const otpResult = await requestPhoneOtp(pool, {
+      normalizedPhone: `email:${email}`,
+      purpose: 'login_otp',
+      expiresMinutes: OTP_EXPIRES_MINUTES,
+      resendCooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+    });
+
+    let delivered = false;
+    try {
+      delivered = await sendOtp({
+        channel: 'email',
+        email,
+        otp: otpResult.otp,
+        expiresInMinutes: OTP_EXPIRES_MINUTES,
+      });
+    } catch (deliveryError) {
+      return res.status(503).json({
+        error:
+          deliveryError instanceof Error
+            ? deliveryError.message
+            : 'OTP delivery failed. Please try again.',
+      });
+    }
+
+    await writeAuthActivity({
+      actorUserId: userRow.id,
+      actorRole: userRow.role,
+      actionKey: 'login_otp_requested',
+      metadata: { email },
+      ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
+    });
+
+    const responsePayload = {
+      message: delivered
+        ? `OTP sent to ${email}. It expires in ${OTP_EXPIRES_MINUTES} minutes.`
+        : 'Email delivery is not configured. Use the dev OTP for testing.',
+      verificationToken: otpResult.verificationToken,
+      expiresInMinutes: OTP_EXPIRES_MINUTES,
+    };
+
+    if (process.env.NODE_ENV !== 'production') {
+      responsePayload.devOtp = otpResult.otp;
+    }
+
+    return res.status(201).json(responsePayload);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ── Email OTP Login: Verify ─────────────────────────────────────
+router.post('/login-otp/verify', loginOtpVerifyLimiter, async (req, res, next) => {
+  try {
+    const payload = z
+      .object({
+        email: z.string().trim().toLowerCase().email(),
+        verificationToken: z.string().trim().min(1),
+        otp: z.string().trim().length(6),
+      })
+      .parse(req.body || {});
+
+    const email = payload.email;
+    const deviceId = getClientDeviceId(req, payload);
+
+    // Verify OTP
+    await verifyPhoneOtp(pool, {
+      normalizedPhone: `email:${email}`,
+      verificationToken: payload.verificationToken,
+      otp: payload.otp,
+      maxAttempts: MAX_OTP_ATTEMPTS,
+    });
+
+    // Fetch full user row for session creation
+    const rows = await pool.query(
+      `
+        SELECT
+          u.id,
+          u.name,
+          u.email,
+          u.role,
+          u.company_id,
+          u.company_role,
+          u.account_type,
+          u.subscription_tier,
+          u.is_main_admin,
+          u.is_active,
+          u.deactivated_until,
+          u.managed_auth_provider,
+          u.managed_auth_only
+        FROM users u
+        WHERE u.email = $1
+        LIMIT 1
+      `,
+      [email]
+    );
+
+    if (rows.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const userRow = rows.rows[0];
+
+    // Check deactivation again (in case status changed between request and verify)
+    const now = Date.now();
+    const deactivatedUntil = userRow.deactivated_until
+      ? new Date(userRow.deactivated_until).getTime()
+      : null;
+
+    if (deactivatedUntil && deactivatedUntil > now) {
+      return res.status(403).json({
+        error: `Your account is temporarily deactivated until ${new Date(deactivatedUntil).toLocaleString('en-IN')}.`,
+      });
+    }
+
+    if (!userRow.is_active) {
+      if (deactivatedUntil && deactivatedUntil <= now) {
+        try {
+          await pool.query(
+            `UPDATE users SET is_active = TRUE, deactivated_until = NULL WHERE id = $1`,
+            [userRow.id]
+          );
+          userRow.is_active = true;
+        } catch (reactivateError) {
+          return res.status(403).json({
+            error: 'Your account deactivation expired, but seats are full. Contact the Main Admin.',
+          });
+        }
+      } else {
+        return res.status(403).json({ error: 'Your account is deactivated.' });
+      }
+    }
+
+    const requestIpAddress = normalizeIpAddress(
+      req.headers['x-forwarded-for'] || req.socket?.remoteAddress
+    );
+    const requestUserAgent = req.get('user-agent') || '';
+
+    const user = buildAuthUserPayload(userRow);
+    const suspiciousRisk = await assessSuspiciousLoginRisk({
+      userId: user.id,
+      deviceId,
+      ipAddress: requestIpAddress,
+    });
+
+    const token = signToken(user);
+    const sessionResult = await registerOrRotateSession({
+      userId: user.id,
+      deviceId,
+      token,
+      userAgent: requestUserAgent,
+      ipAddress: requestIpAddress,
+    });
+
+    if (!sessionResult.allowed) {
+      return res.status(403).json({
+        error:
+          'Device login limit reached (maximum 2 devices). Log out from an old device and try again.',
+      });
+    }
+
+    await writeAuthActivity({
+      actorUserId: user.id,
+      actorRole: user.role,
+      actionKey: 'account_logged_in',
+      metadata: { deviceId, loginMethod: 'email_otp' },
+      ipAddress: normalizeIpAddress(req.ip || req.socket?.remoteAddress),
+    });
+    await maybeSendSuspiciousLoginAlert({
+      user,
+      deviceId,
+      ipAddress: requestIpAddress,
+      userAgent: requestUserAgent,
+      loginMethod: 'email_otp',
       risk: suspiciousRisk,
     });
 

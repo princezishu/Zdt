@@ -130,14 +130,25 @@ export default function Login({
   const [showCreateManagedAccountAction, setShowCreateManagedAccountAction] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ── Email OTP login state ──
+  const [usePasswordFallback, setUsePasswordFallback] = useState(false);
+  const [loginOtpToken, setLoginOtpToken] = useState('');
+  const [loginOtp, setLoginOtp] = useState('');
+  const [loginOtpDevCode, setLoginOtpDevCode] = useState('');
+  const [loginOtpMessage, setLoginOtpMessage] = useState('');
+  const [isRequestingLoginOtp, setIsRequestingLoginOtp] = useState(false);
+  const isLoginOtpStep = loginOtpToken.trim().length > 0;
+
   const isTwoFactorStep = twoFactorChallengeToken.trim().length > 0;
   const isManagedPublicLogin = mode === 'user' && isSupabaseConfigured();
   const normalizedEmail = normalizeEmail(email);
   const showManagedSignInGuide =
     mode === 'user' && isManagedPublicLogin && !useLegacyLinkFlow && !isTwoFactorStep;
   const normalizedError = error.trim().toLowerCase();
+  const isEmailOtpMode = mode === 'user' && !usePasswordFallback && !useLegacyLinkFlow && !requiresCompanyCode && !requiresPromotionProof;
   const isLegacyLoginMode =
-    mode !== 'user' || requiresCompanyCode || requiresPromotionProof || useLegacyLinkFlow;
+    mode !== 'user' || requiresCompanyCode || requiresPromotionProof || useLegacyLinkFlow || usePasswordFallback;
   const accessLabel =
     mode === 'admin'
       ? 'Admin Login'
@@ -160,7 +171,9 @@ export default function Login({
         ? `Sign in once with your old password to connect this account to ${buildManagedAuthLabel(
             managedLinkProvider
           )}.`
-        : 'Log in to access your saved searches and alerts.'
+        : isEmailOtpMode
+          ? 'We\'ll send a one-time code to your email.'
+          : 'Log in with your email and password.'
       : 'Log in with your approved internal credentials.';
   const emailFieldHasError =
     Boolean(normalizedError) &&
@@ -507,6 +520,71 @@ export default function Login({
     setStatusMessage('');
     setError('');
     onSwitchToRegister();
+  };
+
+  const handleRequestLoginOtp = async () => {
+    if (!isValidEmail(email)) {
+      setError('Enter a valid email address first.');
+      return;
+    }
+    setIsRequestingLoginOtp(true);
+    setError('');
+    setLoginOtpMessage('');
+    setLoginOtpDevCode('');
+    try {
+      const response = await apiRequest<{
+        verificationToken: string;
+        expiresInMinutes: number;
+        devOtp?: string;
+        message?: string;
+      }>('/auth/login-otp/request', {
+        method: 'POST',
+        body: JSON.stringify({ email: normalizeEmail(email) }),
+      });
+      setLoginOtpToken(response.verificationToken);
+      setLoginOtp('');
+      setLoginOtpMessage(response.message || `OTP sent to ${normalizeEmail(email)}`);
+      setLoginOtpDevCode(response.devOtp || '');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to send OTP';
+      setError(message);
+    } finally {
+      setIsRequestingLoginOtp(false);
+    }
+  };
+
+  const handleVerifyLoginOtp = async () => {
+    if (!/^\d{6}$/.test(loginOtp)) {
+      setError('Enter the 6-digit verification code.');
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const response = await apiRequest<{ token: string; user: unknown }>(
+        '/auth/login-otp/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: normalizeEmail(email),
+            verificationToken: loginOtpToken,
+            otp: loginOtp,
+          }),
+        }
+      );
+      const authToken = String(response.token || '').trim();
+      const authUser = parseApiUser(response.user);
+      if (!authToken || !authUser) {
+        throw new Error('Login succeeded but session data is missing.');
+      }
+      saveSession(authToken, authUser);
+      onLoginSuccess({ token: authToken, user: authUser });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to verify OTP';
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const clearTwoFactorState = () => {
@@ -936,6 +1014,141 @@ export default function Login({
                       </button>
                     </div>
                   </div>
+                ) : isEmailOtpMode ? (
+                  <>
+                    <div className="space-y-2">
+                      <label htmlFor="login-email" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
+                        Email Address
+                      </label>
+                      <div className="relative group">
+                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-brand-gray3 group-focus-within:text-brand-primary">
+                          <Mail className="h-5 w-5" />
+                        </div>
+                        <input
+                          id="login-email"
+                          type="email"
+                          placeholder="name@example.com"
+                          value={email}
+                          autoComplete="email"
+                          onChange={(event) => {
+                            clearInlineFeedback();
+                            setEmail(event.target.value);
+                            if (loginOtpToken) {
+                              setLoginOtpToken('');
+                              setLoginOtp('');
+                              setLoginOtpDevCode('');
+                              setLoginOtpMessage('');
+                            }
+                          }}
+                          disabled={isLoginOtpStep}
+                          aria-invalid={emailFieldHasError}
+                          className={`h-12 w-full rounded-xl bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none ${
+                            emailFieldHasError
+                              ? 'border border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-200'
+                              : 'border border-brand-gray2 focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30'
+                          } disabled:opacity-60`}
+                        />
+                      </div>
+                    </div>
+
+                    {!isLoginOtpStep ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleRequestLoginOtp()}
+                        disabled={isRequestingLoginOtp || !email.trim()}
+                        className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
+                      >
+                        {isRequestingLoginOtp ? 'Sending OTP...' : 'Send Login OTP'}{' '}
+                        <ArrowRight className="inline h-4 w-4 ml-1" />
+                      </button>
+                    ) : (
+                      <div className="rounded-xl border border-brand-secondary/30 bg-brand-secondary/10 p-4 space-y-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-gray3">
+                          Email Verification
+                        </p>
+                        <p className="text-xs text-brand-gray3">
+                          {loginOtpMessage || 'Enter the 6-digit code sent to your email.'}
+                        </p>
+                        <div className="space-y-2">
+                          <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
+                            Verification Code
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="\d{6}"
+                            maxLength={6}
+                            placeholder="123456"
+                            value={loginOtp}
+                            onChange={(event) =>
+                              setLoginOtp(event.target.value.replace(/\D/g, '').slice(0, 6))
+                            }
+                            className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
+                          />
+                        </div>
+                        {import.meta.env.DEV && loginOtpDevCode ? (
+                          <p className="text-[11px] text-brand-gray3">
+                            Dev OTP: <span className="font-semibold text-brand-black">{loginOtpDevCode}</span>
+                          </p>
+                        ) : null}
+                        <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => void handleRequestLoginOtp()}
+                            disabled={isRequestingLoginOtp || isSubmitting}
+                            className="text-xs font-semibold text-brand-primary hover:text-brand-secondary transition disabled:opacity-70 disabled:cursor-not-allowed"
+                          >
+                            {isRequestingLoginOtp ? 'Resending...' : 'Resend code'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLoginOtpToken('');
+                              setLoginOtp('');
+                              setLoginOtpDevCode('');
+                              setLoginOtpMessage('');
+                              setError('');
+                            }}
+                            disabled={isSubmitting}
+                            className="text-xs font-semibold text-brand-gray3 hover:text-brand-primary transition disabled:opacity-70 disabled:cursor-not-allowed"
+                          >
+                            Change email
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleVerifyLoginOtp()}
+                          disabled={isSubmitting || loginOtp.length !== 6}
+                          className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
+                        >
+                          {isSubmitting ? 'Verifying...' : 'Verify & Sign In'}{' '}
+                          <ArrowRight className="inline h-4 w-4 ml-1" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUsePasswordFallback(true);
+                          setLoginOtpToken('');
+                          setLoginOtp('');
+                          setLoginOtpDevCode('');
+                          setLoginOtpMessage('');
+                          setError('');
+                        }}
+                        className="text-xs font-semibold text-brand-primary hover:text-brand-secondary transition"
+                      >
+                        Use password instead
+                      </button>
+                    </div>
+
+                    <div className="rounded-xl border border-brand-gray2/70 bg-slate-50/80 px-4 py-3 text-xs text-brand-gray3">
+                      A one-time code will be sent to your registered email for secure, passwordless sign-in.
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div className="space-y-2">
@@ -1111,6 +1324,21 @@ export default function Login({
                       </div>
                     ) : null}
 
+                    {mode === 'user' && !useLegacyLinkFlow ? (
+                      <div className="text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUsePasswordFallback(false);
+                            setError('');
+                          }}
+                          className="text-xs font-semibold text-brand-primary hover:text-brand-secondary transition"
+                        >
+                          Use email OTP instead
+                        </button>
+                      </div>
+                    ) : null}
+
                     <div className="rounded-xl border border-brand-gray2/70 bg-slate-50/80 px-4 py-3 text-xs text-brand-gray3">
                       Sessions stay protected with secure cookies, device checks, and managed sign-in
                       support where enabled.
@@ -1118,25 +1346,27 @@ export default function Login({
                   </>
                 )}
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting
-                    ? isTwoFactorStep
-                      ? 'Verifying...'
-                      : useLegacyLinkFlow
-                        ? 'Linking...'
-                        : 'Signing In...'
-                    : isTwoFactorStep
-                      ? 'Verify & Sign In'
-                      : useLegacyLinkFlow
-                        ? 'Link & Sign In'
-                        : 'Sign In'}{' '}
-                  <ArrowRight className="inline h-4 w-4 ml-1" />
-                </button>
-                {mode === 'user' && isManagedPublicLogin && !useLegacyLinkFlow && !isTwoFactorStep ? (
+                {!isEmailOtpMode ? (
+                  <>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="w-full rounded-xl bg-brand-primary py-3.5 text-sm font-semibold text-white shadow-glow transition-transform duration-200 hover:scale-[1.01] hover:bg-brand-primary-dark disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {isSubmitting
+                        ? isTwoFactorStep
+                          ? 'Verifying...'
+                          : useLegacyLinkFlow
+                            ? 'Linking...'
+                            : 'Signing In...'
+                        : isTwoFactorStep
+                          ? 'Verify & Sign In'
+                          : useLegacyLinkFlow
+                            ? 'Link & Sign In'
+                            : 'Sign In'}{' '}
+                      <ArrowRight className="inline h-4 w-4 ml-1" />
+                    </button>
+                    {mode === 'user' && isManagedPublicLogin && !useLegacyLinkFlow && !isTwoFactorStep ? (
                   <button
                     type="button"
                     onClick={() => void handleSendSignInLink()}
@@ -1145,6 +1375,8 @@ export default function Login({
                   >
                     Email A Sign-In Link
                   </button>
+                ) : null}
+                  </>
                 ) : null}
                 {error ? (
                   <p

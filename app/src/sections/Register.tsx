@@ -3,7 +3,6 @@ import {
   Mail,
   Lock,
   User,
-  Phone,
   Eye,
   EyeOff,
   ArrowRight,
@@ -35,15 +34,7 @@ interface RegisterProps {
   onRegisterSuccess: (payload?: { token: string; user: AuthUser }) => void;
 }
 
-function normalizeRegistrationPhone(value: string) {
-  const trimmed = String(value || '').trim();
-  const hasLeadingPlus = trimmed.startsWith('+');
-  const digits = trimmed.replace(/\D/g, '').slice(0, 15);
-  if (!digits) {
-    return '';
-  }
-  return hasLeadingPlus ? `+${digits}` : digits;
-}
+
 
 const steps = [
   {
@@ -74,25 +65,12 @@ export default function Register({
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [emailVerificationToken, setEmailVerificationToken] = useState('');
-  const [emailVerificationId, setEmailVerificationId] = useState('');
-  const [emailVerifiedFor, setEmailVerifiedFor] = useState('');
-  const [emailOtp, setEmailOtp] = useState('');
-  const [emailOtpStatus, setEmailOtpStatus] = useState('');
-  const [emailOtpError, setEmailOtpError] = useState('');
-  const [emailOtpDevCode, setEmailOtpDevCode] = useState('');
-  const [isRequestingEmailOtp, setIsRequestingEmailOtp] = useState(false);
-  const [isVerifyingEmailOtp, setIsVerifyingEmailOtp] = useState(false);
   const [referralCode, setReferralCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isManagedRegister = isSupabaseConfigured();
-  const normalizedEmail = email.trim().toLowerCase();
-  const isEmailVerified =
-    Boolean(emailVerificationId) && normalizedEmail === emailVerifiedFor;
 
   useEffect(() => {
     const hintedEmail = readManagedSignupHint();
@@ -114,17 +92,7 @@ export default function Register({
     }
   }, []);
 
-  useEffect(() => {
-    if (!emailVerifiedFor || normalizedEmail === emailVerifiedFor) {
-      return;
-    }
 
-    setEmailVerificationToken('');
-    setEmailVerificationId('');
-    setEmailOtp('');
-    setEmailOtpDevCode('');
-    setEmailOtpStatus('Email changed. Please verify the new address.');
-  }, [normalizedEmail, emailVerifiedFor]);
 
   // redirectToManagedLinkFlow removed — registration now always goes
   // directly through the backend /auth/register endpoint.
@@ -152,89 +120,7 @@ export default function Register({
     }
   };
 
-  const handleRequestEmailOtp = async () => {
-    const targetEmail = email.trim().toLowerCase();
-    if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
-      setEmailOtpError('Enter a valid email address before requesting OTP.');
-      return;
-    }
 
-    setIsRequestingEmailOtp(true);
-    setEmailOtpError('');
-    setEmailOtpStatus('');
-    setEmailOtpDevCode('');
-    setEmailVerificationId('');
-    try {
-      // We use the same phone-otp endpoint but pass email so server delivers via Gmail
-      const normalizedPhone = normalizeRegistrationPhone(phone) || '';
-      const response = await apiRequest<{
-        message?: string;
-        verificationToken: string;
-        expiresInMinutes: number;
-        devOtp?: string;
-      }>('/workflow/public/phone-otp/request', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: targetEmail,
-          phone: normalizedPhone || undefined,
-          purpose: 'workflow',
-        }),
-      });
-
-      setEmailVerificationToken(response.verificationToken);
-      setEmailOtp('');
-      setEmailOtpStatus(
-        response.message ||
-          `OTP sent to ${targetEmail}. It expires in ${response.expiresInMinutes} minutes.`
-      );
-      setEmailOtpDevCode(response.devOtp || '');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to send OTP';
-      toast.error(message);
-      setEmailOtpError(message);
-    } finally {
-      setIsRequestingEmailOtp(false);
-    }
-  };
-
-  const handleVerifyEmailOtp = async () => {
-    if (!emailVerificationToken) {
-      setEmailOtpError('Request OTP first.');
-      return;
-    }
-    if (!/^\d{6}$/.test(emailOtp)) {
-      setEmailOtpError('Enter the 6-digit OTP.');
-      return;
-    }
-
-    setIsVerifyingEmailOtp(true);
-    setEmailOtpError('');
-    setEmailOtpStatus('');
-    try {
-      const response = await apiRequest<{ verificationId: string }>(
-        '/workflow/public/phone-otp/verify',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            email: email.trim().toLowerCase(),
-            verificationToken: emailVerificationToken,
-            otp: emailOtp,
-          }),
-        }
-      );
-
-      setEmailVerificationId(response.verificationId);
-      setEmailVerifiedFor(email.trim().toLowerCase());
-      setEmailOtpDevCode('');
-      setEmailOtpStatus('Email verified successfully.');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to verify OTP';
-      toast.error(message);
-      setEmailOtpError(message);
-    } finally {
-      setIsVerifyingEmailOtp(false);
-    }
-  };
 
   return (
     <div className="relative min-h-screen w-full bg-white text-brand-black overflow-hidden">
@@ -322,15 +208,10 @@ export default function Register({
                   try {
                     const normalizedName = name.trim();
                     const normalizedEmail = email.trim().toLowerCase();
-                    const normalizedPhone = normalizeRegistrationPhone(phone);
                     const normalizedReferralCode = referralCode.trim().toUpperCase();
 
                     if (!termsAccepted) {
                       throw new Error('Please accept the Terms of Service and Privacy Policy to continue.');
-                    }
-
-                    if (!isEmailVerified) {
-                      throw new Error('Please verify your email with OTP before creating the account.');
                     }
 
                     if (isManagedRegister) {
@@ -345,8 +226,6 @@ export default function Register({
                       body: JSON.stringify({
                         name: normalizedName,
                         email: normalizedEmail,
-                        phone: normalizedPhone || undefined,
-                        phoneVerificationId: emailVerificationId || undefined,
                         password,
                         deviceId: readOrCreateDeviceId(),
                         referralCode: normalizedReferralCode,
@@ -406,89 +285,7 @@ export default function Register({
                       required
                       placeholder="name@example.com"
                       value={email}
-                      onChange={(event) => {
-                        setEmail(event.target.value);
-                        setEmailOtpError('');
-                      }}
-                      className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
-                    />
-                  </div>
-                  <div className="rounded-xl border border-brand-gray2 bg-slate-50/80 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-gray3">
-                        Email OTP Verification
-                      </p>
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                          isEmailVerified
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-amber-50 text-amber-700'
-                        }`}
-                      >
-                        {isEmailVerified ? 'Verified' : 'Not verified'}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={6}
-                        placeholder="Enter 6-digit OTP"
-                        value={emailOtp}
-                        onChange={(event) =>
-                          setEmailOtp(event.target.value.replace(/\D/g, '').slice(0, 6))
-                        }
-                        className="h-11 w-full rounded-xl border border-brand-gray2 bg-white px-4 text-sm text-brand-black placeholder:text-brand-gray3/70 transition focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30"
-                      />
-                      <div className="grid grid-cols-2 gap-2 sm:flex">
-                        <button
-                          type="button"
-                          onClick={() => void handleRequestEmailOtp()}
-                          disabled={isRequestingEmailOtp || !email.trim()}
-                          className="h-11 rounded-xl border border-brand-primary/25 bg-white px-3 text-xs font-semibold text-brand-primary transition hover:border-brand-primary hover:text-brand-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isRequestingEmailOtp ? 'Sending...' : emailVerificationToken ? 'Resend' : 'Send OTP'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleVerifyEmailOtp()}
-                          disabled={isVerifyingEmailOtp || isEmailVerified || !emailVerificationToken}
-                          className="h-11 rounded-xl bg-brand-primary px-3 text-xs font-semibold text-white transition hover:bg-brand-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isEmailVerified ? 'Verified' : isVerifyingEmailOtp ? 'Checking...' : 'Verify'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {emailOtpDevCode ? (
-                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                        Dev OTP: <span className="font-semibold">{emailOtpDevCode}</span>
-                      </p>
-                    ) : null}
-                    {emailOtpStatus ? (
-                      <p className="mt-2 text-[11px] font-medium text-emerald-700">{emailOtpStatus}</p>
-                    ) : null}
-                    {emailOtpError ? (
-                      <p className="mt-2 text-[11px] font-medium text-red-600">{emailOtpError}</p>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label htmlFor="register-phone" className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gray3">
-                    Phone (optional)
-                  </label>
-                  <div className="relative group">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-brand-gray3 group-focus-within:text-brand-primary">
-                      <Phone className="h-5 w-5" />
-                    </div>
-                    <input
-                      id="register-phone"
-                      type="tel"
-                      placeholder="Your mobile number"
-                      value={phone}
-                      onChange={(event) => setPhone(event.target.value)}
+                      onChange={(event) => setEmail(event.target.value)}
                       className="h-12 w-full rounded-xl border border-brand-gray2 bg-white pl-11 pr-4 text-sm text-brand-black placeholder:text-brand-gray3/70 focus:outline-none focus:border-brand-secondary focus:ring-2 focus:ring-brand-secondary/30 transition"
                     />
                   </div>
