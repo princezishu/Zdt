@@ -1378,8 +1378,9 @@ export default function MessagesPage({
       auth: { token },
       withCredentials: true,
       reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 400,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 30000,
       transports: ['websocket', 'polling'],
     });
     socketRef.current = socket;
@@ -1638,7 +1639,7 @@ export default function MessagesPage({
       if (activeConversationId) {
         void loadMessages(activeConversationId);
       }
-    }, 20000);
+    }, 45000);
     return () => window.clearInterval(interval);
   }, [activeConversationId, loadConversations, loadMessages, token]);
 
