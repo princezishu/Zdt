@@ -353,6 +353,26 @@ export function parsePathToRoute(pathname: string): AppRouteState {
   if (normalized === '/pricing') return withRouteState('pricing');
   if (normalized === '/collaborations') return withRouteState('collaborations');
   if (normalized === '/emi-calculator') return withRouteState('emi-calculator');
+  if (normalized === '/property-valuation') return withRouteState('property-valuation');
+  if (normalized === '/visit-scheduler') return withRouteState('visit-scheduler');
+  if (normalized === '/neighborhood-score') return withRouteState('neighborhood-score');
+  if (normalized === '/document-vault') return withRouteState('document-vault');
+  if (normalized === '/activity-feed') return withRouteState('activity-feed');
+  if (normalized === '/tenant-screening') return withRouteState('tenant-screening');
+  if (normalized === '/maintenance') return withRouteState('maintenance');
+  if (normalized === '/virtual-tour') return withRouteState('virtual-tour');
+  if (normalized === '/top-developers') return withRouteState('top-developers');
+  if (normalized === '/dalal-coin') return withRouteState('dalal-coin');
+
+  const developerProfileMatch = /^\/developer-profile\/([^/]+)$/.exec(normalized);
+  if (developerProfileMatch) {
+    return withRouteState('developer-profile', {
+      propertyReference: decodeRouteSegment(developerProfileMatch[1]).trim() || null,
+    });
+  }
+  if (normalized === '/developer-profile') return withRouteState('developer-profile');
+
+  if (normalized === '/' || normalized === '/home') return withRouteState('home');
 
   return withRouteState('not-found');
 }
@@ -500,6 +520,20 @@ export function buildHrefForView(view: AppView, options?: NavigationOptions): st
       : '/property-details';
   }
   if (view === 'emi-calculator') return '/emi-calculator';
+  if (view === 'property-valuation') return '/property-valuation';
+  if (view === 'visit-scheduler') return '/visit-scheduler';
+  if (view === 'neighborhood-score') return '/neighborhood-score';
+  if (view === 'document-vault') return '/document-vault';
+  if (view === 'activity-feed') return '/activity-feed';
+  if (view === 'tenant-screening') return '/tenant-screening';
+  if (view === 'maintenance') return '/maintenance';
+  if (view === 'virtual-tour') return '/virtual-tour';
+  if (view === 'dalal-coin') return '/dalal-coin';
+  if (view === 'top-developers') return '/top-developers';
+  if (view === 'developer-profile') {
+    const propertyReference = String(options?.propertyReference || '').trim();
+    return propertyReference ? `/developer-profile/${encodeURIComponent(propertyReference)}` : '/developer-profile';
+  }
   if (view === 'not-found') return '/404';
   return '/';
 }

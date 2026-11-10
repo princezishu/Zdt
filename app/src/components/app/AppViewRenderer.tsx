@@ -88,6 +88,18 @@ const OwnerProfilePage = lazy(() => import('@/sections/owner/OwnerProfilePage'))
 const PricingPage = lazy(() => import('@/sections/PricingPage'));
 const CollaborationsPage = lazy(() => import('@/sections/CollaborationsPage'));
 const EMICalculatorPage = lazy(() => import('@/sections/EMICalculatorPage'));
+const PropertyValuationPage = lazy(() => import('@/sections/PropertyValuationPage'));
+const VisitSchedulerPage = lazy(() => import('@/sections/VisitSchedulerPage'));
+const NeighborhoodScorePage = lazy(() => import('@/sections/NeighborhoodScorePage'));
+const DocumentVaultPage = lazy(() => import('@/sections/DocumentVaultPage'));
+const ActivityFeedPage = lazy(() => import('@/sections/ActivityFeedPage'));
+const TenantScreeningPage = lazy(() => import('@/sections/TenantScreeningPage'));
+const MaintenancePage = lazy(() => import('@/sections/MaintenancePage'));
+const VirtualTourPage = lazy(() => import('@/sections/VirtualTourPage'));
+const TopDevelopersPage = lazy(() => import('@/sections/TopDevelopersPage'));
+const DeveloperProfilePage = lazy(() => import('@/sections/DeveloperProfilePage'));
+const ReviewsPage = lazy(() => import('@/components/realty/ReviewsSection'));
+const ComingSoonPage = lazy(() => import('@/sections/ComingSoonPage'));
 const NotFoundPage = lazy(() => import('@/sections/NotFoundPage'));
 
 type NavigateTo = (view: AppView, options?: NavigationOptions) => void;
@@ -351,6 +363,14 @@ export default function AppViewRenderer({
             onOpenAdminDesk={() => navigateTo('admin-desk')}
             onOpenTeamDesk={() => navigateTo('team-desk')}
             onOpenLayoutUnits={openLayoutUnitsFloorDetail}
+            onOpenPropertyValuation={() => navigateTo('property-valuation')}
+            onOpenVisitScheduler={() => navigateTo('visit-scheduler')}
+            onOpenNeighborhoodScore={() => navigateTo('neighborhood-score')}
+            onOpenDocumentVault={() => navigateTo('document-vault')}
+            onOpenActivityFeed={() => navigateTo('activity-feed')}
+            onOpenTenantScreening={() => navigateTo('tenant-screening')}
+            onOpenMaintenance={() => navigateTo('maintenance')}
+            onOpenVirtualTour={() => navigateTo('virtual-tour')}
             userName={currentUser?.name}
             userRole={currentUser?.role}
           />
@@ -429,7 +449,7 @@ export default function AppViewRenderer({
         </ViewSuspense>
       )}
 
-      {(currentView === 'wallet' || currentView === 'referrals' || currentView === 'checkout') && (
+      {(currentView === 'wallet' || currentView === 'referrals' || currentView === 'checkout' || currentView === 'dalal-coin') && (
         <ViewSuspense>
           <DalalCoinHubPage
             mode={currentView === 'wallet' ? 'wallet' : currentView === 'checkout' ? 'checkout' : 'referrals'}
@@ -495,6 +515,10 @@ export default function AppViewRenderer({
             onOpenSaved={() => navigateTo('favorites')}
             onOpenMessages={openMessagesView}
             onOpenGroupDeal={openGroupDealDetailsPage}
+            onOpenValuation={() => navigateTo('property-valuation')}
+            onOpenVisitScheduler={() => navigateTo('visit-scheduler')}
+            onOpenNeighborhoodScore={() => navigateTo('neighborhood-score')}
+            onOpenVirtualTour={() => navigateTo('virtual-tour')}
           />
         </ViewSuspense>
       ) : null}
@@ -578,6 +602,10 @@ export default function AppViewRenderer({
             onOpenSaved={() => navigateTo('saved-rentals')}
             onOpenCompare={() => navigateTo('compare')}
             onOpenMessages={openMessagesView}
+            onOpenVisitScheduler={() => navigateTo('visit-scheduler')}
+            onOpenNeighborhoodScore={() => navigateTo('neighborhood-score')}
+            onOpenVirtualTour={() => navigateTo('virtual-tour')}
+            onOpenTenantScreening={() => navigateTo('tenant-screening')}
           />
         </ViewSuspense>
       ) : null}
@@ -1084,6 +1112,122 @@ export default function AppViewRenderer({
       {currentView === 'emi-calculator' && (
         <AnimatedViewFrame>
           <EMICalculatorPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'property-valuation' && (
+        <AnimatedViewFrame>
+          <PropertyValuationPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'visit-scheduler' && (
+        <AnimatedViewFrame>
+          <VisitSchedulerPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'neighborhood-score' && (
+        <AnimatedViewFrame>
+          <NeighborhoodScorePage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'document-vault' && (
+        <AnimatedViewFrame>
+          <DocumentVaultPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'activity-feed' && (
+        <AnimatedViewFrame>
+          <ActivityFeedPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'tenant-screening' && (
+        <AnimatedViewFrame>
+          <TenantScreeningPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'maintenance' && (
+        <AnimatedViewFrame>
+          <MaintenancePage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'virtual-tour' && (
+        <AnimatedViewFrame>
+          <VirtualTourPage />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'top-developers' && (
+        <AnimatedViewFrame>
+          <TopDevelopersPage
+            onOpenDeveloperProfile={(devId) => navigateTo('developer-profile', { search: `?id=${devId}` })}
+            onOpenBuy={() => navigateTo('buy')}
+          />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'developer-profile' && (
+        <AnimatedViewFrame>
+          <DeveloperProfilePage
+            developerId={propertyReference || new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('id') || 'dev-1'}
+            onBack={() => navigateTo('top-developers')}
+            onOpenBuy={() => navigateTo('buy')}
+            onOpenMessages={openMessagesView}
+          />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'area-insights' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Area Insights" description="Deep locality-level insights coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'affordability' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Affordability Calculator" description="Find out what you can afford — coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'buyer-journey' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Buyer Journey" description="Step-by-step buyer guidance — coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'alerts' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Property Alerts" description="Set custom alerts for new listings — coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'compare-plus' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Compare Plus" description="Advanced property comparison — coming soon." onBack={() => navigateTo('compare')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'site-visits' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Site Visits" description="Schedule and manage site visits — coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'legal-assist' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Legal Assist" description="Legal guidance for property transactions — coming soon." onBack={() => navigateTo('home')} />
+        </AnimatedViewFrame>
+      )}
+
+      {currentView === 'investment-screener' && (
+        <AnimatedViewFrame>
+          <ComingSoonPage title="Investment Screener" description="Screen properties for investment potential — coming soon." onBack={() => navigateTo('home')} />
         </AnimatedViewFrame>
       )}
 
